@@ -256,8 +256,15 @@ class CosineKMeans(nn.Module):
         chunk: Optional[int] = None,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Predict labels (and optionally distances) for X."""
-        if not self._fitted or self.centroids is None or self.centroids.numel() == 0 or not torch.isfinite(self.centroids).all():
-            raise RuntimeError("Centroids are not initialized. Call fit() first.")
+        # --- Centroid 初期化確認 ---
+        if (
+            not self._fitted
+            or self.centroids is None
+            or self.centroids.numel() == 0
+            or not torch.isfinite(self.centroids).all()
+        ):
+            raise RuntimeError("Centroids are not initialized. Call fit() or load_state_dict() first.")
+        
         if X.ndim != 2 or X.size(1) != self.latent_dim:
             raise ValueError(f"X must be (N,{self.latent_dim}), got {tuple(X.shape)}")
 
@@ -286,6 +293,25 @@ class CosineKMeans(nn.Module):
             if return_dist:
                 return labels, (1.0 - sim)
             return labels
+        
+    def state_dict(self, destination=None, prefix="", keep_vars=False):
+        out = super().state_dict(destination, prefix, keep_vars)
+        out["inertia_"] = torch.tensor(self.inertia_)
+        return out
+    
+    def load_state_dict(self, state_dict: dict, strict: bool = True):
+        """Load centroids and mark the model as fitted."""
+        super().load_state_dict(state_dict, strict=strict)
+        # centroids が読み込まれたら fitted 状態にする
+        self._fitted = True
+        # inertia_ が state_dict に含まれていれば復元
+        if "inertia_" in state_dict:
+            self.inertia_ = float(state_dict["inertia_"])
+        
+        # 追加: 数値揺れや古いチェックポイント対策として正規化
+        with torch.no_grad():
+            self.centroids = torch.nn.functional.normalize(self.centroids, dim=1)
+        return self
 
 
 # ----------------------------- Model selection (elbow sweep) -----------------------------

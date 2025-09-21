@@ -27,7 +27,7 @@ class TrainerConfig:
     reduction: str = "batch_mean"  # for sse/mse
     early_stop_patience: Optional[int] = 20
     early_stop_min_delta: float = 0.0
-    resume_from: Optional[str | Path] = None  # "auto" 可
+    resume_from: Optional[str | Path] = "auto"
 
 
 class Trainer:
@@ -36,7 +36,6 @@ class Trainer:
       - AMP(bf16/fp16), TF32, EMA, grad_clip, scheduler 対応
       - Checkpoint: 毎 epoch `last.pt`、改善時 `best.pt` と `best_model.pt`（重みのみ）
       - ログ: out_dir/training_history.json
-    参考実装の設計をベースに、損失計算を外出しに変更。:contentReference[oaicite:3]{index=3}
     """
 
     def __init__(
@@ -76,7 +75,7 @@ class Trainer:
                 pass
 
         use_scaler = self.amp and (self.amp_dtype == "fp16") and (self.device.type == "cuda")
-        self.scaler = torch.cuda.amp.GradScaler(enabled=use_scaler)
+        self.scaler = torch.amp.GradScaler("cuda", enabled=use_scaler)
 
         # EMA
         self.ema = EMACallback(self.model, cfg.ema_decay) if cfg.use_ema else None
@@ -100,7 +99,7 @@ class Trainer:
             from contextlib import nullcontext
             return nullcontext()
         dtype = torch.bfloat16 if self.amp_dtype == "bf16" else torch.float16
-        return torch.cuda.amp.autocast(dtype=dtype)
+        return torch.amp.autocast("cuda", dtype=dtype)
 
     def _save_history(self, rec: Dict):
         self.history.append(rec)

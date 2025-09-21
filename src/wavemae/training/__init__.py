@@ -2,8 +2,8 @@ from .trainer import Trainer, TrainerConfig
 from .tester import Tester
 from .extracter import Extracter, ExtractConfig
 from .callbacks import EarlyStopping, EMACallback
-from .samplers import make_weighted_sampler_by_cosine, compute_reference_vector, cosine_to_reference
-from .optim import build_optimizer, build_scheduler, make_param_groups
+from .samplers import SimpleDataset, compute_reference_vector, make_weighted_sampler_by_cosine
+from .optim import build_optimizer, build_scheduler
 
 __all__ = [
     "Trainer",
@@ -13,10 +13,10 @@ __all__ = [
     "ExtractConfig",
     "EarlyStopping",
     "EMACallback",
-    "make_weighted_sampler_by_cosine",
+    "SimpleDataset",
     "compute_reference_vector",
+    "make_weighted_sampler_by_cosine",
     "cosine_to_reference",
     "build_optimizer",
-    "build_scheduler",
-    "make_param_groups",
+    "build_scheduler"
 ]

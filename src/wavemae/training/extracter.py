@@ -37,7 +37,7 @@ class Extracter:
             from contextlib import nullcontext
             return nullcontext()
         dtype = torch.bfloat16 if self.cfg.amp_dtype == "bf16" else torch.float16
-        return torch.cuda.amp.autocast(dtype=dtype)
+        return torch.amp.autocast("cuda", dtype=dtype)
 
     @torch.no_grad()
     def __call__(self, loader: Iterable) -> torch.Tensor | np.ndarray:
