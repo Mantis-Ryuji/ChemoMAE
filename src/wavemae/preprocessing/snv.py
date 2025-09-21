@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Tuple, overload
+from typing import overload
 
 import numpy as np
 
@@ -29,19 +29,32 @@ def _back_to_original_type(x_np: np.ndarray, is_torch: bool, torch_meta):
     return x_np
 
 
+def _std_unbiased(x: np.ndarray, *, axis=None, keepdims: bool = False) -> np.ndarray:
+    """
+    Unbiased std with ddof=1. If the sample length along axis is 1, fall back to ddof=0 to avoid NaN.
+    """
+    if axis is None:
+        L = x.size
+    else:
+        # assume axis refers to existing axis; we only need its length
+        L = x.shape[axis]
+    ddof_eff = 1 if L >= 2 else 0
+    return np.std(x, axis=axis, ddof=ddof_eff, keepdims=keepdims)
+
+
 def _snv_numpy(x: np.ndarray, eps: float = 1e-12) -> np.ndarray:
     """
-    SNV in numpy.
+    SNV in numpy (unbiased std, ddof=1 when sample length >= 2).
     - 1D: (L,) -> per-vector mean/std
     - 2D: (N, L) -> row-wise mean/std
     """
     if x.ndim == 1:
         mu = x.mean()
-        sd = x.std()
+        sd = _std_unbiased(x)
         return (x - mu) / (sd + eps)
     if x.ndim == 2:
         mu = x.mean(axis=1, keepdims=True)
-        sd = x.std(axis=1, keepdims=True)
+        sd = _std_unbiased(x, axis=1, keepdims=True)
         return (x - mu) / (sd + eps)
     raise ValueError(f"SNV expects 1D or 2D array, got shape={x.shape}.")
 
@@ -54,6 +67,7 @@ def snv(x: "torch.Tensor", eps: float = 1e-12) -> "torch.Tensor": ...
 def snv(x, eps: float = 1e-12):
     """
     Functional SNV (stateless). Keeps the input framework (NumPy/Torch).
+    Uses unbiased std (ddof=1) when a valid sample size is available.
     """
     x_np, is_torch, meta = _as_numpy(x)
     y = _snv_numpy(x_np.astype(np.float64, copy=False), eps=eps).astype(np.float32, copy=False)
@@ -70,6 +84,7 @@ class SNVScaler:
         データ集合の統計量を保持しません（=基本的に stateless）。
       - そのため fit() はパイプライン互換のための No-Op とし、transform() で都度行単位に標準化します。
       - NumPy と PyTorch Tensor をどちらも受け付け、入力と同じ型で返します。
+      - 標準偏差は不偏推定（ddof=1、ただし行長が1のときは ddof=0 にフォールバック）を用います。
 
     制約:
       - inverse_transform は一般に定義できません（各行ごとの元の mean/std が必要）。
@@ -116,10 +131,10 @@ class SNVScaler:
         # 統計を返す（後で inverse_transform に利用可）
         if y.ndim == 1:
             mu = X_np.mean()
-            sd = X_np.std()
+            sd = _std_unbiased(X_np)
         else:
             mu = X_np.mean(axis=1, keepdims=True)
-            sd = X_np.std(axis=1, keepdims=True)
+            sd = _std_unbiased(X_np, axis=1, keepdims=True)
         y_out = _back_to_original_type(y, is_torch, meta)
         # mu, sd は NumPy で返す（統計は軽量・取り回しやすい）
         return y_out, mu.astype(np.float32, copy=False), (sd + self.eps).astype(np.float32, copy=False)
