@@ -317,19 +317,24 @@ class CosineKMeans(nn.Module):
 # ----------------------------- Model selection (elbow sweep) -----------------------------
 @torch.no_grad()
 def elbow_ckmeans(
-    cluster_module: Callable[..., CosineKMeans],
+    cluster_module: Callable[..., "CosineKMeans"],
     X: torch.Tensor,
     device: str = "cuda",
     k_max: int = 50,
     chunk: Optional[int] = None,
     verbose: bool = True,
-):
+    random_state: int = 42,
+) -> Tuple[List[int], List[float], int, int, float]:
     """Sweep k=1..k_max, record mean inertia, choose K by curvature.
     Returns: (k_list, inertias, optimal_k, elbow_idx, kappa)
     """
     if X.ndim != 2:
         raise ValueError("X must be 2D")
     d = int(X.size(1))
+
+    # 入力を実行デバイスへ（すでに同一ならコピーは発生しない）
+    X = X.to(device, non_blocking=True)
+
     inertias: List[float] = []
     k_list = list(range(1, k_max + 1))
 
@@ -340,17 +345,20 @@ def elbow_ckmeans(
             tol=1e-3,
             max_iter=500,
             device=device,
-            random_state=42,
+            random_state=random_state,
         )
         ckm.fit(X, chunk=chunk)
         inertias.append(float(ckm.inertia_))
         if verbose:
             print(f"k={k}, mean_inertia={ckm.inertia_:.6f}")
+
+        # メモリ掃除（GPUを使っている時のみ）
         gc.collect()
-        if torch.cuda.is_available():
+        if device == "cuda" and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    from .ops import find_elbow_curvature  # local import to avoid cycles in type hints
+    # 局所 import（循環参照回避）
+    from .ops import find_elbow_curvature
     K, idx, kappa = find_elbow_curvature(k_list, inertias)
     if verbose:
         print(f"Optimal k (curvature): {K}")
