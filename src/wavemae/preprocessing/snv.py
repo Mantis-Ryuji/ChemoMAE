@@ -36,7 +36,6 @@ def _std_unbiased(x: np.ndarray, *, axis=None, keepdims: bool = False) -> np.nda
     if axis is None:
         L = x.size
     else:
-        # assume axis refers to existing axis; we only need its length
         L = x.shape[axis]
     ddof_eff = 1 if L >= 2 else 0
     return np.std(x, axis=axis, ddof=ddof_eff, keepdims=keepdims)
@@ -77,48 +76,18 @@ def snv(x, eps: float = 1e-12):
 @dataclass
 class SNVScaler:
     """
-    sklearn の StandardScaler に似たインターフェイスを持つ SNV 変換器（行単位）。
-
-    特徴:
-      - SNV は各サンプル（行）ごとに平均0・標準偏差1へ正規化するため、学習時に
-        データ集合の統計量を保持しません（=基本的に stateless）。
-      - そのため fit() はパイプライン互換のための No-Op とし、transform() で都度行単位に標準化します。
-      - NumPy と PyTorch Tensor をどちらも受け付け、入力と同じ型で返します。
-      - 標準偏差は不偏推定（ddof=1、ただし行長が1のときは ddof=0 にフォールバック）を用います。
-
-    制約:
-      - inverse_transform は一般に定義できません（各行ごとの元の mean/std が必要）。
-        代替として、transform_stats=True で transform 時に (y, mu, sd) を返し、
-        それを inverse_transform に渡すことで元スケールに戻せます。
+    行単位の SNV 変換器（完全 stateless）。
+    - fit() は存在しません。transform() は毎回行ごとに mean/std を計算します。
+    - NumPy / PyTorch いずれの入力でも、同じ型で返します。
+    - 標準偏差は不偏推定（ddof=1、ただし行長が1のときは ddof=0）を用います。
+    - inverse_transform() は transform_stats=True で得た (mu, sd) を使って復元できます。
     """
     eps: float = 1e-12
     copy: bool = True
     transform_stats: bool = False  # True: transform() が (y, mu, sd) を返す
 
-    # sklearn 互換の属性（利用側の安心感のため用意）
-    n_features_in_: int | None = None
-    fitted_: bool = False
-
-    def fit(self, X, y=None):
-        X_np, _, _ = _as_numpy(X)
-        if X_np.ndim == 1:
-            self.n_features_in_ = X_np.shape[0]
-        elif X_np.ndim == 2:
-            self.n_features_in_ = X_np.shape[1]
-        else:
-            raise ValueError(f"SNVScaler.fit expects 1D or 2D array, got shape={X_np.shape}.")
-        self.fitted_ = True
-        return self
-
-    def _check_fitted(self):
-        if not self.fitted_:
-            # sklearn の慣習に合わせ fit を要求（実質 no-op だが Pipeline で一貫）
-            raise RuntimeError("SNVScaler is not fitted yet. Call .fit(X) before .transform(X).")
-
     def transform(self, X):
-        self._check_fitted()
         X_np, is_torch, meta = _as_numpy(X)
-
         if self.copy:
             X_np = X_np.copy()
 
@@ -135,18 +104,16 @@ class SNVScaler:
         else:
             mu = X_np.mean(axis=1, keepdims=True)
             sd = _std_unbiased(X_np, axis=1, keepdims=True)
-        y_out = _back_to_original_type(y, is_torch, meta)
-        # mu, sd は NumPy で返す（統計は軽量・取り回しやすい）
-        return y_out, mu.astype(np.float32, copy=False), (sd + self.eps).astype(np.float32, copy=False)
 
-    def fit_transform(self, X, y=None):
-        return self.fit(X, y).transform(X)
+        y_out = _back_to_original_type(y, is_torch, meta)
+        # mu, sd は NumPy で返す（軽量・扱いやすい）
+        return y_out, mu.astype(np.float32, copy=False), (sd + self.eps).astype(np.float32, copy=False)
 
     def inverse_transform(self, Y, *, mu: np.ndarray | float, sd: np.ndarray | float):
         """
-        変換前統計（mu, sd）を明示的に受け取って復元する。
+        変換前統計（mu, sd）を用いて復元する。
         - Y: 1D or 2D
-        - mu, sd: transform_stats=True で得たものを推奨（NumPy）
+        - mu, sd: transform_stats=True で transform 時に得たものを想定（NumPy 推奨）
         """
         Y_np, is_torch, meta = _as_numpy(Y)
         if self.copy:
@@ -155,8 +122,7 @@ class SNVScaler:
         if Y_np.ndim == 1:
             y = Y_np * sd + mu
         elif Y_np.ndim == 2:
-            # mu, sd の形は (N,1) を期待（ブロードキャスト可）
-            y = Y_np * sd + mu
+            y = Y_np * sd + mu  # (N,1) ブロードキャストを想定
         else:
             raise ValueError(f"SNVScaler.inverse_transform expects 1D or 2D, got {Y_np.shape}.")
 
