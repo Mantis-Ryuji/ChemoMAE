@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.env
+
+# Build
+build/
+dist/
+*.whl
+
+# Notebooks
+.ipynb_checkpoints/
+
+# OS/IDE
+.DS_Store
+.vscode/
+
+# Project outputs
+runs/
+data/
+EOF
