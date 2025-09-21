@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wavemae"
+# バージョンはパッケージ内の __version__ を参照（重複管理を避ける）
+dynamic = ["version"]
+description = "WaveMAE: Masked AutoEncoder for 1D spectral data"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Ryuji Yamaguchi" }]
+requires-python = ">=3.9"
+dependencies = [
+  "numpy",
+  "torch>=2.0",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = ["wavemae"]
+
+[tool.setuptools.dynamic]
+version = { attr = "wavemae._version.__version__" }
