@@ -16,11 +16,14 @@ def test_early_stopping_starts_after_ratio_and_triggers():
     assert es.step(2, 0.9) is False
     assert es.best == 0.9
 
-    # from epoch >= 5, no-improve counts
-    for e in [5, 6, 7]:
-        assert es.step(e, 0.95) is False
-    # next one (4th no-improve) should stop
-    assert es.step(8, 0.96) is True
+    # start_epoch 到達後の不改善カウント
+    # epoch=5 → count=1（継続）
+    assert es.step(5, 0.95) is False
+    # epoch=6 → count=2（継続）
+    assert es.step(6, 0.95) is False
+    # epoch=7 → count=3 = patience 到達 → 停止(True)
+    assert es.step(7, 0.95) is True
+
     assert es.started is True
     assert es.best_epoch == 2
 

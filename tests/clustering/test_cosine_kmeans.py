@@ -1,6 +1,7 @@
 import math
 import torch
 import numpy as np
+import pytest
 
 from wavemae.clustering.cosine_kmeans import CosineKMeans, elbow_ckmeans
 from wavemae.clustering.ops import l2_normalize_rows
@@ -59,7 +60,7 @@ def test_predict_before_fit_raises_and_dim_mismatch():
 
     # 違う次元の入力でエラー
     m.fit(X)
-    with torch.raises(ValueError):
+    with pytest.raises(ValueError):
         _ = m.predict(torch.randn(X.size(0), X.size(1) + 1))
 
 
@@ -76,7 +77,7 @@ def test_save_and_load_centroids_and_strict_k(tmp_path):
 
     # K不一致で strict_k=True → 例外
     m3 = CosineKMeans(n_clusters=2, device="cpu", random_state=0)
-    with torch.raises(ValueError):
+    with pytest.raises(ValueError):
         m3.load_centroids(path, strict_k=True)
 
 
