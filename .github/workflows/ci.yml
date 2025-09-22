@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"                      # ← setup-python の内蔵キャッシュを使う（簡潔で速い）
+
+      - name: Show versions (debug)
+        run: |
+          python -V
+          pip -V
+
+      - name: Upgrade pip & wheel
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+        run: |
+          python -m pip install -U pip wheel
+
+      # CUDA に依存しない CPU 版 PyTorch を明示的に導入
+      - name: Install PyTorch (CPU)
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+        run: |
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision --no-cache-dir
+
+      # パッケージ + 開発依存（pytest 等）
+      - name: Install package (with dev extras)
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+        run: |
+          python -m pip install -e .[dev]
+
+      # pytest 実行（失敗時の概要を -ra で出す）
+      - name: Run tests
+        run: |
+          pytest -q -ra
