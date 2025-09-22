@@ -1,0 +1,11 @@
+# MANIFEST.in
+include README.md
+include LICENSE
+include pyproject.toml
+
+recursive-include src/wavemae/assets *.pt *.sha256
+include src/wavemae/py.typed
+
+global-exclude __pycache__/*
+global-exclude *.py[cod]
+global-exclude .DS_Store

@@ -1,11 +1,14 @@
 from .seed import set_global_seed, enable_deterministic
-from .hub import get_cache_dir, list_available, register_weight, fetch_weight
+from .load import WaveMAEConfig, get_default_config, build_model, load_pretrained, load_default_pretrained, load_weight_with_sha256, verify_sha256
 
 __all__ = [
     "set_global_seed",
     "enable_deterministic",
-    "get_cache_dir",
-    "list_available",
-    "register_weight",
-    "fetch_weight",
+    "WaveMAEConfig",
+    "get_default_config",
+    "build_model",
+    "load_pretrained",
+    "load_default_pretrained",
+    "load_weight_with_sha256",
+    "verify_sha256",
 ]

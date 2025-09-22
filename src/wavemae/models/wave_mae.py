@@ -206,7 +206,7 @@ class WaveMAE(nn.Module):
         dec_dropout: float = 0.1,
         # mask
         n_blocks: int = 16,
-        n_mask: int = 4,
+        n_mask: int = 8,
     ) -> None:
         super().__init__()
         self.seq_len = int(seq_len)

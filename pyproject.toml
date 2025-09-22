@@ -1,24 +1,81 @@
 [build-system]
-requires = ["setuptools>=68"]
+# PEP 517/518: ビルドに使うバックエンドと要件
+requires = ["setuptools>=70", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
+# ---- 基本メタデータ（PEP 621） ----
 name = "wavemae"
-# バージョンはパッケージ内の __version__ を参照（重複管理を避ける）
-dynamic = ["version"]
-description = "WaveMAE: Masked AutoEncoder for 1D spectral data"
-readme = "README.md"
+version = "0.1.0"                             # _version.py と整合させること
+description = "WaveMAE: 1D spectral Masked Autoencoder + Cosine-KMeans toolkit"
+readme = "README.md"                          # PyPIにそのまま表示
+requires-python = ">=3.9"
 license = { file = "LICENSE" }
 authors = [{ name = "Ryuji Yamaguchi" }]
-requires-python = ">=3.9"
-dependencies = [
-  "numpy",
-  "torch>=2.0",
+keywords = [
+  "spectroscopy",          # 分光解析
+  "hyperspectral",         # ハイパースペクトルデータ
+  "masked autoencoder",    # MAE 系
+  "self-supervised",       # 自己教師あり学習
+  "unsupervised",          # 教師なし学習
+  "representation learning",
+  "clustering",
+  "cosine similarity",
+  "kmeans",
 ]
 
-[tool.setuptools]
-package-dir = { "" = "src" }
-packages = ["wavemae"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+  "Topic :: Scientific/Engineering :: Image Recognition",
+  "Framework :: PyTorch",
+]
 
-[tool.setuptools.dynamic]
-version = { attr = "wavemae._version.__version__" }
+# ---- ランタイム依存（CUDA 都合により torch は含めない）----
+dependencies = [
+  "numpy>=1.24",
+  "scipy>=1.10",
+  "tqdm>=4.66",
+  "matplotlib>=3.8",
+  "pyyaml>=6.0",      # 設定ファイル読み書き用に追加
+]
+
+[project.optional-dependencies]
+# `pip install wavemae[dev]` で入る開発用ツール
+dev = [
+  "pytest>=7",
+  "ruff>=0.4",
+  "mypy>=1.7",
+  "build>=1.2",
+  "twine>=5",
+]
+
+[project.urls]
+Homepage = "https://github.com/Mantis-Ryuji/WaveMAE"
+Documentation = "https://github.com/Mantis-Ryuji/WaveMAE/blob/main/README.md"
+Issues = "https://github.com/Mantis-Ryuji/WaveMAE/issues"
+
+# ---- setuptools のパッケージ検出とデータ同梱設定 ----
+[tool.setuptools]
+package-dir = {"" = "src"}                    # src レイアウト
+include-package-data = true                   # sdist で MANIFEST.in を尊重
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["wavemae*"]                        # サブパッケージも含める
+
+# wheel に同梱させたい静的ファイル（assets/ と py.typed）
+[tool.setuptools.package-data]
+"wavemae" = ["assets/*.pt", "assets/*.sha256", "py.typed"]
