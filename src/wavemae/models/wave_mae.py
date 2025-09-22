@@ -75,10 +75,10 @@ class WaveEncoder(nn.Module):
         latent_dim: int = 64,
         d_model: int = 256,
         nhead: int = 4,
-        num_layers: int = 2,
+        num_layers: int = 4,
         dim_feedforward: int = 1024,
         dropout: float = 0.1,
-        use_learnable_pos: bool = False,
+        use_learnable_pos: bool = True,
     ) -> None:
         super().__init__()
         self.seq_len = int(seq_len)
@@ -155,7 +155,7 @@ class WaveEncoder(nn.Module):
 # Decoder (MLP: z -> R^L)
 # -----------------------------------------------------------------------------
 class WaveDecoderMLP(nn.Module):
-    def __init__(self, *, seq_len: int, latent_dim: int = 64, hidden_dim: int = 512, dropout: float = 0.1) -> None:
+    def __init__(self, *, seq_len: int, latent_dim: int = 64, hidden_dim: int = 256, dropout: float = 0.1) -> None:
         super().__init__()
         self.seq_len = int(seq_len)
         self.net = nn.Sequential(
@@ -196,13 +196,13 @@ class WaveMAE(nn.Module):
         # encoder
         d_model: int = 256,
         nhead: int = 4,
-        num_layers: int = 2,
+        num_layers: int = 4,
         dim_feedforward: int = 1024,
         dropout: float = 0.1,
-        use_learnable_pos: bool = False,
+        use_learnable_pos: bool = True,
         latent_dim: int = 64,
         # decoder
-        dec_hidden: int = 512,
+        dec_hidden: int = 256,
         dec_dropout: float = 0.1,
         # mask
         n_blocks: int = 16,
