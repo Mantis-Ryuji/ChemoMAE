@@ -1,12 +1,11 @@
-name: Release (PyPI)
+name: Release to PyPI
 
 on:
-  push:
-    tags: ["v*.*.*"]       # 例: v0.1.0
-  workflow_dispatch:
+  release:
+    types: [published]   # 正式 Release を公開したときだけ起動
 
 jobs:
-  build-and-upload:
+  build-and-publish:
     runs-on: ubuntu-latest
 
     steps:
@@ -17,29 +16,13 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install build & test deps
+      - name: Build package
         run: |
-          python -m pip install --upgrade pip
-          pip install build twine
-          # （任意）公開前にテストを回す
-          pip install -e .
-          pip install -U pytest matplotlib
-          pytest -q
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check dist/*
 
-      - name: Build sdist and wheel
-        run: python -m build
-
-      - name: Check distribution
-        run: twine check dist/*
-
-      # Secrets が未設定ならスキップ（安全）
-      - name: Upload to PyPI (twine)
-        if: ${{ secrets.PYPI_API_TOKEN != '' }}
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: twine upload dist/*
-
-      - name: Skip note (no token)
-        if: ${{ secrets.PYPI_API_TOKEN == '' }}
-        run: echo "PYPI_API_TOKEN is not set; skipping upload safely."
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
