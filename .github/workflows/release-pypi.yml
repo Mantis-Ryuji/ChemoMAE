@@ -1,0 +1,45 @@
+name: Release (PyPI)
+
+on:
+  push:
+    tags: ["v*.*.*"]       # 例: v0.1.1
+  workflow_dispatch:
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build & test deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+          # （任意）公開前にテストを回す
+          pip install -e .
+          pip install -U pytest matplotlib
+          pytest -q
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Check distribution
+        run: twine check dist/*
+
+      # Secrets が未設定ならスキップ（安全）
+      - name: Upload to PyPI (twine)
+        if: ${{ secrets.PYPI_API_TOKEN != '' }}
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload dist/*
+
+      - name: Skip note (no token)
+        if: ${{ secrets.PYPI_API_TOKEN == '' }}
+        run: echo "PYPI_API_TOKEN is not set; skipping upload safely."
