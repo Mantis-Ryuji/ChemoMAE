@@ -27,7 +27,7 @@ keywords = [
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
-  "License :: OSI Approved :: MIT License",
+  "License :: OSI Approved :: Apache Software License",
   "Operating System :: OS Independent",
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
@@ -40,7 +40,6 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "Topic :: Scientific/Engineering :: Information Analysis",
   "Topic :: Scientific/Engineering :: Image Recognition",
-  "Framework :: PyTorch",
 ]
 
 # ---- ランタイム依存（CUDA 都合により torch は含めない）----
@@ -71,6 +70,7 @@ Issues = "https://github.com/Mantis-Ryuji/WaveMAE/issues"
 [tool.setuptools]
 package-dir = {"" = "src"}                    # src レイアウト
 include-package-data = true                   # sdist で MANIFEST.in を尊重
+license-files = ["LICENSE", "NOTICE"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
