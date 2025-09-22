@@ -2,7 +2,7 @@ name: Release (PyPI)
 
 on:
   push:
-    tags: ["v*.*.*"]       # 例: v0.1.1
+    tags: ["v*.*.*"]       # 例: v0.1.0
   workflow_dispatch:
 
 jobs:

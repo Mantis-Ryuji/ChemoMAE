@@ -22,7 +22,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: "pip"                      # ← setup-python の内蔵キャッシュを使う（簡潔で速い）
+          cache: pip
 
       - name: Show versions (debug)
         run: |
@@ -35,21 +35,24 @@ jobs:
         run: |
           python -m pip install -U pip wheel
 
-      # CUDA に依存しない CPU 版 PyTorch を明示的に導入
+      # PyTorch (CPU) のみ。torchvision は不要なら省いてOK（高速化）
       - name: Install PyTorch (CPU)
         env:
           PIP_DISABLE_PIP_VERSION_CHECK: "1"
         run: |
-          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision --no-cache-dir
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch --no-cache-dir
 
-      # パッケージ + 開発依存（pytest 等）
-      - name: Install package (with dev extras)
+      - name: Install package (and test deps)
         env:
           PIP_DISABLE_PIP_VERSION_CHECK: "1"
         run: |
-          python -m pip install -e .[dev]
+          # dev extras が定義されていれば使う
+          python -m pip install -e .[dev] || true
+          # 念のため必須のテスト依存を個別に追加
+          python -m pip install pytest matplotlib
 
-      # pytest 実行（失敗時の概要を -ra で出す）
       - name: Run tests
+        env:
+          MPLBACKEND: Agg
         run: |
           pytest -q -ra
