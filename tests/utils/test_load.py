@@ -49,10 +49,10 @@ def test_load_default_pretrained_missing_weights(monkeypatch, caplog, tmp_path):
     # config の既定値（load.py の _DEFAULT_CFG に追従）
     cfg = meta["config"]
     assert cfg["seq_len"] == 256
-    assert cfg["d_model"] == 512
-    assert cfg["nhead"] == 8
-    assert cfg["num_layers"] == 8
-    assert cfg["dim_feedforward"] == 2048
+    assert cfg["d_model"] == 384
+    assert cfg["nhead"] == 6
+    assert cfg["num_layers"] == 6
+    assert cfg["dim_feedforward"] == 1536
     assert cfg["dropout"] == 0.1
     assert cfg["use_learnable_pos"] is True
     assert cfg["latent_dim"] == 64
@@ -101,10 +101,10 @@ def test_load_default_pretrained_success_with_hash(tmp_path):
     cfg = meta["config"]
     assert cfg == {
         "seq_len": 256,
-        "d_model": 512,
-        "nhead": 8,
-        "num_layers": 8,
-        "dim_feedforward": 2048,
+        "d_model": 384,
+        "nhead": 6,
+        "num_layers": 6,
+        "dim_feedforward": 1536,
         "dropout": 0.1,
         "use_learnable_pos": True,
         "latent_dim": 64,

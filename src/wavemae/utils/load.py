@@ -25,10 +25,10 @@ _REPOS = {
 _DEFAULT_CFG: Dict[str, Any] = dict(
     # Encoder
     seq_len=256,
-    d_model=512,
-    nhead=8,
-    num_layers=8,
-    dim_feedforward=2048,
+    d_model=384,
+    nhead=6,
+    num_layers=6,
+    dim_feedforward=1536,
     dropout=0.1,
     use_learnable_pos=True,
     latent_dim=64,

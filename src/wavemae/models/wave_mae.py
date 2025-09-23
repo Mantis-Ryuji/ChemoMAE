@@ -153,13 +153,13 @@ class WaveEncoder(nn.Module):
         入力系列長 L（スペクトルの波長チャンネル数など）。
     latent_dim : int, default=64
         出力潜在表現の次元 D。
-    d_model : int, default=512
+    d_model : int, default=384
         Transformer モデル幅。
-    nhead : int, default=8
+    nhead : int, default=6
         Multi-Head Attention のヘッド数。
-    num_layers : int, default=8
+    num_layers : int, default=6
         Transformer Encoder 層の数。
-    dim_feedforward : int, default=2048
+    dim_feedforward : int, default=1536
         各層の FFN の隠れ次元。
     dropout : float, default=0.1
         Dropout 率。
@@ -202,10 +202,10 @@ class WaveEncoder(nn.Module):
         *,
         seq_len: int,
         latent_dim: int = 64,
-        d_model: int = 512,
-        nhead: int = 8,
-        num_layers: int = 8,
-        dim_feedforward: int = 2048,
+        d_model: int = 384,
+        nhead: int = 6,
+        num_layers: int = 6,
+        dim_feedforward: int = 1536,
         dropout: float = 0.1,
         use_learnable_pos: bool = True,
     ) -> None:
@@ -392,13 +392,13 @@ class WaveMAE(nn.Module):
     ----------
     seq_len : int
         入力系列長 L。
-    d_model : int, default=512
+    d_model : int, default=384
         Transformer Encoder のモデル幅。
-    nhead : int, default=8
+    nhead : int, default=6
         Multi-Head Attention のヘッド数 (d_model % nhead == 0 が必要)。
-    num_layers : int, default=8
+    num_layers : int, default=6
         Encoder 層数。
-    dim_feedforward : int, default=2048
+    dim_feedforward : int, default=1536
         各 Encoder 層の MLP の中間次元。
     dropout : float, default=0.1
         Encoder 内のドロップアウト率。
@@ -428,10 +428,10 @@ class WaveMAE(nn.Module):
         *,
         seq_len: int,
         # encoder
-        d_model: int = 512,
-        nhead: int = 8,
-        num_layers: int = 8,
-        dim_feedforward: int = 2048,
+        d_model: int = 384,
+        nhead: int = 6,
+        num_layers: int = 6,
+        dim_feedforward: int = 1536,
         dropout: float = 0.1,
         use_learnable_pos: bool = True,
         latent_dim: int = 64,
