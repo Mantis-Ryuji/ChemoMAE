@@ -3,7 +3,6 @@ import json
 from pathlib import Path
 from typing import Optional, Dict
 
-import numpy as np
 import torch
 import torch.nn as nn
 

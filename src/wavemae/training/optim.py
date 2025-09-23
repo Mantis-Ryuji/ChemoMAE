@@ -1,6 +1,5 @@
 from __future__ import annotations
 import math
-import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR

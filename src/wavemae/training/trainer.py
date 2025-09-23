@@ -1,10 +1,9 @@
 from __future__ import annotations
-import json, math, random, time
+import json, math, time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, Iterable
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim

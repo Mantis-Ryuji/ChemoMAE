@@ -5,9 +5,8 @@ from typing import Iterable, Optional, Literal
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
 
-from ..models.wave_mae import WaveMAE  # 型ヒント用
+from ..models.wave_mae import WaveMAE
 
 
 @dataclass

@@ -4,7 +4,6 @@ from typing import Optional, Tuple, Union, Callable, List
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from .ops import l2_normalize_rows, cosine_dissimilarity
 
