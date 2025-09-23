@@ -10,7 +10,7 @@ import torch
 
 from wavemae.models.wave_mae import WaveMAE
 
-__all__ = ["load_default_pretrained"]  # 公開APIはこれだけ
+__all__ = ["load_default_pretrained"]
 logger = logging.getLogger(__name__)
 
 # 固定 GitHub リポジトリ
@@ -57,10 +57,10 @@ def _build_model_default(device: Optional[str | torch.device]) -> WaveMAE:
     )
     model = WaveMAE(
         seq_len=256,
-        d_model=256,
-        nhead=4,
-        num_layers=4,
-        dim_feedforward=1024,
+        d_model=512,
+        nhead=8,
+        num_layers=8,
+        dim_feedforward=2048,
         dropout=0.1,
         use_learnable_pos=True,
         latent_dim=64,
@@ -132,7 +132,7 @@ def load_default_pretrained(
     Notes
     -----
     既定構成:
-    ``seq_len=256, d_model=256, nhead=4, num_layers=4, dim_feedforward=1024,
+    ``seq_len=256, d_model=512, nhead=8, num_layers=8, dim_feedforward=2048,
       dropout=0.1, use_learnable_pos=True, latent_dim=64, dec_hidden=256, dec_dropout=0.1``
     """
     model = _build_model_default(device=device)
