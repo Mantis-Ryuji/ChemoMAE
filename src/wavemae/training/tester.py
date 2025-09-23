@@ -10,7 +10,6 @@ from ..models.losses import masked_sse, masked_mse
 
 
 class Tester:
-    __test__ = False  # pytest に「これはテストクラスではない」と伝える
     r"""
     Evaluate a trained WaveMAE model on a dataset.
 
@@ -62,6 +61,7 @@ class Tester:
     >>> avg_loss = tester.run(test_loader, criterion="mse")
     >>> print(f"Test loss: {avg_loss:.4f}")
     """
+    __test__ = False  # pytest に「これはテストクラスではない」と伝える
     def __init__(self, model: nn.Module, *, device: str | torch.device = "cuda", out_dir: str | Path = "runs"):
         self.model = model.to(device)
         self.device = torch.device(device)

@@ -1,86 +1,99 @@
-from pathlib import Path
+import os
 import hashlib
-import pytest
 import torch
+import pytest
 
-from wavemae.utils.load import (
-    WaveMAEConfig,
-    get_default_config,
-    build_model,
-    verify_sha256,
-    load_weight_with_sha256,
-)
+def test___all___exports_only_loader():
+    import wavemae.load as ld
+    assert "load_default_pretrained" in getattr(ld, "__all__", [])
+    # 余計な公開をしていないことのサニティチェック
+    assert all(name == "load_default_pretrained" for name in ld.__all__)
 
+def test_load_default_pretrained_missing_weights(monkeypatch, caplog, tmp_path):
+    """
+    重みが存在しない場合でも (model, meta) が返り、
+    - meta["pretrained_loaded"] is False
+    - meta["warning"] を含む
+    - logger.warning が出力される
+    - repos 固定URLが入っている
+    を確認する。
+    """
+    import wavemae.utils.load as ld
 
-def _write_bytes(path: Path, data: bytes) -> str:
-    path.write_bytes(data)
-    return str(path)
+    # どの相対パスを渡されても存在しない tmp_path を指すようにする
+    monkeypatch.setattr(ld, "_asset_path", lambda rel: str(tmp_path / rel))
 
+    caplog.set_level("WARNING", logger="wavemae.load")
+    model, meta = ld.load_default_pretrained(device="cpu", verify_hash=True)
 
-def _sha256_hex(data: bytes) -> str:
-    h = hashlib.sha256(); h.update(data); return h.hexdigest()
+    # 返り値の型/基本フィールド
+    from wavemae.models.wave_mae import WaveMAE
+    assert isinstance(model, WaveMAE)
+    assert isinstance(meta, dict)
+    assert meta["name"]  # 例: "wavemae_base_256"
+    assert meta["shape"]["seq_len"] == 256
 
+    # 期待する失敗フラグとログ
+    assert meta["pretrained_loaded"] is False
+    assert "warning" in meta
+    assert "事前学習済み重みをloadできませんでした" in meta["warning"]
+    assert any("事前学習済み重みをloadできませんでした" in rec.message for rec in caplog.records)
 
-def test_get_default_config_and_build_model_forward_smoke():
-    cfg = get_default_config()
-    assert isinstance(cfg, WaveMAEConfig)
-    # 代表的フィールドが正の値
-    assert cfg.seq_len > 0 and cfg.d_model > 0 and cfg.latent_dim > 0
+    # 固定URL
+    assert meta["repos"]["library"] == "https://github.com/Mantis-Ryuji/WaveMAE"
+    assert meta["repos"]["pretraining"] == "https://github.com/Mantis-Ryuji/UnsupervisedWoodSegmentation-NIRHSI"
 
-    model = build_model(cfg, device="cpu")
-    x = torch.randn(2, cfg.seq_len)
-    # reconstruct() はマスク自動生成で出力長 = seq_len
-    x_rec = model.reconstruct(x)
-    assert x_rec.shape == (2, cfg.seq_len)
+def test_load_default_pretrained_success_with_hash(monkeypatch, tmp_path):
+    import wavemae.load as ld
 
+    # 既定構成で state_dict を保存
+    base_model = ld._build_model_default(device="cpu")
+    weight_file = tmp_path / "wavemae_base_256.pt"
+    torch.save(base_model.state_dict(), weight_file)
 
-def test_verify_sha256_ok_and_mismatch(tmp_path):
-    # ダミーのファイルと .sha256 を作成
-    data = b"hello wavemae"
-    fpath = tmp_path / "w.pt"
-    spath = tmp_path / "w.pt.sha256"
-    _write_bytes(fpath, data)
-    spath.write_text(_sha256_hex(data) + "\n", encoding="utf-8")
+    # 対応する .sha256 を作成
+    h = hashlib.sha256()
+    with open(weight_file, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    sha_file = tmp_path / (weight_file.name + ".sha256")
+    sha_file.write_text(h.hexdigest() + "\n", encoding="utf-8")
 
-    # 正常：一致
-    verify_sha256(str(fpath), str(spath))  # 例外なしで通るはず
+    # _asset_path を一時ファイルへ差し替え
+    def fake_asset_path(rel: str) -> str:
+        if rel.endswith(".pt.sha256"):
+            return str(sha_file)
+        if rel.endswith(".pt"):
+            return str(weight_file)
+        return str(tmp_path / rel)
 
-    # 異常：ミスマッチ
-    spath.write_text("deadbeef" * 8 + "\n", encoding="utf-8")
-    with pytest.raises(ValueError):
-        verify_sha256(str(fpath), str(spath))
+    monkeypatch.setattr(ld, "_asset_path", fake_asset_path)
 
+    model, meta = ld.load_default_pretrained(device="cpu", verify_hash=True)
 
-def test_load_weight_with_sha256_roundtrip(tmp_path):
-    # 極小モデルを構築し、その state_dict を保存 → 同じモデルに読み戻す
-    cfg = get_default_config()
-    model_a = build_model(cfg, device="cpu")
-    model_b = build_model(cfg, device="cpu")
+    from wavemae.models.wave_mae import WaveMAE
+    assert isinstance(model, WaveMAE)
+    assert meta["pretrained_loaded"] is True
+    assert "warning" not in meta
+    assert os.path.samefile(meta["weight_path"], str(weight_file))
+    assert os.path.samefile(meta["sha256_path"], str(sha_file))
+    assert meta["repos"]["library"] == "https://github.com/Mantis-Ryuji/WaveMAE"
+    assert meta["repos"]["pretraining"] == "https://github.com/Mantis-Ryuji/UnsupervisedWoodSegmentation-NIRHSI"
 
-    # state_dict 保存
-    wpath = tmp_path / "state.pt"
-    torch.save(model_a.state_dict(), wpath)
-
-    # 正しい SHA256 ファイルを作成
-    hexsum = _sha256_hex(wpath.read_bytes())
-    spath = tmp_path / "state.pt.sha256"
-    spath.write_text(hexsum + "\n", encoding="utf-8")
-
-    # 検証付きロード
-    load_weight_with_sha256(model_b, str(wpath), str(spath), strict=True)
-
-    # パラメータが一致することを確認
-    for (k1, v1), (k2, v2) in zip(model_a.state_dict().items(), model_b.state_dict().items()):
-        assert k1 == k2
-        assert torch.allclose(v1, v2)
-
-
-@pytest.mark.skip(reason="パッケージ同梱アセット（weights/.sha256）が無い環境ではスキップ")
-def test_assets_presence_and_hash():
-    # パッケージに assets が同梱されている環境向けの追加検証（CI では通常 skip）
-    from importlib.resources import files as _pkg_files
-    base = _pkg_files("wavemae").joinpath("assets")
-    w = base / "wavemae_base_256.pt"
-    s = base / "wavemae_base_256.pt.sha256"
-    assert w.exists() and s.exists()
-    verify_sha256(str(w), str(s))
+    # 形状メタ：全フィールドを検証
+    shape = meta["shape"]
+    expected_shape = {
+        "seq_len": 256,
+        "latent_dim": 64,
+        "d_model": 256,
+        "num_layers": 4,
+        "nhead": 4,
+        "decoder_hidden": 256,
+        "n_blocks": 16,  # WaveMAE のデフォルト
+        "n_mask": 8,     # WaveMAE のデフォルト
+    }
+    # キーの完全一致
+    assert set(shape.keys()) == set(expected_shape.keys())
+    # 値の完全一致
+    for k, v in expected_shape.items():
+        assert shape[k] == v, f"shape[{k}] expected {v}, got {shape[k]}"

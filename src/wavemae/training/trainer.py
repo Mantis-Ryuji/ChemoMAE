@@ -92,7 +92,7 @@ class Trainer:
     - **validate**: 検証ループ。EMA を一時適用して val_loss を測定。
     - **fit**: 学習全体の制御。履歴保存、checkpointing、early stopping を実行。
     - **save_checkpoint** / **load_checkpoint**:
-      モデル・optimizer・scheduler・scaler・EMA・履歴を含む完全な状態を保存／復元。
+      モデル・optimizer・scheduler・scaler・EMA・履歴を含む完全な状態を保存/復元。
     - **save_weights_only**:
       モデルの重みのみ保存（推論用の `best_model.pt` など）。
 
@@ -107,7 +107,6 @@ class Trainer:
     ----------
     - モデルは `(x_recon, z, visible_mask)` を返す前提。
     - 内部で `loss = masked_sse/mse(x_recon, x, ~visible_mask)` を計算。
-      （つまり **mask=True=masked**, ~mask=True=visible の規約を統一）
 
     Parameters
     ----------

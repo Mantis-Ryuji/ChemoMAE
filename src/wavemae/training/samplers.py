@@ -33,7 +33,7 @@ def compute_reference_vector(X: np.ndarray | torch.Tensor) -> np.ndarray:
 
     Notes
     -----
-    - 正規化は :math:`u \leftarrow u / \|u\|_2` として行う。
+    - 正規化は u <- u / ||u||_2 として行う。
     - ゼロ除算を避けるため、分母に 1e-12 を加えている。
 
     例
