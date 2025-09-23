@@ -1,29 +1,19 @@
 from __future__ import annotations
-
-import hashlib
-import os
-import logging
+import hashlib, os, logging
 from importlib.resources import files as _pkg_files
 from typing import Any, Dict, Optional, Tuple
-
 import torch
-
 from wavemae.models.wave_mae import WaveMAE
 
 __all__ = ["load_default_pretrained"]
-
 logger = logging.getLogger(__name__)
 
-# 固定 GitHub リポジトリ
 _REPOS = {
-    "library": "https://github.com/Mantis-Ryuji/WaveMAE",                                  # ライブラリ
-    "pretraining": "https://github.com/Mantis-Ryuji/UnsupervisedWoodSegmentation-NIRHSI",  # 事前学習内容
+    "library": "https://github.com/Mantis-Ryuji/WaveMAE",
+    "pretraining": "https://github.com/Mantis-Ryuji/UnsupervisedWoodSegmentation-NIRHSI",
 }
 
-
-# ----------------------------- 内部ユーティリティ ----------------------------- #
 def _asset_path(relative: str) -> str:
-    """パッケージ同梱 assets への相対パスを解決（wheel に同梱必須）。"""
     return str(_pkg_files("wavemae").joinpath(f"assets/{relative}"))
 
 def _sha256_file(path: str) -> str:
@@ -53,28 +43,18 @@ def _verify_sha256(file_path: str, sha256_path: str) -> None:
         )
 
 def _build_model_default(device: Optional[str | torch.device]) -> WaveMAE:
-    """既定構成で WaveMAE を構築し、device へ移す。"""
     dev = torch.device(device) if device is not None else (
         torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     )
     model = WaveMAE(
-        seq_len=256,
-        d_model=256,
-        nhead=4,
-        num_layers=4,
-        dim_feedforward=1024,
-        dropout=0.1,
-        use_learnable_pos=True,
-        latent_dim=64,
-        dec_hidden=256,
-        dec_dropout=0.1,
+        seq_len=256, d_model=256, nhead=4, num_layers=4,
+        dim_feedforward=1024, dropout=0.1, use_learnable_pos=True,
+        latent_dim=64, dec_hidden=256, dec_dropout=0.1,
     )
     return model.to(dev)
 
 def _introspect_shape(model: WaveMAE) -> Dict[str, Any]:
-    """モデル主要形状を辞書で返す（将来の互換性のため動的に取得）。"""
-    enc = getattr(model, "encoder", None)
-    dec = getattr(model, "decoder", None)
+    enc = getattr(model, "encoder", None); dec = getattr(model, "decoder", None)
     return {
         "seq_len": getattr(model, "seq_len", None),
         "latent_dim": getattr(getattr(enc, "to_latent", None), "out_features", None) if enc else None,
@@ -89,8 +69,6 @@ def _introspect_shape(model: WaveMAE) -> Dict[str, Any]:
         "n_mask": getattr(model, "n_mask", None),
     }
 
-
-# ------------------------------ 公開関数 ------------------------------ #
 def load_default_pretrained(
     *,
     device: Optional[str | torch.device] = None,
@@ -102,98 +80,73 @@ def load_default_pretrained(
 
     概要
     ----
-    パッケージ同梱（`assets/`）の 既定重みを、固定構成の `WaveMAE` にロードして返す。
-    返り値は `(model, meta)`。`meta` には モデル名・主要形状・GitHub リポジトリ URL を含む。
-    もし重みが見つからない / 読み込めない場合でも、未初期化（ランダム初期化）の model と meta を返す。
-    その際は `logger.warning` に 「事前学習済み重みをloadできませんでした」を出力し、
-    `meta["pretrained_loaded"] = False` を立てる。
+    - パッケージ同梱（``assets/``）の既定重みを固定構成の `WaveMAE`
+      にロードし、``(model, meta)`` を返します。
+    - 重みが見つからない / 読み込めない場合も例外を投げず、未ロードのモデルと
+      ``meta["pretrained_loaded"]=False`` を返します（警告ログを出力）。
 
     Parameters
     ----------
-    device : str | torch.device, optional (default: auto)
-        モデルを配置するデバイス。未指定なら CUDA 可なら "cuda"、それ以外は "cpu"。
+    device : str | torch.device, optional
+        未指定時は自動判定（CUDA 利用可なら ``"cuda"``、それ以外は ``"cpu"``）。
     strict : bool, default=True
-        `model.load_state_dict` の strict フラグ。
+        ``load_state_dict`` の strict フラグ。
     verify_hash : bool, default=True
-        `assets/*.pt` に対する `.sha256` 検証を有効化（.sha256 が存在する場合のみ照合）。
+        同名 ``.sha256`` が存在する場合のみ SHA256 を照合。
 
     Returns
     -------
     model : WaveMAE
-        既定構成で構築され、同梱重みをロード済み（もしくは未ロード）のモデル。
+        既定構成で構築され、（可能なら）同梱重みをロード済みのモデル。
     meta : dict
-        付随情報（最低限以下のキーを含む）:
-          - `"name"` : 重みファイル名（拡張子除く）。例 `"wavemae_base_256"`
-          - `"shape"` : 主要ハイパラの要約（`seq_len`, `latent_dim`, `d_model`, `num_layers`, `nhead`, …）
-          - `"repos"` : 固定 GitHub URL 辞書 `{"library": ..., "pretraining": ...}`
-          - `"weight_path"` : 使用を試みた重みファイルのパス（存在しない場合も含む）
-          - `"sha256_path"` : 参照した .sha256 のパス（存在しない場合は空文字）
-          - `"device"` : 読み込み時の `map_location`
-          - `"strict"` : `strict` の値
-          - `"pretrained_loaded"` : bool（重み読み込みに成功したか）
-          - `"warning"` : 失敗時のみ、警告メッセージ文字列
+        付随情報（公開フィールドのみ）:
+          - ``"name"`` : 重みベース名（例: ``"wavemae_base_256"``）
+          - ``"shape"`` : 主要形状要約（``seq_len``, ``latent_dim``, ``d_model``,
+            ``num_layers``, ``nhead``, ``decoder_hidden``, ``n_blocks``, ``n_mask``）
+          - ``"repos"`` : GitHub URL（``{"library": ..., "pretraining": ...}``)
+          - ``"device"`` : 読み込み時の map 先（文字列）
+          - ``"strict"`` : strict フラグ
+          - ``"pretrained_loaded"`` : bool（ロード成否）
+          - ``"warning"`` : 失敗時のみ警告メッセージ
 
     Notes
     -----
-    - 既定構成:
-      `seq_len=256, d_model=256, nhead=4, num_layers=4, dim_feedforward=1024,
-       dropout=0.1, use_learnable_pos=True, latent_dim=64, dec_hidden=256, dec_dropout=0.1`
-    - `.sha256` が同梱されていない環境ではハッシュ照合は自動的にスキップされます。
-
-    Examples
-    --------
-    >>> from wavemae.load import load_default_pretrained
-    >>> model, meta = load_default_pretrained(device="cuda")
-    >>> meta["name"], meta["shape"]["latent_dim"], meta["repos"]["library"]
-    ('wavemae_base_256', 64, 'https://github.com/Mantis-Ryuji/WaveMAE')
+    既定構成:
+    ``seq_len=256, d_model=256, nhead=4, num_layers=4, dim_feedforward=1024,
+      dropout=0.1, use_learnable_pos=True, latent_dim=64, dec_hidden=256, dec_dropout=0.1``
     """
-    # 1) モデル構築
     model = _build_model_default(device=device)
 
-    # 2) アセット解決（存在しなくても meta にパスは入れる）
-    weight_file = "wavemae_base_256.pt"   # 同梱する既定重みファイル名
+    weight_file = "wavemae_base_256.pt"
     weight_path = _asset_path(weight_file)
     sha256_path = _asset_path(weight_file + ".sha256")
 
-    # 3) ロード試行
-    loaded_ok = False
-    warn_msg = ""
-
+    loaded_ok, warn_msg = False, ""
     try:
         if not os.path.exists(weight_path):
             raise FileNotFoundError(weight_path)
-
-        # (任意) 整合性検証
         if verify_hash and os.path.exists(sha256_path):
             _verify_sha256(weight_path, sha256_path)
-
-        # 読み込み
         map_location = model.device if hasattr(model, "device") else (
             torch.device(device) if device is not None else "cpu"
         )
         state = torch.load(weight_path, map_location=map_location)
-        if isinstance(state, dict) and "state_dict" in state:  # checkpoint 形式でもOK
+        if isinstance(state, dict) and "state_dict" in state:
             state = state["state_dict"]
         model.load_state_dict(state, strict=strict)
         loaded_ok = True
-
     except Exception as e:
         warn_msg = f"事前学習済み重みをloadできませんでした: {e}"
         logger.warning(warn_msg)
 
-    # 4) meta を整える（repo は固定）
-    map_location_str = str(getattr(model, "device", device or ("cuda" if torch.cuda.is_available() else "cpu")))
     meta: Dict[str, Any] = {
-        "name": os.path.splitext(os.path.basename(weight_path))[0],  # "wavemae_base_256"
+        "name": os.path.splitext(os.path.basename(weight_path))[0],
         "shape": _introspect_shape(model),
-        "repos": dict(_REPOS),  # {"library": ..., "pretraining": ...}
-        "weight_path": weight_path,
-        "sha256_path": sha256_path if os.path.exists(sha256_path) else "",
-        "device": map_location_str,
+        "repos": dict(_REPOS),
+        "device": str(getattr(model, "device", device or ("cuda" if torch.cuda.is_available() else "cpu"))),
         "strict": bool(strict),
         "pretrained_loaded": bool(loaded_ok),
     }
     if not loaded_ok:
         meta["warning"] = warn_msg
-
     return model, meta
