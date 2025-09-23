@@ -410,9 +410,9 @@ class WaveMAE(nn.Module):
         Decoder(MLP) の隠れ次元。
     dec_dropout : float, default=0.1
         Decoder 内のドロップアウト率。
-    n_blocks : int, default=16
+    n_blocks : int, default=32
         系列を等分するブロック数。
-    n_mask : int, default=12
+    n_mask : int, default=24
         デフォルトでマスクするブロック数 (可視マスク生成に使用)。
 
     Notes
@@ -439,8 +439,8 @@ class WaveMAE(nn.Module):
         dec_hidden: int = 256,
         dec_dropout: float = 0.1,
         # masking
-        n_blocks: int = 16,
-        n_mask: int = 12,
+        n_blocks: int = 32,
+        n_mask: int = 24,
     ) -> None:
         super().__init__()
         self.seq_len = int(seq_len)
