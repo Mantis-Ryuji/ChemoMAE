@@ -412,7 +412,7 @@ class WaveMAE(nn.Module):
         Decoder 内のドロップアウト率。
     n_blocks : int, default=16
         系列を等分するブロック数。
-    n_mask : int, default=8
+    n_mask : int, default=12
         デフォルトでマスクするブロック数 (可視マスク生成に使用)。
 
     Notes
@@ -440,7 +440,7 @@ class WaveMAE(nn.Module):
         dec_dropout: float = 0.1,
         # masking
         n_blocks: int = 16,
-        n_mask: int = 8,
+        n_mask: int = 12,
     ) -> None:
         super().__init__()
         self.seq_len = int(seq_len)
