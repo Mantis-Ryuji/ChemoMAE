@@ -75,9 +75,9 @@ def make_weighted_sampler_by_cosine(
     train_ds: Dataset,
     ref_vec: np.ndarray | torch.Tensor,
     *,
-    cos_mid: float = 0.50,       # どの類似度でS字の折れ目にするか
-    cos_beta: float = 8.0,       # 勾配の鋭さ（大きいほど急）
-    clip: tuple[float, float] = (0.3, 3.0),  # sim≈1も拾う下限 / 低cosの上限を抑える
+    cos_mid: float = 0.50,
+    cos_beta: float = 8.0,
+    clip: tuple[float, float] = (0.3, 3.0),
     replacement: bool = True,
     plot_path: str | Path | None = None,
 ) -> WeightedRandomSampler:
@@ -105,27 +105,32 @@ def make_weighted_sampler_by_cosine(
     Parameters
     ----------
     train_ds : torch.utils.data.Dataset
-        サンプル集合。`.__getitem__` が (L,) ベクトルを返すことを想定。
+        以下のいずれにも対応：
+        - **TensorDataset**（1 つめのテンソルを特徴とみなす）
+        - `.data` に `torch.Tensor` を持つ Dataset
+        - `__getitem__` が `x` もしくは `(x, ...)` を返す一般的 Dataset（先頭要素を特徴とみなす）
     ref_vec : np.ndarray | torch.Tensor, shape (L,)
-        基準ベクトル（通常は `compute_reference_vector` の出力）。
+        基準ベクトル（例: `compute_reference_vector(X)` の出力）。
     cos_mid : float, default=0.50
-        シグモイドの折れ目（類似度しきい値）。
+        シグモイドの折れ目（しきい値 m）。
     cos_beta : float, default=8.0
-        シグモイドの傾き（大きいほど遷移が急峻）。
+        シグモイドの傾き（β）。大きいほど遷移が急。
     clip : (float, float), default=(0.3, 3.0)
-        正規化後の重みをこの範囲にクリップ。
+        平均を 1 に正規化後、重みをこの範囲にクリップ。
     replacement : bool, default=True
-        WeightedRandomSampler の引数。True=復元抽出。
+        WeightedRandomSampler の復元抽出フラグ。
     plot_path : str | Path | None, default=None
-        与えると重み関数の分布を図示して保存。
+        指定すると重み関数のプロットを保存。
 
     Returns
     -------
-    sampler : torch.utils.data.WeightedRandomSampler
-        コサイン類似度に基づいて重み付けされたサンプラー。
+    torch.utils.data.WeightedRandomSampler
+        コサイン類似度に応じて重み付けされたサンプラー。
 
     Notes
     -----
+    - `train_ds` が **TensorDataset** の場合、`train_ds.tensors[0]` を特徴ベクトルとみなします。
+    - それ以外は、`__getitem__` が `(x, label, ...)` を返すと仮定し **先頭要素 x** を集めます。
     - 重みは平均を 1 に正規化した後、`clip` 範囲でクリップされる。
     - `replacement=True` の場合、1エポックで `num_samples=len(train_ds)` サンプルが得られる。
     - 典型的な使い方は DataLoader に渡すこと：
@@ -193,28 +198,41 @@ def make_weighted_sampler_by_cosine(
     >>> len(list(iter(sampler)))
     100
     """
-    # 1) collect
-    if hasattr(train_ds, "data") and isinstance(train_ds.data, torch.Tensor):
+    # 1) collect features X robustly (TensorDataset / .data / generic Dataset)
+    if hasattr(train_ds, "tensors"):  # TensorDataset
+        X = train_ds.tensors[0]
+    elif hasattr(train_ds, "data") and isinstance(getattr(train_ds, "data"), torch.Tensor):
         X = train_ds.data
     else:
-        X = torch.stack([train_ds[i] for i in range(len(train_ds))], dim=0)
+        first = train_ds[0]
+        if isinstance(first, (tuple, list)):
+            X = torch.stack([train_ds[i][0] for i in range(len(train_ds))], dim=0)
+        else:
+            X = torch.stack([train_ds[i] for i in range(len(train_ds))], dim=0)
+    X = torch.as_tensor(X, dtype=torch.float32)
 
-    sims = cosine_to_reference(X, ref_vec).astype(np.float64)  # [-1, 1]
+    # 2) cosine similarity to reference in [-1, 1]
+    sims = cosine_to_reference(X, ref_vec).astype(np.float64)
 
-    # 2) weights: pure sigmoid (farther -> heavier)
-    beta = float(cos_beta); mid = float(cos_mid)
-    w = 1.0 / (1.0 + np.exp(-beta * (mid - sims)))   # ← 単調シグモイド
+    # 3) weights: pure sigmoid (farther -> heavier)
+    beta = float(cos_beta)
+    mid = float(cos_mid)
+    w = 1.0 / (1.0 + np.exp(-beta * (mid - sims)))
     w = w.astype(np.float32)
 
-    # 3) normalize & clip
+    # 4) normalize & clip
     w /= (w.mean() + 1e-12)
     w = np.clip(w, clip[0], clip[1])
 
-    # 4) plot
+    # 5) optional plot
     if plot_path and plt is not None:
         _plot_cosine_weights_sigmoid_cos(sims, cos_mid=mid, cos_beta=beta, path=plot_path)
 
-    return WeightedRandomSampler(weights=torch.from_numpy(w), num_samples=sims.shape[0], replacement=replacement)
+    return WeightedRandomSampler(
+        weights=torch.from_numpy(w),
+        num_samples=int(sims.shape[0]),
+        replacement=replacement,
+    )
 
 
 def _plot_cosine_weights_sigmoid_cos(sims, *, cos_mid: float, cos_beta: float, path: str | Path):

@@ -21,7 +21,7 @@ def test_compute_reference_and_cosine_shapes_and_bounds():
 def test_make_weighted_sampler_runs_and_weights_reasonable(tmp_path):
     torch.manual_seed(0)
     X = torch.randn(50, 16)
-    ds = TensorDataset(X.numpy())
+    ds = TensorDataset(X)
     ref = compute_reference_vector(X)
     sampler = make_weighted_sampler_by_cosine(
         ds, ref, cos_mid=0.5, cos_beta=8.0, clip=(0.3, 3.0), replacement=True,
