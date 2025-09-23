@@ -30,9 +30,8 @@ def test_encoder_accepts_visible_mask_from_make_block_mask():
                     dim_feedforward=64, latent_dim=10, n_blocks=12, n_mask=3)
 
     x = torch.randn(B, L)
-    masked = model.make_mask(B)     # True=masked（ユーティリティ）
-    visible = ~masked               # True=visible（エンコーダに渡す）
-    z = model.encode(x, visible)
+    visible_mask = model.make_visible(B)
+    z = model.encode(x, visible_mask)
 
     assert z.shape == (B, 10)
     norms = z.norm(dim=1)

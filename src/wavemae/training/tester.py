@@ -10,6 +10,7 @@ from ..models.losses import masked_sse, masked_mse
 
 
 class Tester:
+    __test__ = False  # pytest に「これはテストクラスではない」と伝える
     r"""
     Evaluate a trained WaveMAE model on a dataset.
 
