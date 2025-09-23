@@ -16,6 +16,52 @@ from .callbacks import EarlyStopping, EMACallback
 
 @dataclass
 class TrainerConfig:
+    r"""
+    Configuration container for the `Trainer`.
+
+    概要
+    ----
+    学習ループでよく使う設定をひとまとめにしたクラス。
+    実体はただの名前付き属性（dataclass 風）なので、インスタンス化後に上書き可能。
+
+    Attributes
+    ----------
+    out_dir : str | Path, default="runs"
+        すべての出力（チェックポイント, 履歴, 可視化画像など）を保存するディレクトリ。
+    amp : bool, default=True
+        AMP (Automatic Mixed Precision) を使用するかどうか。
+    amp_dtype : {"bf16", "fp16"}, default="bf16"
+        AMP の精度種別。
+        - "bf16" は近年の GPU (A100/H100 など) で安定。
+        - "fp16" はより古い GPU でも動作。
+    enable_tf32 : bool, default=True
+        TensorFloat-32 を有効化するか。Ampere 以降の GPU で効果あり。
+    grad_clip : float | None, default=1.0
+        勾配クリッピングの最大ノルム。None の場合は無効。
+    use_ema : bool, default=True
+        EMA (Exponential Moving Average) によるモデルパラメータ追跡を有効化するか。
+    ema_decay : float, default=0.999
+        EMA の減衰率。大きいほど履歴の影響が長く残る。
+    loss_type : {"sse", "mse"}, default="sse"
+        損失関数の種類。
+        - "sse" = masked_sse
+        - "mse" = masked_mse
+    reduction : {"sum", "mean", "batch_mean"}, default="batch_mean"
+        損失の集約方法。`masked_sse`/`masked_mse` に渡される。
+    early_stop_patience : int | None, default=20
+        EarlyStopping を使う場合の patience。
+        None の場合は無効。
+    early_stop_start_ratio: float = 0.5
+        EarlyStopping の監視を開始する時期を総エポック数に対する割合で指定。
+        例: 0.5 → 学習の半分を経過してから監視を開始。
+    early_stop_min_delta : float, default=0.0
+        EarlyStopping 判定での改善幅の閾値。
+    resume_from : str | Path | None, default="auto"
+        学習再開のチェックポイントパス。
+        - "auto" = `out_dir` 内の最新スナップショットを自動検出。
+        - str/Path を指定するとそのファイルから復元。
+        - None なら常に新規学習。
+    """
     out_dir: str | Path = "runs"
     amp: bool = True
     amp_dtype: str = "bf16"  # "bf16" | "fp16"
@@ -26,18 +72,74 @@ class TrainerConfig:
     loss_type: str = "sse"   # "sse" | "mse"
     reduction: str = "batch_mean"  # for sse/mse
     early_stop_patience: Optional[int] = 20
+    early_stop_start_ratio: float = 0.5
     early_stop_min_delta: float = 0.0
     resume_from: Optional[str | Path] = "auto"
 
 
 class Trainer:
-    """
-    WaveMAE 系の再構成タスク向け汎用 Trainer（モデルは損失を計算しない設計）。
-      - AMP(bf16/fp16), TF32, EMA, grad_clip, scheduler 対応
-      - Checkpoint: 毎 epoch `last.pt`、改善時 `best.pt` と `best_model.pt`（重みのみ）
-      - ログ: out_dir/training_history.json
-    """
+    r"""
+    Generic trainer for WaveMAE reconstruction tasks.
 
+    概要
+    ----
+    - WaveMAE 系モデルの学習ループを管理するクラス。
+    - AMP (bf16/fp16), TF32, EMA, 勾配クリッピング, スケジューラに対応。
+    - チェックポイントや履歴ログの保存機構を備え、resume/early stopping も可能。
+
+    主な機能
+    --------
+    - **train_one_epoch**: 1エポック分の学習。AMP/grad_clip/EMA を適用。
+    - **validate**: 検証ループ。EMA を一時適用して val_loss を測定。
+    - **fit**: 学習全体の制御。履歴保存、checkpointing、early stopping を実行。
+    - **save_checkpoint** / **load_checkpoint**:
+      モデル・optimizer・scheduler・scaler・EMA・履歴を含む完全な状態を保存／復元。
+    - **save_weights_only**:
+      モデルの重みのみ保存（推論用の `best_model.pt` など）。
+
+    ログと保存
+    ----------
+    - out_dir/training_history.json : エポックごとの train/val loss と学習率を追記保存。
+    - out_dir/checkpoints/last.pt   : 最新の完全 checkpoint。
+    - out_dir/checkpoints/best.pt   : 検証損失が改善した時点での完全 checkpoint。
+    - out_dir/best_model.pt         : 検証損失最良時のモデル重みのみ。
+
+    損失の扱い
+    ----------
+    - モデルは `(x_recon, z, visible_mask)` を返す前提。
+    - 内部で `loss = masked_sse/mse(x_recon, x, ~visible_mask)` を計算。
+      （つまり **mask=True=masked**, ~mask=True=visible の規約を統一）
+
+    Parameters
+    ----------
+    model : nn.Module
+        学習対象の WaveMAE モデル。
+    optimizer : torch.optim.Optimizer
+        最適化手法。
+    train_loader : Iterable
+        学習データローダー。
+    val_loader : Iterable, optional
+        検証データローダー。
+    device : str | torch.device, default="cuda"
+        学習に用いるデバイス。
+    scheduler : torch.optim.lr_scheduler.LambdaLR, optional
+        学習率スケジューラ。
+    cfg : TrainerConfig, default=TrainerConfig()
+        学習設定（AMP, EMA, early stop, 出力先など）。
+
+    戻り値
+    ------
+    fit() : dict
+        - "best": {"epoch": int, "val_loss": float}
+        - "epochs": int （実際に走ったエポック数）
+
+    使用例
+    ------
+    >>> trainer = Trainer(model, optimizer, train_loader, val_loader, device="cuda", cfg=TrainerConfig())
+    >>> history = trainer.fit(epochs=100)
+    >>> print(history["best"])
+    {'epoch': 42, 'val_loss': 0.0123}
+    """
     def __init__(
         self,
         model: nn.Module,
@@ -172,9 +274,9 @@ class Trainer:
             x = self._to_x(batch)
 
             with self._autocast_ctx():
-                # モデルは (x_recon, z, mask) を返す
-                x_recon, _, mask = self.model(x)
-                loss = self._compute_loss(x_recon, x, mask)
+                # モデルは (x_recon, z, visible_mask) を返す
+                x_recon, _, visible_mask = self.model(x)
+                loss = self._compute_loss(x_recon, x, ~visible_mask)
 
             self.optimizer.zero_grad(set_to_none=True)
             if self.scaler.is_enabled():
@@ -215,8 +317,8 @@ class Trainer:
         for batch in self.val_loader:
             x = self._to_x(batch)
             with self._autocast_ctx():
-                x_recon, _, mask = self.model(x)
-                loss = self._compute_loss(x_recon, x, mask)
+                x_recon, _, visible_mask = self.model(x)
+                loss = self._compute_loss(x_recon, x, ~visible_mask)
             meter_sum += float(loss.item()) * x.size(0)
             meter_cnt += x.size(0)
 
@@ -229,7 +331,7 @@ class Trainer:
         es = EarlyStopping(
             patience=self.cfg.early_stop_patience if self.cfg.early_stop_patience is not None else 10**9,
             min_delta=self.cfg.early_stop_min_delta,
-            start_epoch_ratio=0.5,
+            start_epoch_ratio=self.cfg.early_stop_start_ratio,
         )
         es.setup(epochs)
 

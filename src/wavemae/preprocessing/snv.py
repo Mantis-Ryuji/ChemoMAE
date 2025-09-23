@@ -11,8 +11,7 @@ except Exception:  # pragma: no cover
     _HAS_TORCH = False
 
 __all__ = [
-    "snv",
-    "SNVScaler",
+    "SNVScaler"
 ]
 
 def _as_numpy(x):
@@ -75,12 +74,43 @@ def snv(x, eps: float = 1e-12):
 
 @dataclass
 class SNVScaler:
-    """
-    行単位の SNV 変換器（完全 stateless）。
-    - fit() は存在しません。transform() は毎回行ごとに mean/std を計算します。
-    - NumPy / PyTorch いずれの入力でも、同じ型で返します。
-    - 標準偏差は不偏推定（ddof=1、ただし行長が1のときは ddof=0）を用います。
-    - inverse_transform() は transform_stats=True で得た (mu, sd) を使って復元できます。
+    r"""
+    Standard Normal Variate (SNV) transformer for spectra (stateless).
+
+    概要
+    ----
+    - 各行（サンプルごと）に対して平均・標準偏差で標準化を行う。
+    - **完全 stateless**: fit() は存在せず、毎回 transform() が mean/std を計算。
+    - NumPy / PyTorch いずれの入力でも動作し、同じ型で返却する。
+    - 標準偏差は不偏推定（ddof=1、ただし行長=1 の場合は ddof=0）。
+    - `transform_stats=True` の場合は `(y, mu, sd)` を返し、inverse_transform() に利用できる。
+
+    Parameters
+    ----------
+    eps : float, default=1e-12
+        数値安定化のために標準偏差に加える微小値。
+    copy : bool, default=True
+        True の場合は入力配列をコピーしてから変換。
+    transform_stats : bool, default=False
+        True の場合、`transform()` が `(y, mu, sd)` を返す。
+
+    Methods
+    -------
+    transform(X)
+        入力スペクトル X を SNV 変換する。
+        - `transform_stats=False`: X と同じ型の標準化後データを返す。
+        - `transform_stats=True`: (標準化後データ, 平均, 標準偏差) を返す。
+          mu, sd は NumPy float32 配列で返る。
+    inverse_transform(Y, mu, sd)
+        `transform_stats=True` で得た mu, sd を使って逆変換する。
+
+    Examples
+    --------
+    >>> scaler = SNVScaler()
+    >>> X = np.array([[1.0, 2.0, 3.0],
+    ...               [4.0, 5.0, 6.0]], dtype=np.float32)
+    >>> Y, mu, sd = SNVScaler(transform_stats=True).transform(X)
+    >>> X_rec = SNVScaler().inverse_transform(Y, mu=mu, sd=sd)
     """
     eps: float = 1e-12
     copy: bool = True

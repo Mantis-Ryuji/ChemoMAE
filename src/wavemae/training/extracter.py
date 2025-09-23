@@ -12,6 +12,36 @@ from ..models.wave_mae import WaveMAE  # 型ヒント用
 
 @dataclass
 class ExtractConfig:
+    r"""
+    Configuration for latent feature extraction with `Extracter`.
+
+    概要
+    ----
+    - 学習済み WaveMAE から **全可視 (visible=True)** で潜在表現 z を一括抽出する際の設定。
+    - AMP や出力の保存形式・返却形式を制御する。
+
+    Attributes
+    ----------
+    device : str | torch.device, default="cuda"
+        推論に用いるデバイス（"cuda" / "cpu" など）。
+    amp : bool, default=True
+        AMP (Automatic Mixed Precision) を使用するか。
+    amp_dtype : {"bf16", "fp16"}, default="bf16"
+        AMP の精度種別。GPU に応じて選択（A100/H100 などは bf16 が安定）。
+    save_path : str | Path | None, default=None
+        抽出した潜在表現 Z の保存先。拡張子で書式を自動判定：
+        - ".npy" → `np.save`（numpy array で保存）
+        - その他 → `torch.save`（torch.Tensor で保存）
+        None の場合は保存しない。
+    return_numpy : bool, default=False
+        `True` の場合は `np.ndarray` を返す。`False` なら `torch.Tensor` を返す。
+
+    Notes
+    -----
+    - `Extracter` は常に **全可視** で `model.encode(x, visible)` を呼び出すため、
+      乱数マスクに依存しない **決定的な特徴抽出** を行う。
+    - 保存と返却形式は独立：`save_path=".npy"` かつ `return_numpy=False` のような組み合わせも可。
+    """
     device: str | torch.device = "cuda"
     amp: bool = True
     amp_dtype: Literal["bf16", "fp16"] = "bf16"
@@ -20,13 +50,38 @@ class ExtractConfig:
 
 
 class Extracter:
-    """
-    WaveMAE の encode() を使って、全可視（all-visible）で潜在表現 Z を一括抽出するヘルパー。
-    - モデルのマスクは使わず、常に visible_mask=True のみで encode します。
-    - AMP 対応（bf16/fp16）。Z は CPU に集約。
-    - 保存: save_path が ".npy" なら np.save、その他は torch.save。
-    """
+    r"""
+    Helper to extract latent features Z from a trained WaveMAE in all-visible mode.
 
+    概要
+    ----
+    - `WaveMAE.encode` を **全可視マスク (visible_mask=True)** で呼び出し、
+      潜在表現 Z を一括で抽出する。
+    - 推論時は AMP (bf16/fp16) に対応し、結果は CPU に集約される。
+    - `ExtractConfig.save_path` が指定されていれば自動保存される。
+
+    Parameters
+    ----------
+    model : WaveMAE
+        学習済み WaveMAE モデル。
+    cfg : ExtractConfig, default=ExtractConfig()
+        抽出処理の設定（デバイス、AMP、保存先、返却形式など）。
+
+    Usage
+    -----
+    >>> model = WaveMAE(...)
+    >>> cfg = ExtractConfig(device="cuda", save_path="latent.npy", return_numpy=True)
+    >>> extractor = Extracter(model, cfg)
+    >>> Z = extractor(loader)   # -> np.ndarray shape (N, D)
+
+    Notes
+    -----
+    - **マスクは一切使わない**ため、乱数に依存しない決定的な潜在表現が得られる。
+    - `save_path`:
+        * 拡張子が ".npy" の場合 → `np.save` で保存。
+        * それ以外 → `torch.save` で保存。
+    - 返り値の型は `cfg.return_numpy` に依存する。
+    """
     def __init__(self, model: WaveMAE, cfg: ExtractConfig = ExtractConfig()):
         self.model = model
         self.cfg = cfg
@@ -48,10 +103,10 @@ class Extracter:
             x = batch[0] if isinstance(batch, (list, tuple)) else batch
             x = x.to(self.device, non_blocking=True)  # (B, L)
             B, L = x.shape
-            visible = torch.ones(B, L, dtype=torch.bool, device=self.device)
+            visible_mask = torch.ones(B, L, dtype=torch.bool, device=self.device)
 
             with self._autocast():
-                z = self.model.encode(x, visible)  # (B, D)
+                z = self.model.encode(x, visible_mask)  # (B, D)
 
             feats.append(z.detach().cpu())
 

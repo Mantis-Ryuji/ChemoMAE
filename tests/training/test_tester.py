@@ -21,7 +21,8 @@ def test_tester_runs_and_writes_history(tmp_path):
     model = _tiny_model(L)
 
     t = Tester(model, device="cpu", out_dir=tmp_path)
-    avg = t.run(dl, criterion="sse", reduction="batch_mean", fixed_mask=None)
+    # 新API: fixed_visible=None
+    avg = t.run(dl, criterion="sse", reduction="batch_mean", fixed_visible=None)
     assert isinstance(avg, float)
 
     # history file appended
@@ -32,16 +33,17 @@ def test_tester_runs_and_writes_history(tmp_path):
     assert items[-1]["phase"] == "test" and items[-1]["criterion"] == "sse"
 
 
-def test_tester_fixed_mask_path(tmp_path):
+def test_tester_fixed_visible_path(tmp_path):
     B, L = 4, 24
     x = torch.randn(B, L)
     dl = DataLoader(TensorDataset(x), batch_size=2, shuffle=False)
     model = _tiny_model(L)
 
-    # use a fixed half-mask
-    mask = torch.zeros(L, dtype=torch.bool)
-    mask[: L // 2] = True
+    # 旧: fixed_mask（True=隠す） → 新: fixed_visible（True=使う）
+    # ここでは「前半のみ可視」にしたいので、visible を直接作る
+    visible = torch.zeros(L, dtype=torch.bool)
+    visible[: L // 2] = True  # 前半 True=可視
 
     t = Tester(model, device="cpu", out_dir=tmp_path)
-    avg = t.run(dl, criterion="mse", reduction="batch_mean", fixed_mask=mask)
+    avg = t.run(dl, criterion="mse", reduction="batch_mean", fixed_visible=visible)
     assert isinstance(avg, float)

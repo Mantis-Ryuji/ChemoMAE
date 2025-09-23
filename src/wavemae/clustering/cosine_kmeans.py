@@ -12,24 +12,52 @@ __all__ = ["CosineKMeans", "elbow_ckmeans"]
 
 
 class CosineKMeans(nn.Module):
-    """Cosine (spherical) K-Means with k-means++ init and optional streaming.
+    r"""
+    Cosine (spherical) K-Means with k-means++ init and optional streaming.
 
-    Args:
-        n_clusters: number of clusters K
-        tol: convergence tolerance on mean objective (relative OR absolute)
-        max_iter: maximum number of EM iterations
-        device: "cuda" / "cpu" or torch.device
-        random_state: int seed for deterministic multinomial
-        use_squared_init: if True, use D(x)^2 for k-means++ probs (通常は False 推奨)
+    概要
+    ----
+    - 目的関数: 平均コサイン不類似度 `J = mean(1 - cos(x, c))`
+    - E-step: `argmax cos(x, c_k)` により割当
+    - M-step: クラスタ平均を L2 正規化（球面 k-means の標準形）
+    - k-means++ 初期化（フルデバイス / ストリーミングの両方に対応）
+    - 内部計算は原則 fp32（half/bf16 入力でも内部で昇格）
+    - VRAM が厳しい場合はチャンクストリーミング（CPU→GPU）でメモリ使用量を制御可能
 
-    Notes:
-        - 特徴次元 latent_dim は fit(X) 時に X.size(1) から自動決定。
-        - 目的関数は平均コサイン不類似度 J = mean(1 - cos(x, c))。
-        - E-step: argmax cos、M-step: クラスタ平均→L2正規化（球面 k-means の標準形）。
-        - 内部計算は fp32 で実行（half/bf16 入力でも内部で昇格）。
-        - 学習後の推論再利用は save_centroids / load_centroids を使用（最終中心のみ保存）。
+    Parameters
+    ----------
+    n_clusters : int, default=8
+        クラスタ数 K。
+    tol : float, default=1e-3
+        収束判定の許容値（相対 or 絶対のどちらかを満たしたら停止）。
+    max_iter : int, default=500
+        EM 反復の最大回数。
+    device : str | torch.device, default="cuda"
+        学習・推論に用いるデバイス。
+    random_state : int | None, default=42
+        初期化・多項分布サンプリングの乱数シード（決定的動作に使用）。
+    use_squared_init : bool, default=False
+        k-means++ で距離に `D(x)^2` を使うか（通常は False 推奨）。
+
+    Attributes
+    ----------
+    centroids : torch.Tensor, shape (K, D)
+        L2 正規化済みのクラスタ中心（register_buffer で保持）。
+    latent_dim : int | None
+        特徴次元 D。`fit()` 実行時に `X.size(1)` から自動決定。
+    inertia_ : float
+        最終反復での `mean(1 - cos)` 値（SSE ではない点に注意）。
+    _fitted : bool
+        学習済みであれば True。
+
+    Notes
+    -----
+    - 本実装は「球面 k-means」を想定しており、**入力ベクトルは行方向に L2 正規化**して扱います。
+      内部で必要に応じて `l2_normalize_rows` を適用します。
+    - ストリーミング（`chunk>0`）では CPU 上のバッチを逐次 GPU に送り、距離計算/更新のみ GPU で行います。
+      大規模データでも VRAM を抑えてクラスタリングできます。
+    - 学習後の再利用は `save_centroids()` / `load_centroids()` を利用（中心のみ保存・復元）。
     """
-
     def __init__(
         self,
         n_clusters: int = 8,
@@ -171,9 +199,31 @@ class CosineKMeans(nn.Module):
     # ----------------------------- Fit / Predict -----------------------------
     @torch.no_grad()
     def fit(self, X: torch.Tensor, chunk: Optional[int] = None) -> "CosineKMeans":
-        """Fit centroids on X.
-        - chunk is None: full-device (X moved to device)
-        - chunk > 0: CPU→GPU streaming (VRAM saving)
+        r"""
+        Fit centroids on `X`.
+
+        概要
+        ----
+        - k-means++ で中心を初期化し、E/M ステップを最大 `max_iter` まで反復。
+        - `chunk is None` ならフルデバイスで一括学習、`chunk>0` なら CPU→GPU ストリーミング。
+
+        Parameters
+        ----------
+        X : torch.Tensor, shape (N, D)
+            入力特徴（任意の dtype 可。内部で fp32 に昇格して計算）。
+        chunk : int | None, default=None
+            ストリーミングのチャンクサイズ（ステップあたりのサンプル数）。
+            `None` ならフルデバイス。`>0` でストリーミング（GPU 前提）。
+
+        Returns
+        -------
+        self : CosineKMeans
+            学習済みインスタンス。
+
+        Raises
+        ------
+        ValueError
+            入力形状/値が不正、または `n_clusters > N` のとき。
         """
         if X.ndim != 2:
             raise ValueError(f"X must be 2D, got {tuple(X.shape)}")
@@ -264,6 +314,21 @@ class CosineKMeans(nn.Module):
 
     @torch.no_grad()
     def fit_predict(self, X: torch.Tensor, chunk: Optional[int] = None) -> torch.Tensor:
+        r"""
+        Fit on `X` and return labels.
+
+        Parameters
+        ----------
+        X : torch.Tensor, shape (N, D)
+            入力特徴。
+        chunk : int | None, default=None
+            ストリーミングのチャンクサイズ。
+
+        Returns
+        -------
+        labels : torch.Tensor, shape (N,), dtype=torch.long
+            割当クラスタ ID。
+        """
         self.fit(X, chunk=chunk)
         return self.predict(X, chunk=chunk)
 
@@ -274,9 +339,36 @@ class CosineKMeans(nn.Module):
         return_dist: bool = False,
         chunk: Optional[int] = None,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        """
-        Predict labels (and optionally distances) for X.
-        return_dist=True の場合、(N, K) の 1 - cos 行列を返す（メモリ使用量に注意）。
+        r"""
+        Predict cluster labels (and optionally distances) for `X`.
+
+        概要
+        ----
+        - `labels = argmax_k cos(x, c_k)` を返す。
+        - `return_dist=True` の場合、`1 - cos` の距離行列も返す（メモリ消費に注意）。
+
+        Parameters
+        ----------
+        X : torch.Tensor, shape (N, D)
+            入力特徴。
+        return_dist : bool, default=False
+            True のとき `(N, K)` の距離行列（1 - cos）も返す。
+        chunk : int | None, default=None
+            ストリーミングのチャンクサイズ。`None` ならフルデバイス。
+
+        Returns
+        -------
+        labels : torch.Tensor, shape (N,), dtype=torch.long
+            割当クラスタ ID。
+        dist : torch.Tensor, shape (N, K), optional
+            1 - cos の距離行列（`return_dist=True` のとき）。
+
+        Raises
+        ------
+        RuntimeError
+            学習済みでない（centroids 未初期化）場合。
+        ValueError
+            入力形状が不正、または特徴次元 D が学習時と異なる場合。
         """
         if (
             not self._fitted
@@ -322,7 +414,24 @@ class CosineKMeans(nn.Module):
     # ----------------------------- Centroids I/O  -----------------------------
     @torch.no_grad()
     def save_centroids(self, path: str | bytes | "os.PathLike[str]"):
-        """最終クラスタ中心だけを保存（推論再利用向けの最小構成）。"""
+        r"""
+        Save only the final centroids for later reuse.
+
+        概要
+        ----
+        - 予測再利用に必要な最小情報（L2 正規化済み中心と inertia_）を保存。
+        - `torch.save` でシリアライズ。
+
+        Parameters
+        ----------
+        path : str | PathLike
+            保存先パス。
+
+        Raises
+        ------
+        RuntimeError
+            未学習で中心が存在しない場合。
+        """
         if not self._fitted or self.centroids.numel() == 0:
             raise RuntimeError("Model is not fitted; no centroids to save.")
         payload = {
@@ -333,11 +442,32 @@ class CosineKMeans(nn.Module):
 
     @torch.no_grad()
     def load_centroids(self, path: str | bytes | "os.PathLike[str]", *, strict_k: bool = True):
-        """
-        保存した最終クラスタ中心を読み込み、即 predict 可能な状態にする。
-        Args:
-            path: torch.save で保存したファイル
-            strict_k: True のとき、ファイル内の K と self.n_clusters が異なる場合にエラー
+        r"""
+        Load saved centroids and enable immediate prediction.
+
+        概要
+        ----
+        - `save_centroids()` で保存した中心を読み込み、`predict()` 可能な状態に復元する。
+        - `strict_k=True` の場合、保存データの K と `self.n_clusters` が一致しないとエラー。
+
+        Parameters
+        ----------
+        path : str | PathLike
+            保存ファイルのパス（`torch.save` 形式）。
+        strict_k : bool, default=True
+            K の一致を厳密に要求するか。
+
+        Returns
+        -------
+        self : CosineKMeans
+            復元済みインスタンス。
+
+        Raises
+        ------
+        KeyError
+            保存データに `centroids` が含まれない場合。
+        ValueError
+            セントロイド形状が不正、または `strict_k=True` で K が不一致の場合。
         """
         payload = torch.load(path, map_location=self.device)
         if "centroids" not in payload:
@@ -374,9 +504,62 @@ def elbow_ckmeans(
     verbose: bool = True,
     random_state: int = 42,
 ) -> Tuple[List[int], List[float], int, int, float]:
-    """
-    Sweep k=1..k_max, record mean inertia, choose K by curvature.
-    Returns: (k_list, inertias, optimal_k, elbow_idx, kappa)
+    r"""
+    Sweep K from 1..k_max for cosine k-means and pick an elbow by curvature.
+
+    概要
+    ----
+    - `K = 1..k_max` について CosineKMeans（`cluster_module`）を学習し、
+      目的値 `inertia = mean(1 - cos(x, c))` を記録。
+    - `find_elbow_curvature(k_list, inertias)` により **曲率ベースのエルボー**を自動選択。
+    - 返り値は `(k_list, inertias, optimal_k, elbow_idx, kappa)`。
+
+    Parameters
+    ----------
+    cluster_module : Callable[..., CosineKMeans]
+        `CosineKMeans` 互換のコンストラクタ（例: `CosineKMeans` 自体）。
+        呼び出し側で `n_clusters`, `device`, `random_state` などを渡せる必要があります。
+    X : torch.Tensor, shape (N, D)
+        入力特徴行列。内部で `device` へ転送します（既に同一ならコピー無し）。
+    device : {"cuda", "cpu"} | torch.device, default="cuda"
+        学習に用いるデバイス。
+    k_max : int, default=50
+        試すクラスタ数の上限（1..k_max を走査）。
+    chunk : int | None, default=None
+        ストリーミング学習のチャンクサイズ。`None` ならフルデバイス、
+        `>0` なら CPU→GPU ストリーミング（VRAM 節約; `CosineKMeans.fit(..., chunk=...)` に委譲）。
+    verbose : bool, default=True
+        各 K での `mean_inertia` をログ表示。
+    random_state : int, default=42
+        乱数シード。k-means++ の初期化に影響。
+
+    Returns
+    -------
+    k_list : List[int]
+        走査したクラスタ数（1..k_max）。
+    inertias : List[float]
+        各 K に対する `mean(1 - cos)` の列。通常は K を増やすと単調減少。
+    optimal_k : int
+        曲率（“折れ曲がり”）により選ばれた推奨クラスタ数。
+    elbow_idx : int
+        `k_list[elbow_idx] == optimal_k` を満たすインデックス。
+    kappa : float
+        選択点における曲率スコア（実装依存の非負値）。大きいほどエルボーが明確。
+
+    Notes
+    -----
+    - 目的値（inertia）は `J = mean(1 - cos(x, c))`。SSE ではありません。
+    - 大きな N の場合、`chunk` を設定すると VRAM を抑えて計算できます。
+    - 各 K で学習後にガーベジコレクションと GPU メモリ解放を行います。
+    - エルボー推定は `find_elbow_curvature(k_list, inertias)` に委譲します（局所 import）。
+
+    Examples
+    --------
+    >>> X = torch.randn(10000, 64)           # 特徴（未正規化でも OK：内部で行正規化）
+    >>> from wavemae.cluster import CosineKMeans
+    >>> ks, js, K, idx, kappa = elbow_ckmeans(CosineKMeans, X, k_max=30, chunk=2048)
+    >>> K
+    12
     """
     if X.ndim != 2:
         raise ValueError("X must be 2D")

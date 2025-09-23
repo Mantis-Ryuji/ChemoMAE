@@ -6,7 +6,7 @@ from wavemae.models.wave_mae import make_block_mask, WaveMAE
 def test_make_block_mask_counts_and_block_structure():
     B, L = 5, 64
     n_blocks, n_mask = 16, 5
-    mask = make_block_mask(B, L, n_blocks, n_mask)
+    mask = make_block_mask(B, L, n_blocks, n_mask)  # True=masked(隠す)
 
     assert mask.shape == (B, L) and mask.dtype is torch.bool
 
@@ -15,13 +15,12 @@ def test_make_block_mask_counts_and_block_structure():
     true_counts = mask.sum(dim=1)
     assert torch.all(true_counts == n_mask * block_size)
 
-    # 各行の True はブロック単位に連続している（ブロック境界内で連続 True）
-    # ここでは簡易に「True のインデックス差が block_size-1 の倍数」で塊を確認
+    # 連続ブロックの簡易性質（元テストの方針を踏襲）
     for b in range(B):
         idx = torch.where(mask[b])[0]
-        # ブロック境界内では等差（差分=1）が続く → 差分を見て block_size-1 ごとに切れるはず
+        if idx.numel() <= 1:
+            continue
         diffs = torch.diff(idx)
-        # 1 以外のところでブロック境界が現れる（例外なく 1 と block_size の境目のみを想定）
         assert torch.all((diffs == 1) | (diffs > 1))
 
 
@@ -31,12 +30,11 @@ def test_encoder_accepts_visible_mask_from_make_block_mask():
                     dim_feedforward=64, latent_dim=10, n_blocks=12, n_mask=3)
 
     x = torch.randn(B, L)
-    mask = model.make_mask(B)
-    visible = ~mask  # エンコーダに渡す可視マスク（True=可視）
+    masked = model.make_mask(B)     # True=masked（ユーティリティ）
+    visible = ~masked               # True=visible（エンコーダに渡す）
     z = model.encode(x, visible)
 
     assert z.shape == (B, 10)
-    # z は L2 正規化済み → ノルム ≈ 1
     norms = z.norm(dim=1)
     assert torch.allclose(norms, torch.ones_like(norms), atol=1e-5)
 

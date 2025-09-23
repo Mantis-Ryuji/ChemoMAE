@@ -22,15 +22,16 @@ def test_wave_mae_forward_shapes_and_types():
     )
 
     x = torch.randn(B, L)
-    x_recon, z, mask = model(x)
+    x_recon, z, visible = model(x)  # 第3戻り値は visible(True=使う)
 
     assert x_recon.shape == (B, L)
     assert z.shape == (B, 16)
-    assert mask.shape == (B, L) and mask.dtype == torch.bool
+    assert visible.shape == (B, L) and visible.dtype == torch.bool
 
-    # マスク総数は n_mask * block_size のはず
+    # マスク総数は n_mask * block_size のはず（masked = ~visible）
     block_size = L // model.n_blocks
-    assert int(mask[0].sum().item()) == model.n_mask * block_size
+    masked = ~visible
+    assert int(masked[0].sum().item()) == model.n_mask * block_size
 
 
 def test_wave_mae_encode_and_reconstruct_api():
@@ -39,13 +40,14 @@ def test_wave_mae_encode_and_reconstruct_api():
                     latent_dim=8, dec_hidden=32, n_blocks=6, n_mask=2)
 
     x = torch.randn(B, L)
-    # reconstruct: mask 省略可
-    xr = model.reconstruct(x)
+
+    # reconstruct: visible 省略可（内部で生成）
+    xr, _, v = model(x)
     assert xr.shape == (B, L)
+    assert v.dtype == torch.bool and v.shape == (B, L)
 
     # encode: 可視マスク（True=可視）を与える
-    mask = model.make_mask(B)
-    visible = ~mask
+    visible = torch.ones(B, L, dtype=torch.bool)
     z = model.encode(x, visible)
     assert z.shape == (B, 8)
 
@@ -57,11 +59,10 @@ def test_wave_mae_loss_and_backward_on_masked_sse():
                     n_blocks=12, n_mask=4)
 
     x = torch.randn(B, L, requires_grad=True)
-    x_recon, z, mask = model(x)
+    x_recon, z, visible = model(x)
 
-    loss = masked_sse(x_recon, x, mask, reduction="batch_mean")
+    loss = masked_sse(x_recon, x, ~visible, reduction="batch_mean")  # ← visible を反転
     loss.backward()
 
-    # エンコーダ・デコーダ側のパラメータに勾配が出ているか（どれか一つで確認）
     any_grad = any(p.grad is not None and p.grad.abs().sum().item() > 0 for p in model.parameters())
     assert any_grad, "No gradients flowed through model parameters"

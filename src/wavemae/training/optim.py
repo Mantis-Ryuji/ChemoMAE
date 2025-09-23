@@ -6,6 +6,8 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR
 from typing import Tuple
 
+__all__ = ["build_optimizer", "build_scheduler"]
+
 # -------------------------
 # walk helper
 # -------------------------
@@ -34,11 +36,47 @@ def build_optimizer(
     betas: Tuple[float, float] = (0.9, 0.95),
     eps: float = 1e-8,
 ) -> optim.Optimizer:
-    """
-    AdamW optimizer with typical weight decay exclusion:
-      - all biases
-      - LayerNorm (norm1/norm2)
-      - cls_token and pos_embed
+    r"""
+    Build an AdamW optimizer with standard weight-decay exclusions.
+
+    概要
+    ----
+    - AdamW を構築する補助関数。
+    - 通常の Transformer 系学習における慣習に従い、以下のパラメータは weight decay を除外する：
+      - **バイアス項**（`.bias`）
+      - **LayerNorm** の重み
+      - 特殊トークン：`cls_token`, `pos_embed`
+
+    Parameters
+    ----------
+    model : nn.Module
+        最適化対象のモデル。
+    lr : float, default=3e-4
+        学習率。
+    weight_decay : float, default=0.05
+        weight decay をかけるパラメータ群に対する係数。
+    betas : Tuple[float, float], default=(0.9, 0.95)
+        AdamW の β 値。慣習的に (0.9, 0.95) が Transformer 系でよく使われる。
+    eps : float, default=1e-8
+        AdamW の数値安定化項。
+
+    Returns
+    -------
+    optimizer : torch.optim.AdamW
+        構築された AdamW Optimizer。
+
+    Notes
+    -----
+    - `decay` group: 通常の重みパラメータ（weight_decay を適用）
+    - `no_decay` group: bias, LayerNorm, cls_token, pos_embed（weight_decay=0.0）
+    - これは BERT/ViT 系の学習レシピに基づく慣習で、汎用的に有効。
+
+    使用例
+    ------
+    >>> model = WaveMAE(seq_len=256)
+    >>> optimizer = build_optimizer(model, lr=1e-4, weight_decay=0.05)
+    >>> for p in optimizer.param_groups:
+    ...     print(len(p["params"]), p["weight_decay"])
     """
     decay, no_decay = [], []
     for name, p in model.named_parameters():
@@ -93,8 +131,46 @@ def build_scheduler(
     warmup_epochs: int = 1,
     min_lr_scale: float = 0.1,
 ) -> LambdaLR:
-    """
-    Wrapper: linear warmup for warmup_epochs, then cosine decay.
+    r"""
+    Build a learning-rate scheduler: **linear warmup + cosine decay**.
+
+    概要
+    ----
+    - 最初の `warmup_epochs` では学習率を 0 → base_lr へ線形にウォームアップ。
+    - その後はコサイン曲線に従って `base_lr * min_lr_scale` まで減衰。
+    - 典型的な Transformer 系のスケジューラ設計。
+
+    Parameters
+    ----------
+    optimizer : torch.optim.Optimizer
+        対象の Optimizer。
+    steps_per_epoch : int
+        1エポックあたりの更新ステップ数（= len(train_loader)）。
+    epochs : int
+        総エポック数。
+    warmup_epochs : int, default=1
+        ウォームアップを適用するエポック数。
+    min_lr_scale : float, default=0.1
+        最小学習率のスケール。最終的に `base_lr * min_lr_scale` に到達。
+
+    Returns
+    -------
+    scheduler : torch.optim.lr_scheduler.LambdaLR
+        PyTorch の LambdaLR スケジューラ。
+
+    Notes
+    -----
+    - 総ステップ数 = `steps_per_epoch * epochs`
+    - ウォームアップステップ数 = `steps_per_epoch * warmup_epochs`
+    - コサイン減衰はウォームアップ後の残りステップに適用される。
+
+    使用例
+    ------
+    >>> optimizer = build_optimizer(model, lr=1e-3)
+    >>> scheduler = build_scheduler(optimizer, steps_per_epoch=100, epochs=50, warmup_epochs=2)
+    >>> for step in range(200):  # 学習ループ内で scheduler.step() を呼び出す
+    ...     optimizer.step()
+    ...     scheduler.step()
     """
     total_steps = steps_per_epoch * epochs
     warmup_steps = steps_per_epoch * warmup_epochs

@@ -5,26 +5,46 @@ import matplotlib.pyplot as plt  # optional
 import torch
 from torch.utils.data import Dataset, WeightedRandomSampler
 
-
-
-# -----------------------------------------------------------------------------
-# Basic Dataset 
-# -----------------------------------------------------------------------------
-class SimpleDataset(Dataset):
-    def __init__(self, data: np.ndarray | torch.Tensor):
-        self.data = torch.as_tensor(data, dtype=torch.float32)
-    def __len__(self) -> int:
-        return int(self.data.shape[0])
-    def __getitem__(self, idx: int) -> torch.Tensor:
-        return self.data[idx]
-
+__all__ = ["compute_reference_vector", "make_weighted_sampler_by_cosine",]
 
 # -----------------------------------------------------------------------------
 # Reference vector & cosine utilities
 # -----------------------------------------------------------------------------
 
 def compute_reference_vector(X: np.ndarray | torch.Tensor) -> np.ndarray:
-    """Return L2-normalized mean spectrum as reference vector (np.float32)."""
+    r"""
+    Compute an L2-normalized mean spectrum as a reference vector.
+
+    概要
+    ----
+    - 入力スペクトル集合 X の平均ベクトルを計算し、L2 正規化して返す。
+    - 代表スペクトル（基準ベクトル）として、類似度計算や重み付けサンプリングなどに利用可能。
+
+    Parameters
+    ----------
+    X : np.ndarray | torch.Tensor, shape (N, L)
+        スペクトルデータ。N はサンプル数、L は波長チャネル数。
+        - torch.Tensor の場合、自動的に CPU に移して numpy.float32 に変換する。
+
+    Returns
+    -------
+    ref : np.ndarray, shape (L,), dtype=float32
+        L2 正規化された基準ベクトル。
+
+    Notes
+    -----
+    - 正規化は :math:`u \leftarrow u / \|u\|_2` として行う。
+    - ゼロ除算を避けるため、分母に 1e-12 を加えている。
+
+    例
+    --
+    >>> X = np.random.randn(100, 256).astype("float32")
+    >>> ref = compute_reference_vector(X)
+    >>> ref.shape
+    (256,)
+    >>> np.linalg.norm(ref)
+    1.0
+    """
     if isinstance(X, torch.Tensor):
         X = X.detach().cpu().numpy()
     X = np.asarray(X, np.float32)
@@ -61,7 +81,67 @@ def make_weighted_sampler_by_cosine(
     replacement: bool = True,
     plot_path: str | Path | None = None,
 ) -> WeightedRandomSampler:
-    """w = sigmoid(beta * (cos_mid - cos)) で連続重み付け（単調シグモイド）。"""
+    r"""
+    Build a WeightedRandomSampler based on cosine similarity to a reference vector.
+
+    概要
+    ----
+    - 各サンプルの系列ベクトルと基準ベクトル `ref_vec` のコサイン類似度を計算。
+    - 類似度に基づきシグモイド関数で連続的な重みを割り当てる。
+      - 基準に近いものは軽め、遠いものは重めにサンプリングされる。
+    - これにより「多数派に埋もれるサンプル」を避けつつ、少数派・外れ値寄りも拾う。
+
+    数式
+    ----
+    類似度 s ∈ [-1, 1] に対して重み w(s) を
+
+        w(s) = 1 / (1 + exp( -β * (m - s) ))
+
+    と定義する。ここで
+
+    - m = cos_mid （折れ目の位置）
+    - β = cos_beta （傾きの鋭さ）
+
+    Parameters
+    ----------
+    train_ds : torch.utils.data.Dataset
+        サンプル集合。`.__getitem__` が (L,) ベクトルを返すことを想定。
+    ref_vec : np.ndarray | torch.Tensor, shape (L,)
+        基準ベクトル（通常は `compute_reference_vector` の出力）。
+    cos_mid : float, default=0.50
+        シグモイドの折れ目（類似度しきい値）。
+    cos_beta : float, default=8.0
+        シグモイドの傾き（大きいほど遷移が急峻）。
+    clip : (float, float), default=(0.3, 3.0)
+        正規化後の重みをこの範囲にクリップ。
+    replacement : bool, default=True
+        WeightedRandomSampler の引数。True=復元抽出。
+    plot_path : str | Path | None, default=None
+        与えると重み関数の分布を図示して保存。
+
+    Returns
+    -------
+    sampler : torch.utils.data.WeightedRandomSampler
+        コサイン類似度に基づいて重み付けされたサンプラー。
+
+    Notes
+    -----
+    - 重みは平均を 1 に正規化した後、`clip` 範囲でクリップされる。
+    - `replacement=True` の場合、1エポックで `num_samples=len(train_ds)` サンプルが得られる。
+    - 典型的な使い方は DataLoader に渡すこと：
+
+      >>> sampler = make_weighted_sampler_by_cosine(train_ds, ref_vec)
+      >>> loader = DataLoader(train_ds, batch_size=64, sampler=sampler)
+
+    Examples
+    --------
+    >>> X = np.random.randn(100, 256).astype("float32")
+    >>> ds = SimpleDataset(X)
+    >>> ref = compute_reference_vector(X)
+    >>> sampler = make_weighted_sampler_by_cosine(ds, ref, cos_mid=0.5, cos_beta=10)
+    >>> len(list(iter(sampler)))
+    100
+    """
     # 1) collect
     if hasattr(train_ds, "data") and isinstance(train_ds.data, torch.Tensor):
         X = train_ds.data

@@ -6,9 +6,6 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
 __all__ = [
-    "l2_normalize_rows",
-    "cosine_similarity",
-    "cosine_dissimilarity",
     "find_elbow_curvature",
     "plot_elbow",
 ]
@@ -30,7 +27,41 @@ def cosine_dissimilarity(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
 
 
 def find_elbow_curvature(k_list: List[int], inertia_list: List[float]) -> Tuple[int, int, np.ndarray]:
-    """Elbow by curvature on normalized curve. Returns (optimal_k, elbow_idx, kappa)."""
+    r"""
+    Detect elbow point by curvature on a normalized curve.
+
+    概要
+    ----
+    - k-means の `k_list` と対応する `inertia_list` を入力とし、  
+      正規化曲線の曲率を計算して「折れ曲がり点 (elbow)」を推定する。
+    - 曲率 κ を最大化する点をエルボーとする。
+
+    Parameters
+    ----------
+    k_list : list of int
+        評価したクラスタ数 K のリスト。
+    inertia_list : list of float
+        各 K における inertia 値（例: `mean(1 - cos)`）。
+
+    Returns
+    -------
+    optimal_k : int
+        曲率が最大となるクラスタ数（推奨値）。
+    elbow_idx : int
+        `k_list[elbow_idx] == optimal_k` を満たすインデックス。
+    kappa : np.ndarray, shape (len(k_list),)
+        各点の曲率値（両端は -inf に設定）。
+
+    Notes
+    -----
+    - 前処理として `y = np.minimum.accumulate(y)` により非増加性を強制。
+    - 正規化は x, y を [0, 1] にスケーリング。
+    - 曲率 κ は以下で定義される：
+
+        κ = |y''| / (1 + (y')^2)^(3/2)
+
+    - 先頭と末尾の点は κ を -inf にして無視する。
+    """
     x = np.asarray(k_list, dtype=float)
     y = np.asarray(inertia_list, dtype=float)
     if len(x) < 3:
@@ -50,7 +81,37 @@ def find_elbow_curvature(k_list: List[int], inertia_list: List[float]) -> Tuple[
 
 
 def plot_elbow(k_list, inertias, optimal_k, elbow_idx):
-    """Quick elbow plot helper."""
+    r"""
+    Plot elbow curve and highlight the chosen elbow point.
+
+    概要
+    ----
+    - `k_list` と対応する `inertias` を折れ線グラフで描画。
+    - `find_elbow_curvature` で得た最適クラスタ数 `optimal_k` を縦線とマーカーで強調。
+
+    Parameters
+    ----------
+    k_list : array-like of int
+        評価したクラスタ数のリスト (例: 1..k_max)。
+    inertias : array-like of float
+        各 k に対する inertia 値（`mean(1 - cos)` など）。
+    optimal_k : int
+        曲率法などで推定された最適クラスタ数。
+    elbow_idx : int
+        `k_list[elbow_idx] == optimal_k` を満たすインデックス。
+
+    Notes
+    -----
+    - Y 軸ラベルは "Mean Cosine Inertia" として描画される。
+    - エルボー点にはラベル付き散布図マーカーが追加される。
+    - `plt.show()` は呼び出さないため、呼び出し側で表示や保存を行う。
+
+    Examples
+    --------
+    >>> ks, inertias, K, idx, kappa = elbow_ckmeans(CosineKMeans, X)
+    >>> plot_elbow(ks, inertias, K, idx)
+    >>> plt.show()
+    """
     k_list = np.asarray(k_list)
     inertias = np.asarray(inertias, dtype=float)
     plt.figure(figsize=(6, 4))
