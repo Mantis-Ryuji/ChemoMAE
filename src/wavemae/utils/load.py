@@ -1,19 +1,28 @@
 from __future__ import annotations
-import hashlib, os, logging
+
+import hashlib
+import os
+import logging
 from importlib.resources import files as _pkg_files
 from typing import Any, Dict, Optional, Tuple
+
 import torch
+
 from wavemae.models.wave_mae import WaveMAE
 
-__all__ = ["load_default_pretrained"]
+__all__ = ["load_default_pretrained"]  # 公開APIはこれだけ
 logger = logging.getLogger(__name__)
 
+# 固定 GitHub リポジトリ
 _REPOS = {
     "library": "https://github.com/Mantis-Ryuji/WaveMAE",
     "pretraining": "https://github.com/Mantis-Ryuji/UnsupervisedWoodSegmentation-NIRHSI",
 }
 
+
+# ----------------------------- 内部ユーティリティ ----------------------------- #
 def _asset_path(relative: str) -> str:
+    """パッケージ同梱 assets への相対パスを解決（wheel に同梱必須）。"""
     return str(_pkg_files("wavemae").joinpath(f"assets/{relative}"))
 
 def _sha256_file(path: str) -> str:
@@ -36,25 +45,34 @@ def _verify_sha256(file_path: str, sha256_path: str) -> None:
     if actual.lower() != expected.lower():
         raise ValueError(
             "SHA256 mismatch for pretrained weights:\n"
-            f"  file:     {file_path}\n"
             f"  expected: {expected}\n"
             f"  actual:   {actual}\n"
             "The file may be corrupted. Reinstall the package or replace the asset."
         )
 
 def _build_model_default(device: Optional[str | torch.device]) -> WaveMAE:
+    """既定構成で WaveMAE を構築し、device へ移す。"""
     dev = torch.device(device) if device is not None else (
         torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     )
     model = WaveMAE(
-        seq_len=256, d_model=256, nhead=4, num_layers=4,
-        dim_feedforward=1024, dropout=0.1, use_learnable_pos=True,
-        latent_dim=64, dec_hidden=256, dec_dropout=0.1,
+        seq_len=256,
+        d_model=256,
+        nhead=4,
+        num_layers=4,
+        dim_feedforward=1024,
+        dropout=0.1,
+        use_learnable_pos=True,
+        latent_dim=64,
+        dec_hidden=256,
+        dec_dropout=0.1,
     )
     return model.to(dev)
 
 def _introspect_shape(model: WaveMAE) -> Dict[str, Any]:
-    enc = getattr(model, "encoder", None); dec = getattr(model, "decoder", None)
+    """モデル主要形状を辞書で返す（将来の互換性のため動的に取得）。"""
+    enc = getattr(model, "encoder", None)
+    dec = getattr(model, "decoder", None)
     return {
         "seq_len": getattr(model, "seq_len", None),
         "latent_dim": getattr(getattr(enc, "to_latent", None), "out_features", None) if enc else None,
@@ -69,6 +87,8 @@ def _introspect_shape(model: WaveMAE) -> Dict[str, Any]:
         "n_mask": getattr(model, "n_mask", None),
     }
 
+
+# ------------------------------ 公開関数（唯一） ------------------------------ #
 def load_default_pretrained(
     *,
     device: Optional[str | torch.device] = None,
@@ -80,10 +100,10 @@ def load_default_pretrained(
 
     概要
     ----
-    - パッケージ同梱（``assets/``）の既定重みを固定構成の `WaveMAE`
-      にロードし、``(model, meta)`` を返します。
-    - 重みが見つからない / 読み込めない場合も例外を投げず、未ロードのモデルと
-      ``meta["pretrained_loaded"]=False`` を返します（警告ログを出力）。
+    パッケージ同梱（``assets/``）の 既定重みを、固定構成の `WaveMAE`
+    にロードして ``(model, meta)`` を返します。
+    重みが見つからない／読み込めない場合でも 、未ロードのモデルと
+    ``meta["pretrained_loaded"]=False`` を返し、短い 警告ログを出します（詳細は DEBUG ログ）。
 
     Parameters
     ----------
@@ -103,11 +123,11 @@ def load_default_pretrained(
           - ``"name"`` : 重みベース名（例: ``"wavemae_base_256"``）
           - ``"shape"`` : 主要形状要約（``seq_len``, ``latent_dim``, ``d_model``,
             ``num_layers``, ``nhead``, ``decoder_hidden``, ``n_blocks``, ``n_mask``）
-          - ``"repos"`` : GitHub URL（``{"library": ..., "pretraining": ...}``)
+          - ``"repos"`` : 固定 GitHub URL（``{"library": ..., "pretraining": ...}``)
           - ``"device"`` : 読み込み時の map 先（文字列）
           - ``"strict"`` : strict フラグ
           - ``"pretrained_loaded"`` : bool（ロード成否）
-          - ``"warning"`` : 失敗時のみ警告メッセージ
+          - ``"warning"`` : 失敗時のみ、**パスを含まない**警告メッセージ
 
     Notes
     -----
@@ -135,9 +155,18 @@ def load_default_pretrained(
             state = state["state_dict"]
         model.load_state_dict(state, strict=strict)
         loaded_ok = True
-    except Exception as e:
-        warn_msg = f"事前学習済み重みをloadできませんでした: {e}"
+
+    except FileNotFoundError:
+        # パスは出さない（一般ユーザー向けの短いメッセージ）
+        warn_msg = "事前学習済み重みをloadできませんでした（assets内に既定重みが見つかりません）"
         logger.warning(warn_msg)
+        logger.debug("pretrained load failed: weights not found", exc_info=True)
+    except Exception as e:
+        # 詳細は DEBUG に、WARNING はファイル名のみ
+        fname = os.path.basename(weight_path) if isinstance(weight_path, str) else "weights.pt"
+        warn_msg = f"事前学習済み重み '{fname}' をloadできませんでした（{type(e).__name__}）"
+        logger.warning(warn_msg)
+        logger.debug("pretrained load error", exc_info=True)
 
     meta: Dict[str, Any] = {
         "name": os.path.splitext(os.path.basename(weight_path))[0],

@@ -1,5 +1,3 @@
-# tests/utils/test_load_default_pretrained.py
-
 import os
 import hashlib
 import torch
@@ -11,19 +9,27 @@ def test___all___exports_only_loader():
 
 def test_load_default_pretrained_missing_weights(monkeypatch, caplog, tmp_path):
     import wavemae.utils.load as ld
+    # どの相対パスでも存在しない tmp_path を指すようにする
     monkeypatch.setattr(ld, "_asset_path", lambda rel: str(tmp_path / rel))
-    caplog.set_level("WARNING", logger="wavemae.utils.load")
 
+    caplog.set_level("WARNING", logger="wavemae.utils.load")
     model, meta = ld.load_default_pretrained(device="cpu", verify_hash=True)
 
-    # 公開フィールドのみ
+    # 公開フィールドのみ（パスは非公開）
     assert "weight_path" not in meta
     assert "sha256_path" not in meta
 
-    # 失敗フラグとログ
+    # 失敗フラグと短い警告文（パス断片が含まれない）
     assert meta["pretrained_loaded"] is False
-    assert "warning" in meta and "事前学習済み重みをloadできませんでした" in meta["warning"]
-    assert any("事前学習済み重みをloadできませんでした" in r.message for r in caplog.records)
+    assert "warning" in meta
+    msg = meta["warning"]
+    assert "事前学習済み重みをloadできませんでした" in msg
+    assert all(sep not in msg for sep in ("/", "\\", ":"))
+
+    # WARNING ログも同様にパスを含まない
+    warn_texts = [r.message for r in caplog.records if r.levelname == "WARNING"]
+    assert any("事前学習済み重みをloadできませんでした" in w for w in warn_texts)
+    assert all(all(sep not in w for sep in ("/", "\\", ":")) for w in warn_texts)
 
     # 固定URL
     assert meta["repos"]["library"] == "https://github.com/Mantis-Ryuji/WaveMAE"
@@ -32,10 +38,12 @@ def test_load_default_pretrained_missing_weights(monkeypatch, caplog, tmp_path):
 def test_load_default_pretrained_success_with_hash(monkeypatch, tmp_path):
     import wavemae.utils.load as ld
 
+    # 既定構成で state_dict を保存
     base_model = ld._build_model_default(device="cpu")
     weight_file = tmp_path / "wavemae_base_256.pt"
     torch.save(base_model.state_dict(), weight_file)
 
+    # 対応する .sha256 を作成
     h = hashlib.sha256()
     with open(weight_file, "rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
@@ -43,6 +51,7 @@ def test_load_default_pretrained_success_with_hash(monkeypatch, tmp_path):
     sha_file = tmp_path / (weight_file.name + ".sha256")
     sha_file.write_text(h.hexdigest() + "\n", encoding="utf-8")
 
+    # _asset_path をテスト用ファイルにリダイレクト
     def fake_asset_path(rel: str) -> str:
         if rel.endswith(".pt.sha256"):
             return str(sha_file)
