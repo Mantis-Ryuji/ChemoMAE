@@ -2,7 +2,7 @@ import json
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from wavemae.training.tester import Tester
+from wavemae.training.tester import Tester, TesterConfig
 from wavemae.models.wave_mae import WaveMAE
 
 
@@ -20,9 +20,20 @@ def test_tester_runs_and_writes_history(tmp_path):
     dl = DataLoader(TensorDataset(x), batch_size=3, shuffle=False)
     model = _tiny_model(L)
 
-    t = Tester(model, device="cpu", out_dir=tmp_path)
-    # 新API: fixed_visible=None
-    avg = t.run(dl, criterion="sse", reduction="batch_mean", fixed_visible=None)
+    cfg = TesterConfig(
+        device="cpu",
+        out_dir=tmp_path,
+        amp=False,                    # CPU なのでAMPは無効
+        criterion="sse",
+        reduction="batch_mean",
+        fixed_visible=None,
+        log_history=True,
+        history_filename="training_history.json",
+    )
+    t = Tester(model, cfg)
+
+    with torch.inference_mode():
+        avg = t(dl)
     assert isinstance(avg, float)
 
     # history file appended
@@ -39,11 +50,21 @@ def test_tester_fixed_visible_path(tmp_path):
     dl = DataLoader(TensorDataset(x), batch_size=2, shuffle=False)
     model = _tiny_model(L)
 
-    # 旧: fixed_mask（True=隠す） → 新: fixed_visible（True=使う）
-    # ここでは「前半のみ可視」にしたいので、visible を直接作る
+    # 前半のみ可視（True=visible）
     visible = torch.zeros(L, dtype=torch.bool)
-    visible[: L // 2] = True  # 前半 True=可視
+    visible[: L // 2] = True
 
-    t = Tester(model, device="cpu", out_dir=tmp_path)
-    avg = t.run(dl, criterion="mse", reduction="batch_mean", fixed_visible=visible)
+    cfg = TesterConfig(
+        device="cpu",
+        out_dir=tmp_path,
+        amp=False,
+        criterion="mse",
+        reduction="batch_mean",
+        fixed_visible=visible,
+        log_history=False,        
+    )
+    t = Tester(model, cfg)
+
+    with torch.inference_mode():
+        avg = t(dl)        
     assert isinstance(avg, float)
