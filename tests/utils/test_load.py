@@ -58,7 +58,8 @@ def test_load_default_pretrained_missing_weights(monkeypatch, caplog, tmp_path):
     assert cfg["latent_dim"] == 64
     assert cfg["dec_hidden"] == 256
     assert cfg["dec_dropout"] == 0.1
-
+    assert cfg["n_blocks"] == 32
+    assert cfg["n_mask"] == 24
 
 def test_load_default_pretrained_success_with_hash(tmp_path):
     """
@@ -110,4 +111,6 @@ def test_load_default_pretrained_success_with_hash(tmp_path):
         "latent_dim": 64,
         "dec_hidden": 256,
         "dec_dropout": 0.1,
+        "n_blocks": 32,
+        "n_mask": 24,
     }

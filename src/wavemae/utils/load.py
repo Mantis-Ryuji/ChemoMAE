@@ -35,6 +35,9 @@ _DEFAULT_CFG: Dict[str, Any] = dict(
     # Decoder (MLP)
     dec_hidden=256,
     dec_dropout=0.1,
+    # Mask settings
+    n_blocks=32,
+    n_mask=24,
 )
 
 # 既定の同梱重みベース名（存在しなければ assets/*.pt の先頭を使う）
@@ -150,7 +153,8 @@ def load_default_pretrained(
           - "name"   : 重みベース名（例: "wavemae_base_256"）
           - "config" : 既定ハイパーパラメータ
                        (seq_len, d_model, nhead, num_layers, dim_feedforward,
-                        dropout, use_learnable_pos, latent_dim, dec_hidden, dec_dropout)
+                        dropout, use_learnable_pos, latent_dim, dec_hidden, dec_dropout, 
+                        n_blocks, n_mask)
           - "repos"  : 固定 GitHub URL（{"library": ..., "pretraining": ...}）
           - "device" : 読み込み時の map 先（文字列）
           - "strict" : strict フラグ
