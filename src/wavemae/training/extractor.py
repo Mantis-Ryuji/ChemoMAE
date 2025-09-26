@@ -48,7 +48,7 @@ class ExtractConfig:
     return_numpy: bool = False              # True: np.ndarray 返却
 
 
-class Extracter:
+class Extractor:
     r"""
     Helper to extract latent features Z from a trained WaveMAE in all-visible mode.
 
@@ -70,7 +70,7 @@ class Extracter:
     -----
     >>> model = WaveMAE(...)
     >>> cfg = ExtractConfig(device="cuda", save_path="latent.npy", return_numpy=True)
-    >>> extractor = Extracter(model, cfg)
+    >>> extractor = Extractor(model, cfg)
     >>> Z = extractor(loader)   # -> np.ndarray shape (N, D)
 
     Notes

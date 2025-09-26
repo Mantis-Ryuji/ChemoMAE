@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from wavemae.training.extracter import Extracter, ExtractConfig
+from wavemae.training.extractor import Extractor, ExtractConfig
 from wavemae.models.wave_mae import WaveMAE
 
 
@@ -20,7 +20,7 @@ def test_extracter_returns_cpu_tensor_and_respects_return_numpy(tmp_path):
 
     model = _make_tiny_model(seq_len=L, d_model=16, latent_dim=8)
     cfg = ExtractConfig(device="cpu", amp=False, save_path=tmp_path / "z.pt", return_numpy=False)
-    ext = Extracter(model, cfg)
+    ext = Extractor(model, cfg)
 
     Z = ext(loader)
     assert isinstance(Z, torch.Tensor)
@@ -32,5 +32,5 @@ def test_extracter_returns_cpu_tensor_and_respects_return_numpy(tmp_path):
 
     # numpy return path
     cfg2 = ExtractConfig(device="cpu", amp=False, save_path=tmp_path / "z.npy", return_numpy=True)
-    Znp = Extracter(model, cfg2)(loader)
+    Znp = Extractor(model, cfg2)(loader)
     assert Znp.shape == (B, 8)
