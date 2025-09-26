@@ -5,9 +5,3 @@
 *.yml  text eol=lf
 *.yaml text eol=lf
 *.md   text eol=lf
-
-# --- Keep notebooks out of GitHub Linguist language stats ---
-**/*.ipynb linguist-documentation
-
-# --- Make .ipynb diffs quieter on GitHub (treat as binary) ---
-*.ipynb -diff

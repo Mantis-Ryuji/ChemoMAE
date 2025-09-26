@@ -6,4 +6,4 @@ build/
 *.whl
 .venv/
 .ipynb_checkpoints/
-examples/
+local_tests/
