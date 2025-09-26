@@ -2,7 +2,7 @@
 
 > Module: `chemomae.training.extractor`
 
-This document describes the **Extractor** and its **ExtractConfig**, which enable deterministic latent feature extraction from trained ChemoMAE models.
+This document describes the **Extractor** and its **ExtractConfig**, which enable latent feature extraction from trained ChemoMAE models.
 
 ---
 
@@ -10,7 +10,6 @@ This document describes the **Extractor** and its **ExtractConfig**, which enabl
 
 The `Extractor` provides a utility to obtain **latent embeddings (Z)** from a trained ChemoMAE in **all-visible mode**:
 
-* **Deterministic:** Uses a full visible mask (all tokens visible), independent of random masking.
 * **AMP support:** Compatible with bf16/fp16 inference.
 * **Output control:** Can return `torch.Tensor` or `numpy.ndarray`, and optionally save results to disk.
 

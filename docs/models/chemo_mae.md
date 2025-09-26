@@ -1,6 +1,6 @@
 # ChemoMAE — Masked Autoencoder for 1D Spectra
 
-> Module: `chemomae.models.wave_mae`
+> Module: `chemomae.models.chemo_mae`
 
 This document describes **ChemoMAE**, a Transformer‑based masked autoencoder designed for one‑dimensional spectral data (e.g., near‑infrared (NIR) spectra or hyperspectral bands).
 
@@ -8,14 +8,13 @@ This document describes **ChemoMAE**, a Transformer‑based masked autoencoder d
 
 ## Overview
 
-ChemoMAE adapts the **Masked Autoencoder (MAE)** framework (He et al., 2022) to 1D spectra. Instead of image patches, spectra are divided into **contiguous blocks** along the spectral axis, and a large fraction of them are randomly masked during training. The encoder sees only the **visible tokens**, while the decoder attempts to reconstruct the entire sequence.
+ChemoMAE adapts the **Masked Autoencoder (MAE)** framework (He et al., 2022) to 1D spectra. Instead of image patches, spectra are divided into **contiguous blocks** along the spectral axis, and a large fraction of them are randomly masked during training. The encoder sees only the **visible tokens**, while the decoder attempts to reconstruct the entire sequence. Importantly, the loss is computed only on the masked regions, ensuring that the encoder is forced to learn informative spectral representations.
 
 ### Key ideas
 
 * **Block‑wise masking:** The sequence of length $L$ is split into `n_blocks`; `n_mask` of them are hidden per sample. This encourages learning robust, context‑aware latent representations.
-* **Encoder:** Transformer encoder operating only on visible tokens plus a prepended [CLS] token. The CLS output is projected to `latent_dim` and L2‑normalized, yielding a cosine‑geometry‑ready embedding.
-* **Decoder:** A lightweight MLP mapping latent vectors back to the full spectral length $L$. Only used during training/reconstruction.
-* **Stateless loss handling:** No loss is included internally. Users can compute SSE/MSE restricted to the masked positions, or adopt Huber/other objectives.
+* **Encoder:** Transformer encoder operating only on visible tokens plus a prepended [CLS] token. The CLS output is projected to latent_dim and L2-normalized, yielding an embedding constrained to the unit hypersphere. This makes the representation naturally compatible with spherical geometry and cosine-similarity–based clustering.
+* **Decoder:** A lightweight MLP that reconstructs the full spectral sequence of length $`L`$ from the latent embedding. The decoder is used only during training, and the loss is computed on the masked regions.
 
 ---
 
@@ -32,7 +31,7 @@ ChemoMAE adapts the **Masked Autoencoder (MAE)** framework (He et al., 2022) to 
 * Returns `(B, L)` boolean mask with `True=masked`.
 * ChemoMAE internally converts this to a visible mask (`True=visible`).
 
-### Encoder — `WaveEncoder`
+### Encoder — `ChemoEncoder`
 
 * Input: spectra `(B, L)` with visible mask `(B, L)`.
 * Projects to embedding dimension `d_model`, adds positional encoding.
@@ -40,7 +39,7 @@ ChemoMAE adapts the **Masked Autoencoder (MAE)** framework (He et al., 2022) to 
 * Processes with a Transformer encoder (`num_layers`, `nhead`, `dim_feedforward`, `dropout`).
 * Output: L2‑normalized latent `(B, latent_dim)`, suitable for cosine‑based metrics.
 
-### Decoder — `WaveDecoderMLP`
+### Decoder — `ChemoDecoderMLP`
 
 * Input: latent `(B, latent_dim)`.
 * 3‑layer MLP with GELU + Dropout.
@@ -155,4 +154,4 @@ assert torch.allclose(z.norm(dim=1), torch.ones(4), atol=1e-5)
 
 ## Version
 
-* Introduced in `chemomae.models.wave_mae` — initial public draft.
+* Introduced in `chemomae.models.chemo_mae` — initial public draft.
