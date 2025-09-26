@@ -4,8 +4,8 @@ include LICENSE
 include NOTICE
 include pyproject.toml
 
-recursive-include src/wavemae/assets *.pt *.sha256
-include src/wavemae/py.typed
+recursive-include src/chemomae/assets *.pt *.sha256
+include src/chemomae/py.typed
 
 global-exclude __pycache__/*
 global-exclude *.py[cod]

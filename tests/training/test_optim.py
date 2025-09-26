@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from wavemae.training.optim import build_optimizer, build_warmup_cosine, build_scheduler
+from chemomae.training.optim import build_optimizer, build_warmup_cosine, build_scheduler
 
 
 class Toy(nn.Module):

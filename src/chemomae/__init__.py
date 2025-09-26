@@ -1,5 +1,5 @@
 """
-WaveMAE: Transformer-based Masked AutoEncoder for 1D spectral data.
+ChemoMAE: Transformer-based Masked AutoEncoder for 1D spectral data.
 """
 
 from ._version import __version__

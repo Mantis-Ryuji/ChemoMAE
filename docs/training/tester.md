@@ -1,8 +1,8 @@
-# Tester — WaveMAE Evaluation Utility
+# Tester — ChemoMAE Evaluation Utility
 
-> Module: `wavemae.training.tester`
+> Module: `chemomae.training.tester`
 
-This document describes the **Tester** and its configuration, designed for evaluating trained WaveMAE models on a dataset. It provides masked reconstruction error (SSE/MSE) with AMP support and JSON logging.
+This document describes the **Tester** and its configuration, designed for evaluating trained ChemoMAE models on a dataset. It provides masked reconstruction error (SSE/MSE) with AMP support and JSON logging.
 
 ---
 
@@ -56,7 +56,7 @@ class TesterConfig:
 tester = Tester(model, cfg=TesterConfig())
 ```
 
-* `model`: Trained WaveMAE model (must implement `forward(x)` → `(x_recon, z, visible_mask)`).
+* `model`: Trained ChemoMAE model (must implement `forward(x)` → `(x_recon, z, visible_mask)`).
 * `cfg`: Optional TesterConfig.
 
 The model is moved to `cfg.device` and set to `eval()`.
@@ -112,7 +112,7 @@ avg_loss = tester(data_loader)
 ### Basic evaluation
 
 ```python
-from wavemae.training import Tester, TesterConfig
+from chemomae.training import Tester, TesterConfig
 
 tester = Tester(model, TesterConfig(device="cuda", criterion="mse", reduction="mean"))
 with torch.inference_mode():
@@ -154,4 +154,4 @@ assert isinstance(loss, float)
 
 ## Version
 
-* Introduced in `wavemae.training.tester` — initial public draft.
+* Introduced in `chemomae.training.tester` — initial public draft.

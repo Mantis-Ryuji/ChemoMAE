@@ -1,6 +1,6 @@
-# Masked Loss Functions for WaveMAE
+# Masked Loss Functions for ChemoMAE
 
-> Module: `wavemae.models.losses`
+> Module: `chemomae.models.losses`
 
 This document describes the masked reconstruction losses provided in `losses.py`. These functions compute squared error **only on the masked (hidden) positions**, consistent with the MAE training principle.
 
@@ -8,7 +8,7 @@ This document describes the masked reconstruction losses provided in `losses.py`
 
 ## Overview
 
-During training, WaveMAE masks a large fraction of the spectral sequence. The loss should therefore be restricted to **masked positions only**, so the model is penalized for reconstructing what it did not see. Visible tokens are excluded from the loss.
+During training, ChemoMAE masks a large fraction of the spectral sequence. The loss should therefore be restricted to **masked positions only**, so the model is penalized for reconstructing what it did not see. Visible tokens are excluded from the loss.
 
 Two functions are provided:
 
@@ -65,10 +65,10 @@ Both functions accept a reduction mode that determines how losses are aggregated
 
 ## Usage Examples
 
-### With visible mask from WaveMAE
+### With visible mask from ChemoMAE
 
 ```python
-from wavemae.models.losses import masked_sse, masked_mse
+from chemomae.models.losses import masked_sse, masked_mse
 
 x = torch.randn(2, 4)
 x_recon = torch.randn(2, 4)
@@ -114,4 +114,4 @@ assert masked_mse(x_recon, x, mask, reduction="mean").item() >= 0
 
 ## Version
 
-* Introduced in `wavemae.models.losses` — initial public draft.
+* Introduced in `chemomae.models.losses` — initial public draft.

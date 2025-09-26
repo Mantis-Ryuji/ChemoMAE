@@ -7,7 +7,7 @@ import torch
 
 
 def test___all___exports_only_loader():
-    import wavemae.utils.load as ld
+    import chemomae.utils.load as ld
     assert getattr(ld, "__all__", []) == ["load_default_pretrained"]
 
 
@@ -18,12 +18,12 @@ def test_load_default_pretrained_missing_weights(monkeypatch, caplog, tmp_path):
       - meta['warning'] があり、ファイルパス断片（/, \, :）を含まない
       - repos, config の基本項目は存在
     """
-    import wavemae.utils.load as ld
+    import chemomae.utils.load as ld
 
     # assets ディレクトリを空の一時ディレクトリへ差し替え
     monkeypatch.setattr(ld, "_asset_dir", lambda: Path(tmp_path))
 
-    caplog.set_level("WARNING", logger="wavemae.utils.load")
+    caplog.set_level("WARNING", logger="chemomae.utils.load")
     model, meta = ld.load_default_pretrained(device="cpu")
 
     # 公開フィールドのみ（パスは非公開）
@@ -43,7 +43,7 @@ def test_load_default_pretrained_missing_weights(monkeypatch, caplog, tmp_path):
     assert all(all(sep not in w for sep in ("/", "\\", ":")) for w in warn_texts)
 
     # 固定URL
-    assert meta["repos"]["library"] == "https://github.com/Mantis-Ryuji/WaveMAE"
+    assert meta["repos"]["library"] == "https://github.com/Mantis-Ryuji/ChemoMAE"
     assert meta["repos"]["pretraining"] == "https://github.com/Mantis-Ryuji/UnsupervisedWoodSegmentation-NIRHSI"
 
     # config の既定値（load.py の _DEFAULT_CFG に追従）
@@ -68,11 +68,11 @@ def test_load_default_pretrained_success_with_hash(tmp_path):
       - sha256 ファイルがあれば検証される
       - config が既定値に一致
     """
-    import wavemae.utils.load as ld
+    import chemomae.utils.load as ld
 
     # 既定構成で state_dict を保存
     base_model = ld._build_model_default(device="cpu")
-    weight_file = tmp_path / "wavemae_base_256.pt"
+    weight_file = tmp_path / "chemomae_base_256.pt"
     torch.save(base_model.state_dict(), weight_file)
 
     # 対応する .sha256 を作成（<file>.pt.sha256）
@@ -95,7 +95,7 @@ def test_load_default_pretrained_success_with_hash(tmp_path):
     assert "warning" not in meta
 
     # URL 固定
-    assert meta["repos"]["library"] == "https://github.com/Mantis-Ryuji/WaveMAE"
+    assert meta["repos"]["library"] == "https://github.com/Mantis-Ryuji/ChemoMAE"
     assert meta["repos"]["pretraining"] == "https://github.com/Mantis-Ryuji/UnsupervisedWoodSegmentation-NIRHSI"
 
     # config（_DEFAULT_CFG と一致）

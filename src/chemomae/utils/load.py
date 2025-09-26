@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import torch
 
-from wavemae.models.wave_mae import WaveMAE
+from chemomae.models.chemo_mae import ChemoMAE
 
 __all__ = ["load_default_pretrained"]
 
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # 固定 GitHub リポジトリ
 _REPOS = {
-    "library": "https://github.com/Mantis-Ryuji/WaveMAE",
+    "library": "https://github.com/Mantis-Ryuji/ChemoMAE",
     "pretraining": "https://github.com/Mantis-Ryuji/UnsupervisedWoodSegmentation-NIRHSI",
 }
 
@@ -41,7 +41,7 @@ _DEFAULT_CFG: Dict[str, Any] = dict(
 )
 
 # 既定の同梱重みベース名（存在しなければ assets/*.pt の先頭を使う）
-_DEFAULT_WEIGHT_NAME = "wavemae_base_256.pt"
+_DEFAULT_WEIGHT_NAME = "chemomae_base_256.pt"
 
 
 # -------------------------
@@ -50,11 +50,11 @@ _DEFAULT_WEIGHT_NAME = "wavemae_base_256.pt"
 def _asset_dir() -> Path:
     """パッケージ同梱 assets ディレクトリへのパス（存在しない場合もある）。"""
     try:
-        pkg_root = _pkg_files("wavemae")
+        pkg_root = _pkg_files("chemomae")
         p = Path(pkg_root.joinpath("assets"))
         return p
     except Exception:
-        return Path("src/wavemae/assets")  # editable install などでのフォールバック
+        return Path("src/chemomae/assets")  # editable install などでのフォールバック
 
 
 def _available_weights() -> list[Path]:
@@ -113,12 +113,12 @@ def _verify_sha256_if_available(path: Path) -> Tuple[bool, Optional[str]]:
     return False, f"SHA256 mismatch: expected {exp[:12]}..., got {act[:12]}..."
 
 
-def _build_model_default(device: Optional[str | torch.device]) -> WaveMAE:
-    """既定構成で WaveMAE を構築し、device へ移す。"""
+def _build_model_default(device: Optional[str | torch.device]) -> ChemoMAE:
+    """既定構成で ChemoMAE を構築し、device へ移す。"""
     dev = torch.device(device) if device is not None else (
         torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     )
-    model = WaveMAE(**_DEFAULT_CFG)
+    model = ChemoMAE(**_DEFAULT_CFG)
     return model.to(dev)
 
 
@@ -130,9 +130,9 @@ def load_default_pretrained(
     *,
     device: Optional[str | torch.device] = None,
     strict: bool = True,
-) -> Tuple[WaveMAE, Dict[str, Any]]:
+) -> Tuple[ChemoMAE, Dict[str, Any]]:
     """
-    既定構成の WaveMAE を構築し、可能なら同梱重みをロードして返す。
+    既定構成の ChemoMAE を構築し、可能なら同梱重みをロードして返す。
 
     Parameters
     ----------
@@ -146,11 +146,11 @@ def load_default_pretrained(
 
     Returns
     -------
-    model : WaveMAE
+    model : ChemoMAE
         既定構成で構築され、（可能なら）同梱重みをロード済みのモデル。
     meta : dict
         付随情報（公開フィールドのみ）:
-          - "name"   : 重みベース名（例: "wavemae_base_256"）
+          - "name"   : 重みベース名（例: "chemomae_base_256"）
           - "config" : 既定ハイパーパラメータ
                        (seq_len, d_model, nhead, num_layers, dim_feedforward,
                         dropout, use_learnable_pos, latent_dim, dec_hidden, dec_dropout, 

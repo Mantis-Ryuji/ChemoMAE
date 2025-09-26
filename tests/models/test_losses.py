@@ -1,7 +1,7 @@
 import torch
 import math
 
-from wavemae.models.losses import masked_sse, masked_mse
+from chemomae.models.losses import masked_sse, masked_mse
 
 
 def test_masked_losses_sum_mean_batchmean_relationship():

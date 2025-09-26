@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from wavemae.training.callbacks import EarlyStopping, EMACallback
+from chemomae.training.callbacks import EarlyStopping, EMACallback
 
 
 def test_early_stopping_starts_after_ratio_and_triggers():

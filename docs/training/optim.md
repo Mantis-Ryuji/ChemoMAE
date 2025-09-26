@@ -1,6 +1,6 @@
-# Optimizer & Scheduler Builders for WaveMAE
+# Optimizer & Scheduler Builders for ChemoMAE
 
-> Module: `wavemae.training.optim`
+> Module: `chemomae.training.optim`
 
 This document describes the utility functions that build a **parameter‑grouped AdamW optimizer** and a **linear‑warmup + cosine‑decay** learning‑rate scheduler suitable for Transformer‑based spectral models.
 
@@ -55,10 +55,10 @@ This document describes the utility functions that build a **parameter‑grouped
 **Example**
 
 ```python
-from wavemae.models import WaveMAE
-from wavemae.training.optim import build_optimizer
+from chemomae.models import ChemoMAE
+from chemomae.training.optim import build_optimizer
 
-model = WaveMAE(seq_len=256)
+model = ChemoMAE(seq_len=256)
 optimizer = build_optimizer(model, lr=1e-4, weight_decay=0.05)
 
 # Inspect groups
@@ -93,7 +93,7 @@ Actual LR is `lr(s) = base_lr * λ(s)`.
 **Example**
 
 ```python
-from wavemae.training.optim import build_optimizer, build_scheduler
+from chemomae.training.optim import build_optimizer, build_scheduler
 optimizer = build_optimizer(model, lr=3e-4, weight_decay=0.05)
 scheduler = build_scheduler(optimizer,
                             steps_per_epoch=len(train_loader),
@@ -117,7 +117,7 @@ for epoch in range(100):
 **Example (custom loop)**
 
 ```python
-from wavemae.training.optim import build_warmup_cosine
+from chemomae.training.optim import build_warmup_cosine
 opt = build_optimizer(model, lr=2e-4)
 sched = build_warmup_cosine(opt, warmup_steps=1_000, total_steps=50_000, min_lr_scale=0.2)
 
@@ -159,4 +159,4 @@ assert mult1 <= base_lr
 
 ## Version
 
-* Introduced in `wavemae.training.optim` — initial public draft.
+* Introduced in `chemomae.training.optim` — initial public draft.

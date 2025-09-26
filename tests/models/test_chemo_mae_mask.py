@@ -1,6 +1,6 @@
 import torch
 
-from wavemae.models.wave_mae import make_block_mask, WaveMAE
+from chemomae.models.chemo_mae import make_block_mask, ChemoMAE
 
 
 def test_make_block_mask_counts_and_block_structure():
@@ -26,7 +26,7 @@ def test_make_block_mask_counts_and_block_structure():
 
 def test_encoder_accepts_visible_mask_from_make_block_mask():
     B, L = 3, 48
-    model = WaveMAE(seq_len=L, d_model=32, nhead=4, num_layers=1,
+    model = ChemoMAE(seq_len=L, d_model=32, nhead=4, num_layers=1,
                     dim_feedforward=64, latent_dim=10, n_blocks=12, n_mask=3)
 
     x = torch.randn(B, L)

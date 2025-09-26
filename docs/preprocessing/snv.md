@@ -1,6 +1,6 @@
 # SNVScaler — Standard Normal Variate for 1D Spectra
 
-> Module: `wavemae.preprocessing.snv`
+> Module: `chemomae.preprocessing.snv`
 
 This document describes the **SNVScaler**, which implements the Standard Normal Variate (SNV) transform commonly used in chemometrics for per-spectrum standardization.
 
@@ -74,7 +74,7 @@ A light-weight, stateless transformer with optional return of per-sample statist
 
 ```python
 import numpy as np
-from wavemae.preprocessing.snv import SNVScaler
+from chemomae.preprocessing.snv import SNVScaler
 
 X = np.array([[1.0, 2.0, 3.0],
               [4.0, 5.0, 6.0]], dtype=np.float32)
@@ -95,7 +95,7 @@ X_rec = SNVScaler().inverse_transform(Y, mu=mu, sd=sd)
 
 ```python
 import torch
-from wavemae.preprocessing.snv import SNVScaler
+from chemomae.preprocessing.snv import SNVScaler
 
 Xt = torch.tensor([[1.0, 2.0, 3.0],
                    [4.0, 5.0, 6.0]], dtype=torch.float32, device="cuda")
@@ -131,9 +131,9 @@ X_snv_unit = l2_normalize_rows(X_snv)
 
 ---
 
-## When to Use SNV in WaveMAE Pipelines
+## When to Use SNV in ChemoMAE Pipelines
 
-* **Spectral pre-processing:** SNV is a strong baseline for removing per-spectrum intensity offsets and scaling effects prior to self-supervised training with WaveMAE or downstream clustering (e.g., cosine K-Means).
+* **Spectral pre-processing:** SNV is a strong baseline for removing per-spectrum intensity offsets and scaling effects prior to self-supervised training with ChemoMAE or downstream clustering (e.g., cosine K-Means).
 * **Raman / NIR:** Works for both modalities; consider additional baseline corrections or smoothing if your acquisition introduces broad trends or spikes.
 * **Downstream cosine metrics:** Since SNV outputs lie on a hypersphere of radius $`\sqrt{L}`$, relative angles are preserved. For unit vectors, apply L2 normalization.
 
@@ -173,4 +173,4 @@ np.testing.assert_allclose(X_rec, X, rtol=1e-5, atol=1e-5)
 
 ## Version
 
-* Introduced in `wavemae.preprocessing.snv` — initial public draft.
+* Introduced in `chemomae.preprocessing.snv` — initial public draft.

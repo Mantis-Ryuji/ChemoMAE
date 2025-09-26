@@ -6,7 +6,7 @@ from typing import Iterable, Optional, Literal
 import numpy as np
 import torch
 
-from ..models.wave_mae import WaveMAE
+from ..models.chemo_mae import ChemoMAE
 
 
 @dataclass
@@ -16,7 +16,7 @@ class ExtractConfig:
 
     概要
     ----
-    - 学習済み WaveMAE から **全可視 (visible=True)** で潜在表現 z を一括抽出する際の設定。
+    - 学習済み ChemoMAE から **全可視 (visible=True)** で潜在表現 z を一括抽出する際の設定。
     - AMP や出力の保存形式・返却形式を制御する。
 
     Attributes
@@ -50,25 +50,25 @@ class ExtractConfig:
 
 class Extractor:
     r"""
-    Helper to extract latent features Z from a trained WaveMAE in all-visible mode.
+    Helper to extract latent features Z from a trained ChemoMAE in all-visible mode.
 
     概要
     ----
-    - `WaveMAE.encode` を **全可視マスク (visible_mask=True)** で呼び出し、
+    - `ChemoMAE.encode` を **全可視マスク (visible_mask=True)** で呼び出し、
       潜在表現 Z を一括で抽出する。
     - 推論時は AMP (bf16/fp16) に対応し、結果は CPU に集約される。
     - `ExtractConfig.save_path` が指定されていれば自動保存される。
 
     Parameters
     ----------
-    model : WaveMAE
-        学習済み WaveMAE モデル。
+    model : ChemoMAE
+        学習済み ChemoMAE モデル。
     cfg : ExtractConfig, default=ExtractConfig()
         抽出処理の設定（デバイス、AMP、保存先、返却形式など）。
 
     Usage
     -----
-    >>> model = WaveMAE(...)
+    >>> model = ChemoMAE(...)
     >>> cfg = ExtractConfig(device="cuda", save_path="latent.npy", return_numpy=True)
     >>> extractor = Extractor(model, cfg)
     >>> Z = extractor(loader)   # -> np.ndarray shape (N, D)
@@ -81,7 +81,7 @@ class Extractor:
         * それ以外 → `torch.save` で保存。
     - 返り値の型は `cfg.return_numpy` に依存する。
     """
-    def __init__(self, model: WaveMAE, cfg: ExtractConfig = ExtractConfig()):
+    def __init__(self, model: ChemoMAE, cfg: ExtractConfig = ExtractConfig()):
         self.model = model
         self.cfg = cfg
         self.device = torch.device(cfg.device)

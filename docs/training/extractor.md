@@ -1,14 +1,14 @@
 # Extractor — Latent Feature Extraction
 
-> Module: `wavemae.training.extractor`
+> Module: `chemomae.training.extractor`
 
-This document describes the **Extractor** and its **ExtractConfig**, which enable deterministic latent feature extraction from trained WaveMAE models.
+This document describes the **Extractor** and its **ExtractConfig**, which enable deterministic latent feature extraction from trained ChemoMAE models.
 
 ---
 
 ## Overview
 
-The `Extractor` provides a utility to obtain **latent embeddings (Z)** from a trained WaveMAE in **all-visible mode**:
+The `Extractor` provides a utility to obtain **latent embeddings (Z)** from a trained ChemoMAE in **all-visible mode**:
 
 * **Deterministic:** Uses a full visible mask (all tokens visible), independent of random masking.
 * **AMP support:** Compatible with bf16/fp16 inference.
@@ -51,7 +51,7 @@ class ExtractConfig:
 extractor = Extractor(model, cfg=ExtractConfig())
 ```
 
-* `model`: Trained WaveMAE.
+* `model`: Trained ChemoMAE.
 * `cfg`: Extraction configuration.
 
 ### Call
@@ -84,7 +84,7 @@ If `save_path` is provided:
 ### Extract features to memory
 
 ```python
-from wavemae.training import Extractor, ExtractConfig
+from chemomae.training import Extractor, ExtractConfig
 
 cfg = ExtractConfig(device="cuda", return_numpy=True)
 extractor = Extractor(model, cfg)
@@ -133,4 +133,4 @@ assert isinstance(Z, np.ndarray)
 
 ## Version
 
-* Introduced in `wavemae.training.extractor` — initial public draft.
+* Introduced in `chemomae.training.extractor` — initial public draft.

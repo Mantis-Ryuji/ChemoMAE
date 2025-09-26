@@ -3,7 +3,7 @@ import torch
 import numpy as np
 import pytest
 
-from wavemae.clustering.cosine_kmeans import CosineKMeans, elbow_ckmeans
+from chemomae.clustering.cosine_kmeans import CosineKMeans, elbow_ckmeans
 
 
 def _make_spherical_blobs(n_per=40, noise=0.10, seed=0):

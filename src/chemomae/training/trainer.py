@@ -78,11 +78,11 @@ class TrainerConfig:
 
 class Trainer:
     r"""
-    Generic trainer for WaveMAE reconstruction tasks.
+    Generic trainer for ChemoMAE reconstruction tasks.
 
     概要
     ----
-    - WaveMAE 系モデルの学習ループを管理するクラス。
+    - ChemoMAE 系モデルの学習ループを管理するクラス。
     - AMP (bf16/fp16), TF32, EMA, 勾配クリッピング, スケジューラに対応。
     - チェックポイントや履歴ログの保存機構を備え、resume/early stopping も可能。
 
@@ -111,7 +111,7 @@ class Trainer:
     Parameters
     ----------
     model : nn.Module
-        学習対象の WaveMAE モデル。
+        学習対象の ChemoMAE モデル。
     optimizer : torch.optim.Optimizer
         最適化手法。
     train_loader : Iterable

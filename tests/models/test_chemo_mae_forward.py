@@ -1,12 +1,12 @@
 import torch
 
-from wavemae.models.wave_mae import WaveMAE
-from wavemae.models.losses import masked_sse
+from chemomae.models.chemo_mae import ChemoMAE
+from chemomae.models.losses import masked_sse
 
 
 def test_wave_mae_forward_shapes_and_types():
     B, L = 4, 32
-    model = WaveMAE(
+    model = ChemoMAE(
         seq_len=L,
         d_model=64,
         nhead=4,
@@ -36,7 +36,7 @@ def test_wave_mae_forward_shapes_and_types():
 
 def test_wave_mae_encode_and_reconstruct_api():
     B, L = 2, 24
-    model = WaveMAE(seq_len=L, d_model=32, nhead=4, num_layers=1, dim_feedforward=64,
+    model = ChemoMAE(seq_len=L, d_model=32, nhead=4, num_layers=1, dim_feedforward=64,
                     latent_dim=8, dec_hidden=32, n_blocks=6, n_mask=2)
 
     x = torch.randn(B, L)
@@ -54,7 +54,7 @@ def test_wave_mae_encode_and_reconstruct_api():
 
 def test_wave_mae_loss_and_backward_on_masked_sse():
     B, L = 3, 48
-    model = WaveMAE(seq_len=L, d_model=64, nhead=4, num_layers=2,
+    model = ChemoMAE(seq_len=L, d_model=64, nhead=4, num_layers=2,
                     dim_feedforward=128, latent_dim=12, dec_hidden=64,
                     n_blocks=12, n_mask=4)
 

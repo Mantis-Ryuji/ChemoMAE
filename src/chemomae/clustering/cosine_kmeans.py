@@ -555,7 +555,7 @@ def elbow_ckmeans(
     Examples
     --------
     >>> X = torch.randn(10000, 64)           # 特徴（未正規化でも OK：内部で行正規化）
-    >>> from wavemae.cluster import CosineKMeans
+    >>> from chemomae.cluster import CosineKMeans
     >>> ks, js, K, idx, kappa = elbow_ckmeans(CosineKMeans, X, k_max=30, chunk=2048)
     >>> K
     12

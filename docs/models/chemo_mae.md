@@ -1,14 +1,14 @@
-# WaveMAE — Masked Autoencoder for 1D Spectra
+# ChemoMAE — Masked Autoencoder for 1D Spectra
 
-> Module: `wavemae.models.wave_mae`
+> Module: `chemomae.models.wave_mae`
 
-This document describes **WaveMAE**, a Transformer‑based masked autoencoder designed for one‑dimensional spectral data (e.g., near‑infrared (NIR) spectra or hyperspectral bands).
+This document describes **ChemoMAE**, a Transformer‑based masked autoencoder designed for one‑dimensional spectral data (e.g., near‑infrared (NIR) spectra or hyperspectral bands).
 
 ---
 
 ## Overview
 
-WaveMAE adapts the **Masked Autoencoder (MAE)** framework (He et al., 2022) to 1D spectra. Instead of image patches, spectra are divided into **contiguous blocks** along the spectral axis, and a large fraction of them are randomly masked during training. The encoder sees only the **visible tokens**, while the decoder attempts to reconstruct the entire sequence.
+ChemoMAE adapts the **Masked Autoencoder (MAE)** framework (He et al., 2022) to 1D spectra. Instead of image patches, spectra are divided into **contiguous blocks** along the spectral axis, and a large fraction of them are randomly masked during training. The encoder sees only the **visible tokens**, while the decoder attempts to reconstruct the entire sequence.
 
 ### Key ideas
 
@@ -30,7 +30,7 @@ WaveMAE adapts the **Masked Autoencoder (MAE)** framework (He et al., 2022) to 1
 
 * Implemented via `make_block_mask(batch_size, seq_len, n_blocks, n_mask)`.
 * Returns `(B, L)` boolean mask with `True=masked`.
-* WaveMAE internally converts this to a visible mask (`True=visible`).
+* ChemoMAE internally converts this to a visible mask (`True=visible`).
 
 ### Encoder — `WaveEncoder`
 
@@ -51,10 +51,10 @@ WaveMAE adapts the **Masked Autoencoder (MAE)** framework (He et al., 2022) to 1
 
 ## API
 
-### Class: `WaveMAE`
+### Class: `ChemoMAE`
 
 ```python
-mae = WaveMAE(
+mae = ChemoMAE(
     seq_len=256,
     d_model=384,
     nhead=6,
@@ -100,9 +100,9 @@ mae = WaveMAE(
 
 ```python
 import torch
-from wavemae.models import WaveMAE
+from chemomae.models import ChemoMAE
 
-mae = WaveMAE(seq_len=256, latent_dim=64, n_blocks=16, n_mask=4)
+mae = ChemoMAE(seq_len=256, latent_dim=64, n_blocks=16, n_mask=4)
 x = torch.randn(8, 256)
 
 # Forward pass with automatic masking
@@ -133,7 +133,7 @@ z = mae.encode(x, visible)
 
 * **High mask ratio (≈75%)**: Following MAE practice, most blocks are masked to force contextual learning.
 * **L2‑normalized latent:** All embeddings lie on a hypersphere, directly usable for cosine metrics.
-* **Separation of concerns:** Loss and training logic are external. This keeps WaveMAE flexible for different objectives.
+* **Separation of concerns:** Loss and training logic are external. This keeps ChemoMAE flexible for different objectives.
 * **Compatibility:** AMP (bf16/fp16) supported via external `torch.autocast`. EMA and checkpointing handled in training utilities.
 
 ---
@@ -141,7 +141,7 @@ z = mae.encode(x, visible)
 ## Minimal Tests
 
 ```python
-mae = WaveMAE(seq_len=128, latent_dim=32, n_blocks=8, n_mask=6)
+mae = ChemoMAE(seq_len=128, latent_dim=32, n_blocks=8, n_mask=6)
 x = torch.randn(4, 128)
 
 x_rec, z, visible = mae(x)
@@ -155,4 +155,4 @@ assert torch.allclose(z.norm(dim=1), torch.ones(4), atol=1e-5)
 
 ## Version
 
-* Introduced in `wavemae.models.wave_mae` — initial public draft.
+* Introduced in `chemomae.models.wave_mae` — initial public draft.

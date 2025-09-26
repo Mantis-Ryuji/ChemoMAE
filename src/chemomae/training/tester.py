@@ -13,7 +13,7 @@ from ..models.losses import masked_sse, masked_mse
 @dataclass
 class TesterConfig:
     """
-    訓練済み WaveMAE モデルを評価するための設定クラス。
+    訓練済み ChemoMAE モデルを評価するための設定クラス。
 
     Attributes
     ----------
@@ -55,7 +55,7 @@ class TesterConfig:
 
 class Tester:
     r"""
-    Tester for WaveMAE models.
+    Tester for ChemoMAE models.
 
     指定した DataLoader 全体を走査し、Masked Autoencoder の
     再構成誤差（SSE または MSE）を算出する。
@@ -63,7 +63,7 @@ class Tester:
     Parameters
     ----------
     model : nn.Module
-        訓練済み WaveMAE モデル。
+        訓練済み ChemoMAE モデル。
     cfg : TesterConfig, optional
         評価設定。省略時はデフォルト設定が使用される。
 

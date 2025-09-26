@@ -1,6 +1,6 @@
 # Clustering Ops — Utility Functions
 
-> Module: `wavemae.clustering.ops`
+> Module: `chemomae.clustering.ops`
 
 This document describes helper functions for spherical k-means clustering: **row normalization**, **cosine similarity/dissimilarity**, **elbow detection**, and **plotting**.
 
@@ -81,7 +81,7 @@ Plot inertia curve with elbow annotation.
 ## Example Usage
 
 ```python
-from wavemae.clustering.ops import l2_normalize_rows, find_elbow_curvature, plot_elbow
+from chemomae.clustering.ops import l2_normalize_rows, find_elbow_curvature, plot_elbow
 import matplotlib.pyplot as plt
 
 # Normalize features
@@ -120,4 +120,4 @@ assert isinstance(opt_k, int)
 
 ## Version
 
-* Introduced in `wavemae.clustering.ops` — initial public draft.
+* Introduced in `chemomae.clustering.ops` — initial public draft.

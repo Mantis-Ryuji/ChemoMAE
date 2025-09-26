@@ -3,7 +3,7 @@ import random
 import numpy as np
 import pytest
 
-from wavemae.utils.seed import set_global_seed, enable_deterministic  # :contentReference[oaicite:2]{index=2}
+from chemomae.utils.seed import set_global_seed, enable_deterministic
 
 try:
     import torch

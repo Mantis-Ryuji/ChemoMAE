@@ -6,9 +6,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 __all__ = [
-    "WaveMAE",
-    "WaveEncoder",
-    "WaveDecoderMLP",
+    "ChemoMAE",
+    "ChemoEncoder",
+    "ChemoDecoderMLP",
     "make_block_mask",
     "sinusoidal_positional_encoding",
 ]
@@ -102,7 +102,7 @@ def make_block_mask(
     -----
     - ブロック長 = `seq_len // n_blocks`。
     - サンプルごとに `n_mask` 個のブロックがランダムに選ばれる。
-    - `WaveMAE.make_visible` では `~mask` を取って **visible=True=使う** の可視マスクに変換する。
+    - `ChemoMAE.make_visible` では `~mask` を取って **visible=True=使う** の可視マスクに変換する。
 
     例
     --
@@ -131,9 +131,9 @@ def make_block_mask(
 # -----------------------------------------------------------------------------
 # Encoder (visible tokens + CLS)
 # -----------------------------------------------------------------------------
-class WaveEncoder(nn.Module):
+class ChemoEncoder(nn.Module):
     r"""
-    WaveEncoder: Transformer encoder for 1D spectra.
+    ChemoEncoder: Transformer encoder for 1D spectra.
 
     概要
     ----
@@ -183,12 +183,12 @@ class WaveEncoder(nn.Module):
     - 可視トークン数はサンプルごとに異なる可能性があるが、
       Transformer には padding mask (src_key_padding_mask) を与えて整合性を確保。
     - 出力 z は L2 正規化済みなので、コサイン類似度に直ちに利用可能。
-    - `WaveMAE` の `forward` からは visible_mask を自動生成するため、
+    - `ChemoMAE` の `forward` からは visible_mask を自動生成するため、
       通常の利用者は `encode` を直接呼び出す場合のみ visible_mask を指定すればよい。
 
     例
     --
-    >>> enc = WaveEncoder(seq_len=128, latent_dim=32, d_model=64, nhead=4, num_layers=2)
+    >>> enc = ChemoEncoder(seq_len=128, latent_dim=32, d_model=64, nhead=4, num_layers=2)
     >>> x = torch.randn(8, 128)
     >>> visible = torch.ones(8, 128, dtype=torch.bool)   # 全可視
     >>> z = enc(x, visible)
@@ -283,9 +283,9 @@ class WaveEncoder(nn.Module):
 # -----------------------------------------------------------------------------
 # Decoder (MLP: z -> R^L)
 # -----------------------------------------------------------------------------
-class WaveDecoderMLP(nn.Module):
+class ChemoDecoderMLP(nn.Module):
     r"""
-    WaveDecoderMLP: 潜在表現 z から 1D 系列 x を再構成する MLP デコーダ。
+    ChemoDecoderMLP: 潜在表現 z から 1D 系列 x を再構成する MLP デコーダ。
 
     概要
     ----
@@ -318,7 +318,7 @@ class WaveDecoderMLP(nn.Module):
 
     例
     --
-    >>> dec = WaveDecoderMLP(seq_len=256, latent_dim=64, hidden_dim=256, dropout=0.1)
+    >>> dec = ChemoDecoderMLP(seq_len=256, latent_dim=64, hidden_dim=256, dropout=0.1)
     >>> z = torch.randn(8, 64)
     >>> x_rec = dec(z)                # 形状は (8, 256)
     """
@@ -342,11 +342,11 @@ class WaveDecoderMLP(nn.Module):
 
 
 # -----------------------------------------------------------------------------
-# WaveMAE (model only; no loss inside)
+# ChemoMAE (model only; no loss inside)
 # -----------------------------------------------------------------------------
-class WaveMAE(nn.Module):
+class ChemoMAE(nn.Module):
     r"""
-    WaveMAE: Masked Autoencoder for 1D spectra.
+    ChemoMAE: Masked Autoencoder for 1D spectra.
 
     1D スペクトル（例: 近赤外スペクトル, HSI バンド列）に特化した MAE 実装です。
 
@@ -374,7 +374,7 @@ class WaveMAE(nn.Module):
     Typical Usage
     -------------
     学習時:
-    >>> mae = WaveMAE(seq_len=256, latent_dim=64, n_blocks=16, n_mask=4)
+    >>> mae = ChemoMAE(seq_len=256, latent_dim=64, n_blocks=16, n_mask=4)
     >>> x = torch.randn(8, 256)
     >>> x_rec, z, visible_mask = mae(x)   # visible_mask=None なので内部で生成
     >>> loss = ((x_rec - x)**2)[~visible_mask].sum() / x.size(0)
@@ -447,7 +447,7 @@ class WaveMAE(nn.Module):
         self.n_blocks = int(n_blocks)
         self.n_mask = int(n_mask)
 
-        self.encoder = WaveEncoder(
+        self.encoder = ChemoEncoder(
             seq_len=self.seq_len,
             latent_dim=latent_dim,
             d_model=d_model,
@@ -457,7 +457,7 @@ class WaveMAE(nn.Module):
             dropout=dropout,
             use_learnable_pos=use_learnable_pos,
         )
-        self.decoder = WaveDecoderMLP(
+        self.decoder = ChemoDecoderMLP(
             seq_len=self.seq_len, latent_dim=latent_dim, hidden_dim=dec_hidden, dropout=dec_dropout
         )
 

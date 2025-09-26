@@ -1,6 +1,6 @@
 # Seed Utilities — Reproducibility Helpers
 
-> Module: `wavemae.utils.seed`
+> Module: `chemomae.utils.seed`
 
 This document describes utility functions for controlling random seeds and deterministic behavior across Python, NumPy, and PyTorch.
 
@@ -8,7 +8,7 @@ This document describes utility functions for controlling random seeds and deter
 
 ## Overview
 
-Experiments involving stochastic training (e.g., WaveMAE with random masking) often require reproducibility. This module provides:
+Experiments involving stochastic training (e.g., ChemoMAE with random masking) often require reproducibility. This module provides:
 
 * **Global seeding** across Python, NumPy, and PyTorch (if available).
 * **Deterministic flags** for CuDNN backends.
@@ -43,7 +43,7 @@ Sets the seed globally for multiple libraries.
 **Usage**
 
 ```python
-from wavemae.utils.seed import set_global_seed
+from chemomae.utils.seed import set_global_seed
 
 set_global_seed(1234)
 ```
@@ -69,7 +69,7 @@ Toggles CuDNN deterministic mode **without resetting seeds**.
 **Usage**
 
 ```python
-from wavemae.utils.seed import enable_deterministic
+from chemomae.utils.seed import enable_deterministic
 
 enable_deterministic(True)   # enforce reproducibility
 enable_deterministic(False)  # allow autotuned kernels
@@ -99,4 +99,4 @@ enable_deterministic(True)
 
 ## Version
 
-* Introduced in `wavemae.utils.seed` — initial public draft.
+* Introduced in `chemomae.utils.seed` — initial public draft.

@@ -1,6 +1,6 @@
-# Trainer — WaveMAE Training Loop
+# Trainer — ChemoMAE Training Loop
 
-> Module: `wavemae.training.trainer`
+> Module: `chemomae.training.trainer`
 
 This document explains the **Trainer** and its **TrainerConfig**, covering AMP/TF32, EMA, gradient clipping, masked‑loss handling, checkpointing/resume, and training/validation loops.
 
@@ -8,7 +8,7 @@ This document explains the **Trainer** and its **TrainerConfig**, covering AMP/T
 
 ## Overview
 
-The `Trainer` encapsulates a robust training routine for **masked reconstruction** with WaveMAE:
+The `Trainer` encapsulates a robust training routine for **masked reconstruction** with ChemoMAE:
 
 * Mixed precision (bf16/fp16) via `torch.amp.autocast` and optional GradScaler
 * Optional **TF32** acceleration (Ampere+
@@ -138,11 +138,11 @@ elif cfg.loss_type == "sse":
 ### Minimal training
 
 ```python
-from wavemae.models import WaveMAE
-from wavemae.training.optim import build_optimizer, build_scheduler
-from wavemae.training.trainer import Trainer, TrainerConfig
+from chemomae.models import ChemoMAE
+from chemomae.training.optim import build_optimizer, build_scheduler
+from chemomae.training.trainer import Trainer, TrainerConfig
 
-model = WaveMAE(seq_len=256, latent_dim=64, n_blocks=16, n_mask=12)
+model = ChemoMAE(seq_len=256, latent_dim=64, n_blocks=16, n_mask=12)
 opt = build_optimizer(model, lr=2e-4, weight_decay=0.05)
 sched = build_scheduler(opt, steps_per_epoch=len(train_loader), epochs=100, warmup_epochs=5)
 cfg = TrainerConfig(out_dir="runs", amp=True, amp_dtype="bf16", use_ema=True, loss_type="mse", reduction="mean")
@@ -174,4 +174,4 @@ trainer.fit(epochs=100)
 
 ## Version
 
-* Introduced in `wavemae.training.trainer` — initial public draft.
+* Introduced in `chemomae.training.trainer` — initial public draft.

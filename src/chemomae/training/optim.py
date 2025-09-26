@@ -72,7 +72,7 @@ def build_optimizer(
 
     使用例
     ------
-    >>> model = WaveMAE(seq_len=256)
+    >>> model = ChemoMAE(seq_len=256)
     >>> optimizer = build_optimizer(model, lr=1e-4, weight_decay=0.05)
     >>> for p in optimizer.param_groups:
     ...     print(len(p["params"]), p["weight_decay"])

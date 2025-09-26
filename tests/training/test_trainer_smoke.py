@@ -2,13 +2,13 @@ import os
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from wavemae.training.trainer import Trainer, TrainerConfig
-from wavemae.training.optim import build_optimizer, build_scheduler
-from wavemae.models.wave_mae import WaveMAE
+from chemomae.training.trainer import Trainer, TrainerConfig
+from chemomae.training.optim import build_optimizer, build_scheduler
+from chemomae.models.chemo_mae import ChemoMAE
 
 
 def _tiny_model(L=16):
-    return WaveMAE(
+    return ChemoMAE(
         seq_len=L, d_model=16, nhead=4, num_layers=1, dim_feedforward=32,
         dropout=0.0, use_learnable_pos=True, latent_dim=8,
         dec_hidden=16, dec_dropout=0.0, n_blocks=4, n_mask=1

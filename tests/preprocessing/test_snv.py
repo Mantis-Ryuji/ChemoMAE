@@ -2,7 +2,7 @@ import math
 import numpy as np
 import pytest
 
-from wavemae.preprocessing.snv import snv, SNVScaler
+from chemomae.preprocessing.snv import snv, SNVScaler
 
 # torch は任意依存。なければ該当テストだけ skip
 try:

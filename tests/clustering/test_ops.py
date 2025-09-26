@@ -4,7 +4,7 @@ import matplotlib
 matplotlib.use("Agg")  # ヘッドレス環境向け
 import matplotlib.pyplot as plt
 
-from wavemae.clustering.ops import (
+from chemomae.clustering.ops import (
     l2_normalize_rows, cosine_similarity, cosine_dissimilarity,
     find_elbow_curvature, plot_elbow,
 )

@@ -1,6 +1,6 @@
 # CosineKMeans — Spherical K-Means Clustering
 
-> Module: `wavemae.clustering.cosine_kmeans`
+> Module: `chemomae.clustering.cosine_kmeans`
 
 This document describes **CosineKMeans**, an implementation of spherical k-means with cosine similarity, and **elbow_ckmeans** for model selection.
 
@@ -79,7 +79,7 @@ ckm = CosineKMeans(
 ### Training and prediction
 
 ```python
-from wavemae.clustering.cosine_kmeans import CosineKMeans
+from chemomae.clustering.cosine_kmeans import CosineKMeans
 
 X = torch.randn(1000, 64)
 ckm = CosineKMeans(n_clusters=10)
@@ -113,7 +113,7 @@ labels, dist = ckm.predict(X, return_dist=True)
 ## Model Selection — `elbow_ckmeans`
 
 ```python
-from wavemae.clustering.cosine_kmeans import elbow_ckmeans
+from chemomae.clustering.cosine_kmeans import elbow_ckmeans
 
 k_list, inertias, optimal_k, elbow_idx, kappa = elbow_ckmeans(
     CosineKMeans, X, k_max=30, chunk=1000000)
@@ -167,4 +167,4 @@ assert torch.allclose(ckm.centroids, ckm2.centroids)
 
 ## Version
 
-* Introduced in `wavemae.clustering.cosine_kmeans` — initial public draft.
+* Introduced in `chemomae.clustering.cosine_kmeans` — initial public draft.
