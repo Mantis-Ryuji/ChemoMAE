@@ -33,7 +33,7 @@ class TrainerConfig:
         AMP の精度種別。
         - "bf16" は近年の GPU (A100/H100 など) で安定。
         - "fp16" はより古い GPU でも動作。
-    enable_tf32 : bool, default=True
+    enable_tf32 : bool, default=False
         TensorFloat-32 を有効化するか。Ampere 以降の GPU で効果あり。
     grad_clip : float | None, default=1.0
         勾配クリッピングの最大ノルム。None の場合は無効。
@@ -64,7 +64,7 @@ class TrainerConfig:
     out_dir: str | Path = "runs"
     amp: bool = True
     amp_dtype: str = "bf16"  # "bf16" | "fp16"
-    enable_tf32: bool = True
+    enable_tf32: bool = False
     grad_clip: Optional[float] = 1.0
     use_ema: bool = True
     ema_decay: float = 0.999
