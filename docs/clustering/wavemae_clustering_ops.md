@@ -53,9 +53,9 @@ Estimate optimal cluster count via curvature.
 3. Compute gradients $`y'`$, $`y''`$.
 4. Curvature:
 
-   ```math
-   \kappa = \frac{|y''|}{(1 + (y')^2)^{3/2}}
-   ```
+```math
+\kappa = \frac{|y''|}{(1 + (y')^2)^{3/2}}
+```
 5. Ignore endpoints (set to -inf).
 6. Choose `optimal_k = k_list[argmax(κ)]`.
 

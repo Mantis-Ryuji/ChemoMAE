@@ -30,7 +30,7 @@ Y_{ij} = \frac{X_{ij}-\mu_i}{\,s_i + \varepsilon\,}
 > \|Y_i\|_2 = \sqrt{L}
 > $$
 >
-> Therefore, spectra are mapped onto a hypersphere of radius $\sqrt{L}$. This is useful for cosine similarity–based methods, since the relative angles between spectra are preserved. If you prefer a unit sphere (radius 1), apply an additional L2 normalization step after SNV.
+> Therefore, spectra are mapped onto a hypersphere of radius $`\sqrt{L}`$. This is useful for cosine similarity–based methods, since the relative angles between spectra are preserved. If you prefer a unit sphere (radius 1), apply an additional L2 normalization step after SNV.
 
 ---
 
@@ -135,7 +135,7 @@ X_snv_unit = l2_normalize_rows(X_snv)
 
 * **Spectral pre-processing:** SNV is a strong baseline for removing per-spectrum intensity offsets and scaling effects prior to self-supervised training with WaveMAE or downstream clustering (e.g., cosine K-Means).
 * **Raman / NIR:** Works for both modalities; consider additional baseline corrections or smoothing if your acquisition introduces broad trends or spikes.
-* **Downstream cosine metrics:** Since SNV outputs lie on a hypersphere of radius $\sqrt{L}$, relative angles are preserved. For unit vectors, apply L2 normalization.
+* **Downstream cosine metrics:** Since SNV outputs lie on a hypersphere of radius $`\sqrt{L}`$, relative angles are preserved. For unit vectors, apply L2 normalization.
 
 ---
 

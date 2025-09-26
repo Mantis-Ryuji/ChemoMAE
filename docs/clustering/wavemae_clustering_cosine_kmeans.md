@@ -10,9 +10,9 @@ This document describes **CosineKMeans**, an implementation of spherical k-means
 
 * **Objective**: minimize mean cosine dissimilarity
 
-  ```math
-  J = \mathrm{mean}\,(1 - \cos(x, c))
-  ```
+```math
+J = \mathrm{mean}\,(1 - \cos(x, c))
+```
 * **E-step**: Assign each sample to centroid with maximum cosine similarity.
 * **M-step**: Update centroids as L2-normalized mean of assigned samples.
 * **Initialization**: k-means++ (optionally squared distances).
