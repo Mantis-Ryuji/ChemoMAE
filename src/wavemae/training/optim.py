@@ -55,7 +55,7 @@ def build_optimizer(
     weight_decay : float, default=0.05
         weight decay をかけるパラメータ群に対する係数。
     betas : Tuple[float, float], default=(0.9, 0.95)
-        AdamW の β 値。慣習的に (0.9, 0.95) が Transformer 系でよく使われる。
+        AdamW の β 値。
     eps : float, default=1e-8
         AdamW の数値安定化項。
 

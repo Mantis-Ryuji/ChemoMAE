@@ -25,9 +25,9 @@ class TesterConfig:
         AMPで使用するデータ型。bf16推奨（Ampere以降）。
     out_dir : str | Path, default="runs"
         評価履歴を保存するディレクトリ。
-    criterion : {"sse", "mse"}, default="sse"
+    criterion : {"sse", "mse"}, default="mse"
         再構成誤差の指標。sse=二乗和誤差、mse=平均二乗誤差。
-    reduction : {"sum", "mean", "batch_mean"}, default="batch_mean"
+    reduction : {"sum", "mean", "batch_mean"}, default="mean"
         損失の集約方法。
         - "sum": 全サンプルの誤差を単純合計
         - "mean": 要素平均
@@ -45,8 +45,8 @@ class TesterConfig:
     amp_dtype: Literal["bf16", "fp16"] = "bf16"
     out_dir: str | Path = "runs"
     # loss settings
-    criterion: Literal["sse", "mse"] = "sse"
-    reduction: Literal["sum", "mean", "batch_mean"] = "batch_mean"
+    criterion: Literal["sse", "mse"] = "mse"
+    reduction: Literal["sum", "mean", "batch_mean"] = "mean"
     fixed_visible: Optional[torch.Tensor] = None  # True=visible のブールマスク
     # logging
     log_history: bool = True

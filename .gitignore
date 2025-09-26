@@ -5,7 +5,7 @@ dist/
 build/
 *.whl
 .venv/
-.env
 .ipynb_checkpoints/
-runs/
 data/
+
+examples/

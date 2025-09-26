@@ -41,11 +41,11 @@ class TrainerConfig:
         EMA (Exponential Moving Average) によるモデルパラメータ追跡を有効化するか。
     ema_decay : float, default=0.999
         EMA の減衰率。大きいほど履歴の影響が長く残る。
-    loss_type : {"sse", "mse"}, default="sse"
+    loss_type : {"sse", "mse"}, default="mse"
         損失関数の種類。
         - "sse" = masked_sse
         - "mse" = masked_mse
-    reduction : {"sum", "mean", "batch_mean"}, default="batch_mean"
+    reduction : {"sum", "mean", "batch_mean"}, default="mean"
         損失の集約方法。`masked_sse`/`masked_mse` に渡される。
     early_stop_patience : int | None, default=20
         EarlyStopping を使う場合の patience。
@@ -68,8 +68,8 @@ class TrainerConfig:
     grad_clip: Optional[float] = 1.0
     use_ema: bool = True
     ema_decay: float = 0.999
-    loss_type: str = "sse"   # "sse" | "mse"
-    reduction: str = "batch_mean"  # for sse/mse
+    loss_type: str = "mse"   # "sse" | "mse"
+    reduction: str = "mean"  # for sse/mse
     early_stop_patience: Optional[int] = 20
     early_stop_start_ratio: float = 0.5
     early_stop_min_delta: float = 0.0
