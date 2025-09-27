@@ -8,80 +8,87 @@ This document describes **`cosine_fps_downsample`**, a diversity-first subsampli
 
 ## Overview
 
-Given a collection of spectra
+We start from a collection of spectra
 
 ```math
-X = {\mathbf{x}_1, \dots, \mathbf{x}_N} \subset \mathbb{R}^C,
+X = \{\mathbf{x}_1, \dots, \mathbf{x}_N\} \subset \mathbb{R}^C
 ```
 
-each sample is projected onto the unit sphere via L2 normalization:
+Each spectrum is projected onto the unit sphere by L2 normalization:
 
 ```math
 \tilde{\mathbf{x}}_i = \frac{\mathbf{x}_i}{\lVert \mathbf{x}_i \rVert_2 + \varepsilon},
-\quad \lVert \tilde{\mathbf{x}}_i \rVert_2 \approx 1.
+\quad \lVert \tilde{\mathbf{x}}_i \rVert_2 \approx 1
 ```
 
-As a dissimilarity measure we adopt the **cosine distance**, defined as
+As the dissimilarity measure we use the **cosine distance**:
 
 ```math
 d(\tilde{\mathbf{x}}_i,\tilde{\mathbf{x}}_j)
 = 1 - \tilde{\mathbf{x}}_i^\top \tilde{\mathbf{x}}_j
-\in [0,2],
+\in [0,2]
 ```
 
-which is monotone in the angle between vectors: small values indicate similar directions, while large values indicate dissimilar ones.
+This quantity grows as the angle between vectors increases:
+
+* $`d \approx 0`$ means the two spectra are very similar (same direction).
+* $`d \approx 2`$ means they point in opposite directions (maximally dissimilar).
 
 
 ### Farthest Point Sampling (FPS)
 
-Farthest Point Sampling constructs a subset of size
+The goal of FPS is to select a diverse subset of size
 
 ```math
-k = \max\bigl(1, \mathrm{round}(\rho N)\bigr)
+k = \max \bigl( 1, \mathrm{round}(\rho N) \bigr)
 ```
 
-by sequentially selecting points that are maximally distant from the already chosen set.
-Formally, the selected index set
+Let the chosen indices be
 
 ```math
-\mathcal{S}_k = {s_1, \dots, s_k}
+\mathcal{S}_k = \{s_1, \dots, s_k\}
 ```
 
-is obtained by the greedy rule:
+The algorithm proceeds greedily:
 
 ```math
 s_1 \ \text{is chosen at random (or fixed)}, \qquad
-s_t = \arg\max_{i \notin \mathcal{S}_{t-1}} \min_{j \in \mathcal{S}_{t-1}}
-d(\tilde{\mathbf{x}}_i, \tilde{\mathbf{x}}_j)
+s_t = \arg\max_{i \notin \mathcal{S}_{t-1}} \ 
+        \min_{j \in \mathcal{S}_{t-1}} 
+        d(\tilde{\mathbf{x}}_i, \tilde{\mathbf{x}}_j)
 ```
 
-That is, at each step we add the sample whose nearest neighbor in the current subset is as far away as possible.
+In words:
 
+* For each candidate $i$ outside the set, compute its distance to every point already in the set.
+* Record the **closest distance** (how near $i$ is to the current subset).
+* Select the candidate whose closest distance is the **largest** overall.
+
+Thus FPS repeatedly adds the point that is *as far as possible from its nearest neighbor in the subset*, ensuring the selected points are spread out with a large margin.
 
 ### Vectorized Implementation
 
-In practice, FPS is efficiently realized by maintaining the vector of nearest distances
+For efficiency, FPS maintains a vector of the current nearest distances
 
 ```math
 \mathbf{d}_{\min} \in \mathbb{R}^N,
 ```
 
-and updating it at each iteration as
+where $`\mathbf{d}_{\min}[i]`$ is the distance from candidate $`i`$ to its nearest selected neighbor.
+When a new point $`\tilde{\mathbf{x}}_s`$ is chosen, the update is:
 
 ```math
 \mathbf{d}_{\min} \leftarrow
-\min \Bigl(\mathbf{d}_{\min},\ \mathbf{1} - X_{\text{unit}}\tilde{\mathbf{x}}_{s}\Bigr),
+\min \Bigl( \mathbf{d}_{\min}, \ \mathbf{1} - X_{\text{unit}} \tilde{\mathbf{x}}_{s} \Bigr),
 ```
 
-where $`X_{\text{unit}}`$ denotes the row-normalized data matrix and $`\tilde{\mathbf{x}}_{s}`$ is the newly selected vector.
-Thus each step requires only a **single matrix–vector multiplication** followed by an elementwise `min` operation, which can be efficiently implemented with `torch.matmul` and in-place updates.
+where $`X_{\text{unit}}`$ is the row-normalized data matrix.
+This update rule means:
 
+* Compute cosine distances between all points and the newly selected one ($`1 - X_{\text{unit}} \tilde{\mathbf{x}}_{s}`$).
+* Update each entry of $`\mathbf{d}_{\min}`$ by taking the smaller value with the new distances.
 
-### Implementation Notes
-
-* With `ensure_unit_sphere=True`, rows are internally L2-normalized to respect cosine geometry.
-* Nevertheless, the function **returns rows from the original data matrix $`X`$** (not the normalized copy).
-* The time complexity is $`O(Nk)`$, with each iteration dominated by one matrix–vector multiplication and an elementwise update.
+Each iteration therefore requires only **one matrix–vector multiplication** followed by an elementwise `min`, which can be implemented very efficiently with `torch.matmul` and in-place updates.
 
 ---
 
