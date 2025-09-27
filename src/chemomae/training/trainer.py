@@ -3,6 +3,7 @@ import json, math, time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, Iterable
+from tqdm import tqdm
 
 import torch
 import torch.nn as nn
@@ -268,7 +269,9 @@ class Trainer:
     def train_one_epoch(self) -> float:
         self.model.train()
         meter_sum, meter_cnt = 0.0, 0
-        for batch in self.train_loader:
+        
+        # tqdmで進捗表示
+        for batch in tqdm(self.train_loader, desc="Training", unit="batch"):
             x = self._to_x(batch)
 
             with self._autocast_ctx():
@@ -312,7 +315,9 @@ class Trainer:
             self.ema.apply_to(self.model)
 
         meter_sum, meter_cnt = 0.0, 0
-        for batch in self.val_loader:
+
+        # tqdmで進捗表示
+        for batch in tqdm(self.val_loader, desc="Validating", unit="batch"):
             x = self._to_x(batch)
             with self._autocast_ctx():
                 x_recon, _, visible_mask = self.model(x)
