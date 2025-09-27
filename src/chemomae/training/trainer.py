@@ -271,7 +271,7 @@ class Trainer:
         meter_sum, meter_cnt = 0.0, 0
         
         # tqdmで進捗表示
-        for batch in tqdm(self.train_loader, desc="Training", unit="batch"):
+        for batch in tqdm(self.train_loader, desc="Training  ", unit="batch"):
             x = self._to_x(batch)
 
             with self._autocast_ctx():
