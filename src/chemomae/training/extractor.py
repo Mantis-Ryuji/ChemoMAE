@@ -94,28 +94,26 @@ class Extractor:
         dtype = torch.bfloat16 if self.cfg.amp_dtype == "bf16" else torch.float16
         return torch.amp.autocast("cuda", dtype=dtype)
 
-    @torch.no_grad()
     def __call__(self, loader: Iterable) -> torch.Tensor | np.ndarray:
         self.model.eval().to(self.device)
         feats = []
 
-        # tqdm で進捗表示
-        for batch in tqdm(loader, desc="Extracting", unit="batch"):
-            x = batch[0] if isinstance(batch, (list, tuple)) else batch
-            x = x.to(self.device, non_blocking=True)  # (B, L)
-            B, L = x.shape
-            visible_mask = torch.ones(B, L, dtype=torch.bool, device=self.device)
+        with torch.inference_mode():
+            for batch in tqdm(loader, desc="Extracting", unit="batch"):
+                x = batch[0] if isinstance(batch, (list, tuple)) else batch
+                x = x.to(self.device, non_blocking=True)  # (B, L)
+                B, L = x.shape
+                visible_mask = torch.ones(B, L, dtype=torch.bool, device=self.device)
 
-            with self._autocast():
-                z = self.model.encode(x, visible_mask)  # (B, D)
+                with self._autocast():
+                    z = self.model.encode(x, visible_mask)  # (B, D)
 
-            feats.append(z.detach().cpu())
+                feats.append(z.detach().cpu())
 
         Z = torch.cat(feats, dim=0) if feats else torch.empty(
             0, self.model.encoder.to_latent.out_features
         )
 
-        # 保存が指定されていれば書き出し
         if self.cfg.save_path is not None:
             path = Path(self.cfg.save_path)
             path.parent.mkdir(parents=True, exist_ok=True)

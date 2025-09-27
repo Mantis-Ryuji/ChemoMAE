@@ -302,13 +302,11 @@ class Trainer:
             meter_cnt += x.size(0)
         return meter_sum / max(1, meter_cnt)
 
-    @torch.no_grad()
     def validate(self) -> float:
         if self.val_loader is None:
             return float("nan")
         self.model.eval()
 
-        # eval では EMA 適用（復元する）
         backup = None
         if self.ema is not None:
             backup = {k: v.detach().clone() for k, v in self.model.state_dict().items()}
@@ -316,14 +314,14 @@ class Trainer:
 
         meter_sum, meter_cnt = 0.0, 0
 
-        # tqdmで進捗表示
-        for batch in tqdm(self.val_loader, desc="Validating", unit="batch"):
-            x = self._to_x(batch)
-            with self._autocast_ctx():
-                x_recon, _, visible_mask = self.model(x)
-                loss = self._compute_loss(x_recon, x, ~visible_mask)
-            meter_sum += float(loss.item()) * x.size(0)
-            meter_cnt += x.size(0)
+        with torch.inference_mode():
+            for batch in tqdm(self.val_loader, desc="Validating", unit="batch"):
+                x = self._to_x(batch)
+                with self._autocast_ctx():
+                    x_recon, _, visible_mask = self.model(x)
+                    loss = self._compute_loss(x_recon, x, ~visible_mask)
+                meter_sum += float(loss.item()) * x.size(0)
+                meter_cnt += x.size(0)
 
         if backup is not None:
             self.model.load_state_dict(backup, strict=True)

@@ -78,8 +78,7 @@ class Tester:
     >>> tester_cfg = TesterConfig(device="cuda", amp=True, amp_dtype="bf16")
     >>> tester = Tester(model, tester_cfg)
     >>> import torch
-    >>> with torch.inference_mode():   # 推論モード
-    ...     avg_loss = tester(test_loader)
+    >>> avg_loss = tester(test_loader)
     >>> print(avg_loss)
     0.1342
     """
@@ -133,33 +132,33 @@ class Tester:
         red = self.cfg.reduction
         fixed_visible = self.cfg.fixed_visible
 
-        # tqdmで進捗を表示
-        for batch in tqdm(data_loader, desc="Testing", unit="batch"):
-            x = batch[0] if isinstance(batch, (list, tuple)) else batch
-            x = x.to(self.device, non_blocking=True)  # (B, L)
-            B, L = x.shape
+        with torch.inference_mode():
+            for batch in tqdm(data_loader, desc="Testing", unit="batch"):
+                x = batch[0] if isinstance(batch, (list, tuple)) else batch
+                x = x.to(self.device, non_blocking=True)  # (B, L)
+                B, L = x.shape
 
-            if fixed_visible is None:
-                with self._autocast():
-                    x_recon, _, visible_mask = self.model(x)
-            else:
-                visible_mask = fixed_visible.to(self.device)
-                if visible_mask.dim() == 1:
-                    visible_mask = visible_mask.expand(B, L)
-                with self._autocast():
-                    z = self.model.encoder(x, visible_mask)
-                    x_recon = self.model.decoder(z)
+                if fixed_visible is None:
+                    with self._autocast():
+                        x_recon, _, visible_mask = self.model(x)
+                else:
+                    visible_mask = fixed_visible.to(self.device)
+                    if visible_mask.dim() == 1:
+                        visible_mask = visible_mask.expand(B, L)
+                    with self._autocast():
+                        z = self.model.encoder(x, visible_mask)
+                        x_recon = self.model.decoder(z)
 
-            masked = ~visible_mask
-            if crit == "sse":
-                loss = masked_sse(x_recon, x, masked, reduction=red)
-            elif crit == "mse":
-                loss = masked_mse(x_recon, x, masked, reduction=red)
-            else:
-                raise ValueError(f"unknown criterion: {crit}")
+                masked = ~visible_mask
+                if crit == "sse":
+                    loss = masked_sse(x_recon, x, masked, reduction=red)
+                elif crit == "mse":
+                    loss = masked_mse(x_recon, x, masked, reduction=red)
+                else:
+                    raise ValueError(f"unknown criterion: {crit}")
 
-            total = total + loss.detach() * B
-            count += B
+                total += loss.detach() * B
+                count += B
 
         avg = (total / max(1, count)).item()
         self._append_history({

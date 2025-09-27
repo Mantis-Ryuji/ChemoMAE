@@ -115,8 +115,7 @@ avg_loss = tester(data_loader)
 from chemomae.training import Tester, TesterConfig
 
 tester = Tester(model, TesterConfig(device="cuda", criterion="mse", reduction="mean"))
-with torch.inference_mode():
-    avg_loss = tester(test_loader)
+avg_loss = tester(test_loader)
 print("Test MSE:", avg_loss)
 ```
 
@@ -126,9 +125,7 @@ print("Test MSE:", avg_loss)
 visible = torch.ones(seq_len, dtype=torch.bool)
 cfg = TesterConfig(fixed_visible=visible, criterion="sse", reduction="batch_mean")
 tester = Tester(model, cfg)
-
-with torch.inference_mode():
-    avg_loss = tester(test_loader)
+avg_loss = tester(test_loader)
 ```
 
 ---
