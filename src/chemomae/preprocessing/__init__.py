@@ -7,9 +7,9 @@ Currently includes:
 """
 
 from .snv import SNVScaler
-from .downsampling import fps_downsample
+from .downsampling import cosine_fps_downsample
 
 __all__ = [
     "SNVScaler",
-    "fps_downsample"
+    "cosine_fps_downsample"
 ]

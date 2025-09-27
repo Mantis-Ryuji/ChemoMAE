@@ -4,7 +4,7 @@ import numpy as np
 import torch
 
 @torch.no_grad()
-def fps_downsample(
+def cosine_fps_downsample(
     X: Union[np.ndarray, torch.Tensor],
     *,
     ratio: float = 0.1,
@@ -67,7 +67,7 @@ def fps_downsample(
     Example
     -------
     >>> X_snv = SNVScaler().transform(X)        # (N, C)
-    >>> X_sub = fps_downsample(X_snv, ratio=0.1, ensure_unit_sphere=True, seed=42)
+    >>> X_sub = cosine_fps_downsample(X_snv, ratio=0.1, ensure_unit_sphere=True, seed=42)
     """
     # ---- 前処理（Torchへ集約、CUDAがあれば使用） -----------------------
     is_numpy = isinstance(X, np.ndarray)
