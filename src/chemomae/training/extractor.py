@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional, Literal
+from tqdm import tqdm
 
 import numpy as np
 import torch
@@ -98,7 +99,8 @@ class Extractor:
         self.model.eval().to(self.device)
         feats = []
 
-        for batch in loader:
+        # tqdm で進捗表示
+        for batch in tqdm(loader, desc="Extracting", unit="batch"):
             x = batch[0] if isinstance(batch, (list, tuple)) else batch
             x = x.to(self.device, non_blocking=True)  # (B, L)
             B, L = x.shape

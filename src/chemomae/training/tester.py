@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Literal, Dict, Any
+from tqdm import tqdm
 
 import json
 import torch
@@ -122,10 +123,6 @@ class Tester:
     def __call__(self, data_loader) -> float:
         """
         DataLoader 全体を評価して平均損失を返す。
-
-        前提:
-            - model(x) が (x_recon, z, visible_mask_bool) を返す実装
-              （fixed_visible を与える場合は encoder/decoder を個別に呼ぶ）
         """
         self.model.eval()
 
@@ -136,17 +133,16 @@ class Tester:
         red = self.cfg.reduction
         fixed_visible = self.cfg.fixed_visible
 
-        for batch in data_loader:
+        # tqdmで進捗を表示
+        for batch in tqdm(data_loader, desc="Testing", unit="batch"):
             x = batch[0] if isinstance(batch, (list, tuple)) else batch
             x = x.to(self.device, non_blocking=True)  # (B, L)
             B, L = x.shape
 
             if fixed_visible is None:
-                # モデル側でマスク生成＆復元を行う前提
                 with self._autocast():
                     x_recon, _, visible_mask = self.model(x)
             else:
-                # 固定マスクを用いた評価（必要なときのみ使用）
                 visible_mask = fixed_visible.to(self.device)
                 if visible_mask.dim() == 1:
                     visible_mask = visible_mask.expand(B, L)
@@ -154,7 +150,7 @@ class Tester:
                     z = self.model.encoder(x, visible_mask)
                     x_recon = self.model.decoder(z)
 
-            masked = ~visible_mask  # 再構成対象
+            masked = ~visible_mask
             if crit == "sse":
                 loss = masked_sse(x_recon, x, masked, reduction=red)
             elif crit == "mse":
@@ -162,7 +158,7 @@ class Tester:
             else:
                 raise ValueError(f"unknown criterion: {crit}")
 
-            total = total + loss.detach() * B  # GPU上で合算
+            total = total + loss.detach() * B
             count += B
 
         avg = (total / max(1, count)).item()
