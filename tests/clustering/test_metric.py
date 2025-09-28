@@ -100,19 +100,21 @@ def test_return_type_and_score(return_numpy):
 
     if return_numpy:
         assert isinstance(s, np.ndarray)
-        # NumPy 側も float32 で平均（既定は float64）
+        # NumPy 側も fp32 で平均（既定は fp64 になるためズレる）
         score = float(np.asarray(s, dtype=np.float32).mean(dtype=np.float32))
-        tol = 1e-7   # reduce 実装差による極小差分は許容
+        # silhouette_score も return_numpy=True として同条件に（戻りは Python float）
+        score2 = float(silhouette_score_cosine_gpu(X, y, device="cpu", chunk=None, return_numpy=True))
+        # NumPy(fp32) と Torch(fp32) の reduce 差をわずかに許容
+        assert math.isclose(score, score2, rel_tol=0.0, abs_tol=2e-7)
     else:
         assert torch.is_tensor(s)
         score = float(s.float().mean(dtype=torch.float32).item())
-        tol = 0.0    # 同じ Torch 経路なので完全一致期待
-
-    # silhouette_score_cosine_gpu は内部計算を常に Torch(fp32) 経路に統一
-    score2 = silhouette_score_cosine_gpu(X, y, device="cpu", chunk=None)
-
-    assert math.isclose(score, score2, rel_tol=0.0, abs_tol=tol)
-
+        # silhouette_score は torch scalar で返すように
+        score2_t = silhouette_score_cosine_gpu(X, y, device="cpu", chunk=None, return_numpy=False)
+        assert torch.is_tensor(score2_t) and score2_t.numel() == 1
+        score2 = float(score2_t.item())
+        # 同じ Torch(fp32) 経路なので厳密一致期待
+        assert math.isclose(score, score2, rel_tol=0.0, abs_tol=0.0)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
