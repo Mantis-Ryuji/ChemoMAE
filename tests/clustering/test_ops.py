@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 from chemomae.clustering.ops import (
     l2_normalize_rows, cosine_similarity, cosine_dissimilarity,
-    find_elbow_curvature, plot_elbow,
+    find_elbow_curvature, plot_elbow_ckm,
 )
 
 
@@ -38,7 +38,7 @@ def test_find_elbow_curvature_and_plot_elbow(tmp_path):
     assert isinstance(kappa, np.ndarray) and kappa.shape[0] == len(k_list)
 
     # 描画ヘルパのスモーク（保存まで）
-    plot_elbow(k_list, inertias, K, idx)
+    plot_elbow_ckm(k_list, inertias, K, idx)
     out = tmp_path / "elbow.png"
     plt.gcf().savefig(out)
     assert out.exists() and out.stat().st_size > 0
