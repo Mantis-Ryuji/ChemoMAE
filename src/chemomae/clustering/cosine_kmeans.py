@@ -25,9 +25,9 @@ class CosineKMeans(nn.Module):
 
     Parameters
     ----------
-    n_clusters : int, default=8
+    n_components : int, default=8
         クラスタ数 K。
-    tol : float, default=1e-3
+    tol : float, default=1e-4
         収束判定の許容値（相対 or 絶対のどちらかを満たしたら停止）。
     max_iter : int, default=500
         EM 反復の最大回数。
@@ -59,18 +59,18 @@ class CosineKMeans(nn.Module):
     """
     def __init__(
         self,
-        n_clusters: int = 8,
-        tol: float = 1e-3,
+        n_components: int = 8,
+        tol: float = 1e-4,
         max_iter: int = 500,
         device: Union[str, torch.device] = "cuda",
         random_state: Optional[int] = 42,
         use_squared_init: bool = False,
     ) -> None:
         super().__init__()
-        if n_clusters <= 0:
-            raise ValueError("n_clusters must be positive")
+        if n_components <= 0:
+            raise ValueError("n_components must be positive")
 
-        self.n_clusters = int(n_clusters)
+        self.n_components = int(n_components)
         self.tol = float(tol)
         self.max_iter = int(max_iter)
         self.device = torch.device(device)
@@ -94,9 +94,9 @@ class CosineKMeans(nn.Module):
     def _init_centroids_kmeanspp(self, Xn: torch.Tensor) -> torch.Tensor:
         """Full-device k-means++ (Xn: L2-normalized, device 上, fp32 推奨)."""
         N = int(Xn.size(0))
-        if self.n_clusters > N:
-            raise ValueError(f"n_clusters ({self.n_clusters}) must be <= N ({N}).")
-        K, d = self.n_clusters, int(Xn.size(1))
+        if self.n_components > N:
+            raise ValueError(f"n_components ({self.n_components}) must be <= N ({N}).")
+        K, d = self.n_components, int(Xn.size(1))
         C = torch.empty(K, d, device=Xn.device, dtype=Xn.dtype)
 
         # 1点目
@@ -123,9 +123,9 @@ class CosineKMeans(nn.Module):
     def _init_centroids_kmeanspp_stream(self, X_cpu: torch.Tensor, chunk: int) -> torch.Tensor:
         """Streaming k-means++: X は CPU のまま、チャンクを device へ送る。"""
         N = int(X_cpu.size(0))
-        if self.n_clusters > N:
-            raise ValueError(f"n_clusters ({self.n_clusters}) must be <= N ({N}).")
-        K, d = self.n_clusters, int(X_cpu.size(1))
+        if self.n_components > N:
+            raise ValueError(f"n_components ({self.n_components}) must be <= N ({N}).")
+        K, d = self.n_components, int(X_cpu.size(1))
         C = torch.empty(K, d, device=self.device, dtype=torch.float32)
 
         idx0 = torch.randint(0, N, (1,), generator=self._generator)
@@ -222,14 +222,14 @@ class CosineKMeans(nn.Module):
         Raises
         ------
         ValueError
-            入力形状/値が不正、または `n_clusters > N` のとき。
+            入力形状/値が不正、または `n_components > N` のとき。
         """
         if X.ndim != 2:
             raise ValueError(f"X must be 2D, got {tuple(X.shape)}")
         if not torch.isfinite(X).all():
             raise ValueError("X contains NaN/Inf")
-        if self.n_clusters > X.size(0):
-            raise ValueError(f"n_clusters ({self.n_clusters}) must be <= N ({X.size(0)})")
+        if self.n_components > X.size(0):
+            raise ValueError(f"n_components ({self.n_components}) must be <= N ({X.size(0)})")
         if chunk is not None and chunk <= 0:
             raise ValueError("chunk must be positive")
 
@@ -261,9 +261,9 @@ class CosineKMeans(nn.Module):
 
             # M-step（累積は fp32）
             if stream:
-                C_new, counts = self._update_centroids_in_chunks_cpu(X_cpu, labels, self.n_clusters, chunk)
+                C_new, counts = self._update_centroids_in_chunks_cpu(X_cpu, labels, self.n_components, chunk)
             else:
-                counts = torch.bincount(labels, minlength=self.n_clusters).to(torch.float32)
+                counts = torch.bincount(labels, minlength=self.n_components).to(torch.float32)
                 C_new = torch.zeros_like(C, dtype=torch.float32)
                 C_new.index_add_(0, labels, Xn.to(torch.float32))
                 non_empty = counts > 0
@@ -447,7 +447,7 @@ class CosineKMeans(nn.Module):
         概要
         ----
         - `save_centroids()` で保存した中心を読み込み、`predict()` 可能な状態に復元する。
-        - `strict_k=True` の場合、保存データの K と `self.n_clusters` が一致しないとエラー。
+        - `strict_k=True` の場合、保存データの K と `self.n_components` が一致しないとエラー。
 
         Parameters
         ----------
@@ -477,8 +477,8 @@ class CosineKMeans(nn.Module):
             raise ValueError(f"Invalid centroids shape: {tuple(C.shape)}")
         K, d = int(C.size(0)), int(C.size(1))
 
-        if strict_k and (K != self.n_clusters):
-            raise ValueError(f"n_clusters mismatch: expected {self.n_clusters}, file has {K}")
+        if strict_k and (K != self.n_components):
+            raise ValueError(f"n_components mismatch: expected {self.n_components}, file has {K}")
 
         C = l2_normalize_rows(C)
         if self.centroids.numel() == 0:
@@ -517,7 +517,7 @@ def elbow_ckmeans(
     ----------
     cluster_module : Callable[..., CosineKMeans]
         `CosineKMeans` 互換のコンストラクタ（例: `CosineKMeans` 自体）。
-        呼び出し側で `n_clusters`, `device`, `random_state` などを渡せる必要があります。
+        呼び出し側で `n_components`, `device`, `random_state` などを渡せる必要があります。
     X : torch.Tensor, shape (N, D)
         入力特徴行列。内部で `device` へ転送します（既に同一ならコピー無し）。
     device : {"cuda", "cpu"} | torch.device, default="cuda"
@@ -571,8 +571,8 @@ def elbow_ckmeans(
 
     for k in k_list:
         ckm = cluster_module(
-            n_clusters=k,
-            tol=1e-3,
+            n_components=k,
+            tol=1e-4,
             max_iter=500,
             device=device,
             random_state=random_state,

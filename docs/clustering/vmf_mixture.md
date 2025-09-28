@@ -70,7 +70,7 @@ vmf = VMFMixture(
 **Attributes**
 
 * `mus: (K, D)` — unit mean directions.
-* `kappas: (K,)` — concentrations (\kappa_k>0).
+* `kappas: (K,)` — concentrations ($`\kappa_k>0`$).
 * `logpi: (K,)` — logits for mixture weights.
 * `n_iter_: int` — iterations run.
 * `lower_bound_: float` — final objective (approx log-lik).
@@ -84,7 +84,7 @@ vmf = VMFMixture(
   Train via EM. Set `chunk>0` to stream large datasets.
 
 * `predict_proba(X, *, chunk=None) -> Tensor (N, K)`
-  Responsibilities (\gamma_{ik}) (rows sum to 1).
+  Responsibilities ($`\gamma_{ik}`$) (rows sum to 1).
 
 * `predict(X, *, chunk=None) -> LongTensor (N,)`
   Hard assignments via `argmax` over responsibilities.
@@ -93,10 +93,10 @@ vmf = VMFMixture(
   Total or per-sample log-likelihood under current parameters.
 
 * `num_params() -> int`
-  DoF for BIC: (p = K,d + (K-1)).
+  DoF for BIC: ($`p = K,d + (K-1)`$).
 
 * `bic(X, *, chunk=None) -> float`
-  ( \mathrm{BIC} = -2\log L + p\log N ) (lower is better).
+  ( $`\mathrm{BIC} = -2\log L + p\log N`$ ) (lower is better).
 
 * `sample(n) -> Tensor (n, D)`
   Draw samples from the learned mixture (Wood’s method + Householder).
@@ -155,7 +155,7 @@ resp   = vmf.predict_proba(X, chunk=1000000)
 
 ```python
 ks, scores, K, idx, curv = elbow_vmf(
-    VMFMixture, X, device="cuda", k_max=30, chunk=8192, criterion="bic"
+    VMFMixture, X, device="cuda", k_max=30, chunk=1000000, criterion="bic"
 )
 print("Elbow K:", K)
 ```

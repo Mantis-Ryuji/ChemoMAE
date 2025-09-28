@@ -29,7 +29,7 @@ def _make_spherical_blobs(n_per=40, noise=0.10, seed=0):
 
 def test_fit_predict_basic_properties_cpu():
     X, _ = _make_spherical_blobs(n_per=30, noise=0.08, seed=1)
-    model = CosineKMeans(n_clusters=3, device="cpu", random_state=42, tol=1e-4, max_iter=200)
+    model = CosineKMeans(n_components=3, device="cpu", random_state=42, tol=1e-4, max_iter=200)
     model.fit(X)
     assert model._fitted is True
     assert model.centroids.shape == (3, X.shape[1])
@@ -48,7 +48,7 @@ def test_fit_predict_basic_properties_cpu():
 
 def test_predict_before_fit_raises_and_dim_mismatch():
     X, _ = _make_spherical_blobs()
-    m = CosineKMeans(n_clusters=3, device="cpu")
+    m = CosineKMeans(n_components=3, device="cpu")
     # 未fitで predict → 例外
     try:
         _ = m.predict(X)
@@ -65,24 +65,24 @@ def test_predict_before_fit_raises_and_dim_mismatch():
 
 def test_save_and_load_centroids_and_strict_k(tmp_path):
     X, _ = _make_spherical_blobs(n_per=20, noise=0.05, seed=7)
-    m1 = CosineKMeans(n_clusters=3, device="cpu", random_state=0).fit(X)
+    m1 = CosineKMeans(n_components=3, device="cpu", random_state=0).fit(X)
     path = tmp_path / "centroids.pt"
     m1.save_centroids(path)
 
     # 同一Kでロード → predict 可能
-    m2 = CosineKMeans(n_clusters=3, device="cpu", random_state=0).load_centroids(path, strict_k=True)
+    m2 = CosineKMeans(n_components=3, device="cpu", random_state=0).load_centroids(path, strict_k=True)
     assert m2._fitted and m2.latent_dim == X.shape[1]
     _ = m2.predict(X)  # smoke
 
     # K不一致で strict_k=True → 例外
-    m3 = CosineKMeans(n_clusters=2, device="cpu", random_state=0)
+    m3 = CosineKMeans(n_components=2, device="cpu", random_state=0)
     with pytest.raises(ValueError):
         m3.load_centroids(path, strict_k=True)
 
 
 def test_predict_return_dist_shape_and_values():
     X, _ = _make_spherical_blobs(n_per=15, noise=0.1, seed=11)
-    m = CosineKMeans(n_clusters=3, device="cpu", random_state=0).fit(X)
+    m = CosineKMeans(n_components=3, device="cpu", random_state=0).fit(X)
     labels, dist = m.predict(X, return_dist=True)
     assert labels.shape == (X.shape[0],)
     assert dist.shape == (X.shape[0], 3)

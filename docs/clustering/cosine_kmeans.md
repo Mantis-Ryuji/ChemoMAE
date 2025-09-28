@@ -32,7 +32,7 @@ J = \mathrm{mean}\,(1 - \cos(x, c))
 
 ```python
 ckm = CosineKMeans(
-    n_clusters=8,
+    n_components=8,
     tol=1e-3,
     max_iter=500,
     device="cuda",
@@ -43,7 +43,7 @@ ckm = CosineKMeans(
 
 **Parameters**
 
-* `n_clusters` (`int`): Number of clusters K.
+* `n_components` (`int`): Number of clusters K.
 * `tol` (`float`): Convergence tolerance on inertia (relative or absolute).
 * `max_iter` (`int`): Maximum EM iterations.
 * `device` (`str|torch.device`): Training device.
@@ -74,7 +74,7 @@ ckm = CosineKMeans(
   Save centroids + inertia to file via `torch.save`. Minimal state for reuse.
 
 * **`load_centroids(path, strict_k=True)`** → self
-  Load centroids from saved file. If `strict_k=True`, checks that K matches `n_clusters`.
+  Load centroids from saved file. If `strict_k=True`, checks that K matches `n_components`.
 
 ---
 
@@ -86,7 +86,7 @@ ckm = CosineKMeans(
 from chemomae.clustering.cosine_kmeans import CosineKMeans
 
 X = torch.randn(1000, 64)
-ckm = CosineKMeans(n_clusters=10)
+ckm = CosineKMeans(n_components=10)
 ckm.fit(X)
 labels = ckm.predict(X)
 ```
@@ -95,14 +95,14 @@ labels = ckm.predict(X)
 
 ```python
 ckm.save_centroids("centroids.pt")
-ckm2 = CosineKMeans(n_clusters=10).load_centroids("centroids.pt")
+ckm2 = CosineKMeans(n_components=10).load_centroids("centroids.pt")
 labels2 = ckm2.predict(X)
 ```
 
 ### Streaming large data
 
 ```python
-ckm = CosineKMeans(n_clusters=50, device="cuda")
+ckm = CosineKMeans(n_components=50, device="cuda")
 ckm.fit(X, chunk=1000000)  # process in CPU→GPU chunks
 ```
 
@@ -156,14 +156,14 @@ k_list, inertias, optimal_k, elbow_idx, kappa = elbow_ckmeans(
 
 ```python
 X = torch.randn(200, 16)
-ckm = CosineKMeans(n_clusters=5)
+ckm = CosineKMeans(n_components=5)
 ckm.fit(X)
 labels = ckm.predict(X)
 assert labels.shape == (200,)
 
 # Save/reload
 ckm.save_centroids("tmp.pt")
-ckm2 = CosineKMeans(n_clusters=5).load_centroids("tmp.pt")
+ckm2 = CosineKMeans(n_components=5).load_centroids("tmp.pt")
 assert torch.allclose(ckm.centroids, ckm2.centroids)
 ```
 
