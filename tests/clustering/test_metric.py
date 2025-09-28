@@ -97,15 +97,22 @@ def test_return_type_and_score(return_numpy):
     """Return type and mean score check."""
     X, y = _make_blob_data(n_per_cluster=18, d=11, k=3, seed=9)
     s = silhouette_samples_cosine_gpu(X, y, device="cpu", chunk=None, return_numpy=return_numpy)
+
     if return_numpy:
         assert isinstance(s, np.ndarray)
-        score = float(s.mean())
+        # NumPy 側も float32 で平均（既定は float64）
+        score = float(np.asarray(s, dtype=np.float32).mean(dtype=np.float32))
+        tol = 1e-7   # reduce 実装差による極小差分は許容
     else:
         assert torch.is_tensor(s)
-        score = float(s.mean().item())
-    # silhouette_score_cosine_gpu は内部計算を常に Torch(fp32) 経路で統一
+        score = float(s.float().mean(dtype=torch.float32).item())
+        tol = 0.0    # 同じ Torch 経路なので完全一致期待
+
+    # silhouette_score_cosine_gpu は内部計算を常に Torch(fp32) 経路に統一
     score2 = silhouette_score_cosine_gpu(X, y, device="cpu", chunk=None)
-    assert math.isclose(score, score2, rel_tol=0.0, abs_tol=0.0)
+
+    assert math.isclose(score, score2, rel_tol=0.0, abs_tol=tol)
+
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
