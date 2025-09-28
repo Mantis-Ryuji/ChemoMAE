@@ -1,5 +1,5 @@
 """
-ChemoMAE: Transformer-based Masked AutoEncoder for 1D spectral data.
+ChemoMAE: 1D spectral Masked Autoencoder + Cosine-KMeans toolkit
 """
 
 from ._version import __version__

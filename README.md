@@ -1,16 +1,26 @@
-<center>
-
-# ChemoMAE
-
-</center>
+<h1 align="center">ChemoMAE</h1>
 
 [![PyPI version](https://img.shields.io/pypi/v/chemomae.svg)](https://pypi.org/project/chemomae/)
 [![CI](https://github.com/Mantis-Ryuji/ChemoMAE/actions/workflows/ci.yml/badge.svg)](https://github.com/Mantis-Ryuji/ChemoMAE/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/pypi/pyversions/chemomae.svg)](https://pypi.org/project/chemomae/)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-ChemoMAE is a Transformer-based **Masked AutoEncoder** for **1D spectral data (e.g., NIR-HSI)**.  
-It supports **self-supervised pretraining**, **Cosine-KMeans clustering**, and **SNV preprocessing**.
+> **ChemoMAE**: Masked Autoencoder and clustering toolkit for 1D spectra
 
-## Installation
-```bash
-pip install chemomae
-```
+## Why ChemoMAE ?
+
+## Quick Start
+
+### ChemoMAE example
+
+---
+
+## Features
+
+
+## Documentation
+
+
+---
+
+## License
