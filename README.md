@@ -6,43 +6,34 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 
-> **ChemoMAE**: A research-oriented PyTorch toolkit and model for **1D spectral representation learning and clustering**.
+> **ChemoMAE**: A Research-Oriented PyTorch Toolkit and Models for **1D Spectral Representation Learning and Clustering**.
 
 ---
 
 ## Why ChemoMAE ?
 
-Traditional chemometrics has long relied on **linear methods** such as PCA or PLS for spectral analysis. While these approaches remain foundational, they can be limited when dealing with **nonlinear structure** and **high-dimensional variability** in modern datasets.
+Traditional chemometrics has long relied on **linear methods** such as PCA and PLS. These remain foundational, but they can struggle with **nonlinear structure** and **high-dimensional variability** in modern spectral datasets.
 
-<br>
+**ChemoMAE is designed for the SNV-centric analysis flow**—the practical pipeline is **raw spectra → SNV preprocessing**, where information is effectively concentrated in **shape** (angles / cosine similarity). ChemoMAE learns representations suited to this geometry and uses them consistently in downstream tasks.
 
-**ChemoMAE represents a new approach, introducing three key innovations beyond traditional linear chemometrics:**
+### 1) Extending Chemometrics with Deep Learning
 
-### 1. Extending Chemometrics with Deep Learning
+A **Transformer-based Masked Autoencoder (MAE)** tailored to **1D spectra** enables flexible, data-driven representation learning while remaining compatible with standard chemometric preprocessing (including SNV).
 
-The **ChemoMAE model** leverages a **Transformer-based Masked Autoencoder (MAE)** adapted to 1D spectra. This enables more flexible, data-driven representation learning while remaining compatible with established preprocessing and scaling techniques.
+### 2) Self-Supervised Learning (direction-aware by design)
 
-### 2. Self-Supervised Representation Learning
+We apply block masking to **SNV-preprocessed** spectra and optimize a **masked MSE** only on the hidden positions. The encoder exposes a **unit-norm** embedding `z`, which the decoder consumes to reconstruct the masked spans—so the resulting embeddings work out of the box with **cosine similarity** and **hyperspherical clustering**
 
-By randomly masking large portions of the spectrum and reconstructing them, the **ChemoMAE model** learns from unlabeled data, producing **latent spectral embeddings** that generalize across downstream tasks.
+### 3) Spherical Geometry Toolkit (for downstream use)
 
-### 3. Cosine Similarity Toolkit
-
-Spectral data often carry more meaning in their **direction** than in their absolute magnitude — a perspective already implicit in traditional preprocessing methods such as **Standard Normal Variate (SNV)**, which normalize spectra to remove scale differences.
-
-* All embeddings are **L2-normalized**, ensuring they lie on the unit hypersphere.  
-* This design makes representations naturally compatible with **cosine similarity**, which is often more robust than Euclidean distance for spectral comparisons.  
-* Built-in clustering modules (e.g., **Cosine-KMeans**, **vMF mixtures**) operate directly in this geometry, enabling analyses that respect the directional structure of spectral data.
-
-<br>
-
-By putting **cosine similarity** at its core, the **ChemoMAE package** provides a consistent framework where representation learning and clustering are fully aligned.
+Because embeddings are **L2-normalized**, they live on the **unit hypersphere** and are immediately compatible with **cosine similarity**. Built-in clustering modules (e.g., **Cosine-KMeans**, **vMFMixture**) operate natively in this geometry, enabling retrieval and clustering that respect **spectral shape** after SNV.
 
 ---
 
 ## Quick Start
 
-Install ChemoMAE
+Install ChemoMAE (preparing)
+
 ```bash
 pip install chemomae
 ```
