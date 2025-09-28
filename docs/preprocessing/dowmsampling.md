@@ -175,10 +175,17 @@ X_sub = cosine_fps_downsample(X_snv, ratio=0.1)   # diversity-first subset
 
 ---
 
-## When to Use `cosine_fps_downsample` in ChemoMAE Pipelines
+# When to Use `cosine_fps_downsample` in ChemoMAE Pipelines
 
-* **Diversity over density:** prefer FPS when you want broad directional coverage and to avoid redundant micro-clusters (common with large-K k-means).
-* **HSI/NIR preprocessing:** after SNV, FPS provides a compact, diverse subset prior to self-supervised training. (If you need density-proportional sampling instead, use cosine k-means + stratified allocation.) 
+* **Goal = Diversity over density** <br>
+  In datasets like NIR-HSI with high redundancy (many nearly identical vectors in local neighborhoods), FPS maximizes **directional coverage** and reduces **duplicate samples**, making self-supervised training more efficient.
+  Conversely, if your goal is to **preserve density** (reflect frequent patterns proportionally in the learner), FPS is not suitable.
+
+* **Preprocessing with FPS (HSI/NIR)** <br>
+  After **SNV** or **L2 normalization** (i.e., scaling that constrains data onto the unit sphere), apply **`cosine_fps_downsample`** to create a compact training subset that emphasizes **diversity**.
+
+* **Unit of application:** <br> 
+  Recommended at the **per-sample or per-tile level** (e.g., within each image or lot spectrum set). This removes local redundancy and stabilizes batch-wise directional coverage.
 
 ---
 
