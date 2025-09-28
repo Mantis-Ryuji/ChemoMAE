@@ -144,6 +144,6 @@ def silhouette_score_cosine_gpu(
     """
     s = silhouette_samples_cosine_gpu(X, labels, **kwargs)
     if isinstance(s, torch.Tensor):
-        return float(s.mean().item())
+        return float(s.float().mean().item())
     else:
-        return float(s.mean())
+        return float(np.asarray(s, dtype=np.float32).mean())

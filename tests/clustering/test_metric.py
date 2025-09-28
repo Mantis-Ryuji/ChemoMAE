@@ -104,7 +104,7 @@ def test_return_type_and_score(return_numpy):
         assert torch.is_tensor(s)
         score = float(s.mean().item())
     score2 = silhouette_score_cosine_gpu(X, y, device="cpu", chunk=None)
-    assert math.isclose(score, score2, rel_tol=0, abs_tol=0)
+    assert math.isclose(score, score2, rel_tol=0.0, abs_tol=0.0)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
