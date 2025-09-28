@@ -103,6 +103,7 @@ def test_return_type_and_score(return_numpy):
     else:
         assert torch.is_tensor(s)
         score = float(s.mean().item())
+    # silhouette_score_cosine_gpu は内部計算を常に Torch(fp32) 経路で統一
     score2 = silhouette_score_cosine_gpu(X, y, device="cpu", chunk=None)
     assert math.isclose(score, score2, rel_tol=0.0, abs_tol=0.0)
 

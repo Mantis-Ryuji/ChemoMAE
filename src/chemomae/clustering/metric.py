@@ -136,14 +136,23 @@ def silhouette_samples_cosine_gpu(
 def silhouette_score_cosine_gpu(
     X: np.ndarray | torch.Tensor,
     labels: np.ndarray | torch.Tensor,
+    *,
+    return_numpy: bool = True,
     **kwargs,
 ) -> float:
     """
     便宜関数：サンプルごとの値の平均（= silhouette_score 相当）を返す。
     kwargs は silhouette_samples_cosine_gpu にそのまま渡されます。
     """
-    s = silhouette_samples_cosine_gpu(X, labels, **kwargs)
-    if isinstance(s, torch.Tensor):
-        return float(s.float().mean().item())
+    # 強制的にテンソル計算させる
+    kw = dict(kwargs)
+    kw["return_numpy"] = False
+    s = silhouette_samples_cosine_gpu(X, labels, **kw)  # torch.Tensor
+    
+    # 平均は fp32 で計算
+    score_t = s.float().mean(dtype=torch.float32)
+
+    if return_numpy:
+        return float(score_t.item())        # Python float (NumPy 互換)
     else:
-        return float(np.asarray(s, dtype=np.float32).mean())
+        return score_t                      # torch.Tensor (float32 scalar)

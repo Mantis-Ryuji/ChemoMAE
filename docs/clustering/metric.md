@@ -145,10 +145,13 @@ from chemomae.clustering.metric import silhouette_samples_cosine_gpu
 X = np.random.randn(50, 8).astype(np.float32)
 labels = np.random.randint(0, 3, size=50)
 
-ours = silhouette_samples_cosine_gpu(X, labels, device="cpu", return_numpy=True, dtype=torch.float64)
+ours = silhouette_samples_cosine_gpu(
+    X, labels, device="cpu", return_numpy=True, dtype=torch.float32
+)
+
 ref = sk_silhouette_samples(X, labels, metric="cosine")
 
-np.testing.assert_allclose(ours, ref, rtol=1e-7, atol=1e-7)
+np.testing.assert_allclose(ours, ref, rtol=1e-6, atol=1e-6)
 ```
 
 ---
