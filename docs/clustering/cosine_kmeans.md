@@ -4,10 +4,6 @@
 
 This document describes **CosineKMeans**, an implementation of spherical k-means with cosine similarity, and **elbow_ckmeans** for model selection.
 
-<p align="center">
-<img src="../../images/CosineKMeans.svg">
-</p>
-
 ---
 
 ## Overview
