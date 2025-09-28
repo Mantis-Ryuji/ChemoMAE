@@ -4,6 +4,10 @@
 
 This document describes **ChemoMAE**, a Transformer‑based masked autoencoder designed for one‑dimensional spectral data (e.g., near‑infrared (NIR) spectra or hyperspectral bands).
 
+<p align="center">
+<img src="../../images/ChemoMAE.svg">
+</p>
+
 ---
 
 ## Overview

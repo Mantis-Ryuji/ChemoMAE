@@ -4,6 +4,10 @@
 
 This document describes **`cosine_fps_downsample`**, a diversity-first subsampling method that selects spectra that are maximally spread in direction under cosine geometry. The implementation auto-uses **CUDA** when available and returns data in the **original scale** (normalization is internal to selection only). 
 
+<p align="center">
+<img src="../../images/cosine_fps_sampling_3d.gif">
+</p>
+
 ---
 
 ## Overview
