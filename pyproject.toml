@@ -13,11 +13,11 @@ requires-python = ">=3.9"
 license = { file = "LICENSE" }
 authors = [{ name = "Ryuji Yamaguchi" }]
 keywords = [
-  "spectroscopy",          # 分光解析
-  "hyperspectral",         # ハイパースペクトルデータ
-  "masked autoencoder",    # MAE 系
-  "self-supervised",       # 自己教師あり学習
-  "unsupervised",          # 教師なし学習
+  "spectroscopy",
+  "hyperspectral",
+  "masked autoencoder",
+  "self-supervised",
+  "unsupervised",
   "representation learning",
   "clustering",
   "cosine similarity",
@@ -48,17 +48,18 @@ dependencies = [
   "scipy>=1.10",
   "tqdm>=4.66",
   "matplotlib>=3.8",
-  "pyyaml>=6.0",      # 設定ファイル読み書き用に追加
+  "pyyaml>=6.0",      # 設定ファイル読み書き用
 ]
 
 [project.optional-dependencies]
-# `pip install chemomae[dev]` で入る開発用ツール
+# `pip install chemomae[dev]` で入る開発用ツール（CIテスト用の scikit-learn を含む）
 dev = [
-  "pytest>=7",
+  "pytest>=7,<9",
   "ruff>=0.4",
   "mypy>=1.7",
   "build>=1.2",
   "twine>=5",
+  "scikit-learn>=1.2,<1.6",   # テストで sklearn.metrics.silhouette_samples を使用
 ]
 
 [project.urls]
@@ -78,4 +79,4 @@ include = ["chemomae*"]                        # サブパッケージも含め�
 
 # wheel に同梱させたい静的ファイル（assets/ と py.typed）
 [tool.setuptools.package-data]
-"chemomae" = ["assets/*.pt", "assets/*.sha256", "py.typed"]
+chemomae = ["assets/*.pt", "assets/*.sha256", "py.typed"]
