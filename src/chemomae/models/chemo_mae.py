@@ -180,7 +180,7 @@ class ChemoEncoder(nn.Module):
     Notes
     -----
     - CLS トークンを常に先頭に追加し、その出力を潜在ベクトル z として返す。
-    - 可視トークン数はサンプルごとに異なる可能性があるが、
+    - 可視トークン数がサンプルごとに異なる場合も、
       Transformer には padding mask (src_key_padding_mask) を与えて整合性を確保。
     - 出力 z は L2 正規化済みなので、コサイン類似度に直ちに利用可能。
     - `ChemoMAE` の `forward` からは visible_mask を自動生成するため、
@@ -342,7 +342,7 @@ class ChemoDecoderMLP(nn.Module):
 
 
 # -----------------------------------------------------------------------------
-# ChemoMAE (model only; no loss inside)
+# ChemoMAE
 # -----------------------------------------------------------------------------
 class ChemoMAE(nn.Module):
     r"""
