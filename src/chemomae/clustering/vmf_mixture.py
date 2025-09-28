@@ -335,6 +335,8 @@ class VMFMixture(nn.Module):
     def predict_proba(self, X: torch.Tensor, *, chunk: Optional[int] = None) -> torch.Tensor:
         if not self._fitted:
             raise RuntimeError("Model not fitted")
+        if X.ndim != 2 or (self.d is not None and X.size(1) != self.d):
+            raise ValueError(f"X must be (N,{self.d}), got {tuple(X.shape)}")
         gam, _ = self._e_step_chunk(X, chunk)
         return gam
 
@@ -412,11 +414,10 @@ class VMFMixture(nn.Module):
         p = self.num_params()
         return -2.0 * ll + p * math.log(N)
 
-    # ------------------------- Save / Load (Cosine-KMeans 風) -------------------------
+    # ------------------------- Save / Load -------------------------
     def state_dict_vmf(self) -> Dict[str, Any]:
         """Return a lightweight, torch.save-friendly state dict."""
         return {
-            "version": CHEMOMAE_VMF_VERSION,
             "K": self.K,
             "d": int(self.d) if self.d is not None else None,
             "device": str(self.device),
