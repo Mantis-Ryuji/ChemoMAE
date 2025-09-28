@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 __all__ = [
     "find_elbow_curvature",
-    "plot_elbow",
+    "plot_elbow_ckm",
 ]
 
 
@@ -80,7 +80,7 @@ def find_elbow_curvature(k_list: List[int], inertia_list: List[float]) -> Tuple[
     return int(k_list[idx]), idx, kappa
 
 
-def plot_elbow(k_list, inertias, optimal_k, elbow_idx):
+def plot_elbow_ckm(k_list, inertias, optimal_k, elbow_idx):
     r"""
     Plot elbow curve and highlight the chosen elbow point.
 
@@ -121,5 +121,64 @@ def plot_elbow(k_list, inertias, optimal_k, elbow_idx):
     plt.axvline(optimal_k, linestyle="--", linewidth=1.5, alpha=0.7)
     plt.xlabel("Number of Clusters (k)")
     plt.ylabel("Mean Cosine Inertia")
+    plt.legend(loc="best")
+    plt.tight_layout()
+
+
+def plot_elbow_vmf(k_list, scores, optimal_k, elbow_idx, criterion: str = "bic"):
+    r"""
+    Plot elbow curve for vMF Mixture and highlight the chosen elbow point.
+
+    概要
+    ----
+    - `k_list` と対応する `scores`（BIC もしくは平均NLL）を折れ線グラフで描画。
+    - `find_elbow_curvature` で得た最適クラスタ数 `optimal_k` を縦線とマーカーで強調。
+
+    Parameters
+    ----------
+    k_list : array-like of int
+        評価したクラスタ数のリスト (例: 1..k_max)。
+    scores : array-like of float
+        各 k に対する評価値。`criterion="bic"` なら BIC（小さいほど良い）、
+        `criterion="nll"` なら平均 NLL（小さいほど良い）。
+    optimal_k : int
+        曲率法などで推定された最適クラスタ数。
+    elbow_idx : int
+        `k_list[elbow_idx] == optimal_k` を満たすインデックス。
+    criterion : {"bic", "nll"}, default="bic"
+        縦軸ラベルなどの表示に使う指標名。
+
+    Notes
+    -----
+    - BIC は「小さいほど良い」、平均NLL も「小さいほど良い」指標です。
+    - `plt.show()` は呼び出さないため、呼び出し側で表示や保存を行ってください。
+
+    Examples
+    --------
+    >>> ks, scores, K, idx, kappa = elbow_vmf(VMFMixture, X, k_max=30, criterion="bic")
+    >>> plot_elbow_vmf(ks, scores, K, idx, criterion="bic")
+    >>> plt.show()
+    """
+    k_list = np.asarray(k_list)
+    scores = np.asarray(scores, dtype=float)
+
+    crit = (criterion or "bic").lower()
+    if crit == "bic":
+        ylabel = "BIC (lower is better)"
+        line_label = "BIC"
+    elif crit in ("nll", "negloglik", "neg_log_likelihood"):
+        ylabel = "Mean NLL (lower is better)"
+        line_label = "Mean NLL"
+    else:
+        ylabel = "Score"
+        line_label = "Score"
+
+    plt.figure(figsize=(6, 4))
+    plt.plot(k_list, scores, "o-", label=line_label)
+    plt.scatter(k_list[elbow_idx], scores[elbow_idx], s=120,
+                label=f"Elbow: k={optimal_k}, score={scores[elbow_idx]:.4f}")
+    plt.axvline(optimal_k, linestyle="--", linewidth=1.5, alpha=0.7)
+    plt.xlabel("Number of Components (k)")
+    plt.ylabel(ylabel)
     plt.legend(loc="best")
     plt.tight_layout()

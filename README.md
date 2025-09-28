@@ -6,23 +6,58 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 
-> **ChemoMAE**: A Research-Oriented Python Toolkit for **1D Spectral Representation Learning and Clustering**. <br>
-> It combines a **Masked Autoencoder (MAE) framework** — adapted from vision transformers to handle near-infrared (NIR) and other 1D spectra — with **cosine geometry–based clustering** methods such as **Cosine-KMeans**.
+> **ChemoMAE**: A research-oriented PyTorch toolkit and model for **1D spectral representation learning and clustering**.
 
 ---
 
 ## Why ChemoMAE ?
 
-## Quick Start
+Traditional chemometrics has long relied on **linear methods** such as PCA or PLS for spectral analysis. While these approaches remain foundational, they can be limited when dealing with **nonlinear structure** and **high-dimensional variability** in modern datasets.
 
-### ChemoMAE example
+<br>
+
+**ChemoMAE represents a new approach, introducing three key innovations beyond traditional linear chemometrics:**
+
+### 1. Extending Chemometrics with Deep Learning
+
+The **ChemoMAE model** leverages a **Transformer-based Masked Autoencoder (MAE)** adapted to 1D spectra. This enables more flexible, data-driven representation learning while remaining compatible with established preprocessing and scaling techniques.
+
+### 2. Self-Supervised Representation Learning
+
+By randomly masking large portions of the spectrum and reconstructing them, the **ChemoMAE model** learns from unlabeled data, producing **latent spectral embeddings** that generalize across downstream tasks.
+
+### 3. Cosine Similarity Toolkit
+
+Spectral data often carry more meaning in their **direction** than in their absolute magnitude — a perspective already implicit in traditional preprocessing methods such as **Standard Normal Variate (SNV)**, which normalize spectra to remove scale differences.
+
+* All embeddings are **L2-normalized**, ensuring they lie on the unit hypersphere.  
+* This design makes representations naturally compatible with **cosine similarity**, which is often more robust than Euclidean distance for spectral comparisons.  
+* Built-in clustering modules (e.g., **Cosine-KMeans**, **vMF mixtures**) operate directly in this geometry, enabling analyses that respect the directional structure of spectral data.
+
+<br>
+
+By putting **cosine similarity** at its core, the **ChemoMAE package** provides a consistent framework where representation learning and clustering are fully aligned.
 
 ---
 
-## Features
+## Quick Start
 
+Install ChemoMAE
+```bash
+pip install chemomae
+```
 
-## Documentation
+### ChemoMAE example
+
+```python
+
+```
+
+---
+
+## Library Features
+
+API、コード例 + docs_link
 
 
 ---

@@ -175,7 +175,7 @@ X_sub = cosine_fps_downsample(X_snv, ratio=0.1)   # diversity-first subset
 
 ---
 
-# When to Use `cosine_fps_downsample` in ChemoMAE Pipelines
+## When to Use `cosine_fps_downsample` in ChemoMAE Pipelines
 
 * **Goal = Diversity over density** <br>
   In datasets like NIR-HSI with high redundancy (many nearly identical vectors in local neighborhoods), FPS maximizes **directional coverage** and reduces **duplicate samples**, making self-supervised training more efficient.
