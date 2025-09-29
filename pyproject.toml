@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 # ---- 基本メタデータ（PEP 621） ----
 name = "chemomae"
 version = "0.1.0"                             # _version.py と整合させること
-description = "ChemoMAE: 1D Spectral Masked Autoencoder + Cosine-KMeans, VMFMixture Toolkit"
+description = "ChemoMAE: 1D Spectral Masked Autoencoder + Spherical Clustering Toolkit"
 readme = "README.md"                          # PyPIにそのまま表示
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
