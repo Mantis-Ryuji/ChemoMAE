@@ -2,7 +2,7 @@
 
 > Module: `chemomae.preprocessing.downsampling`
 
-This document describes **`cosine_fps_downsample`**, a diversity-first subsampling method that selects spectra that are maximally spread in direction under cosine geometry. The implementation auto-uses **CUDA** when available and returns data in the **original scale** (normalization is internal to selection only). 
+This document describes **`cosine_fps_downsample`**, a diversity-first subsampling method that selects spectra that are maximally spread in direction under cosine geometry. The implementation auto-uses **CUDA** when available and returns data in the **original scale** (normalization is internal to selection only).
 
 <p align="center">
 <img src="../../images/cosine_fps_sampling_3d.gif" width="500">
@@ -18,7 +18,7 @@ We start from a collection of spectra
 X = \{\mathbf{x}_1, \dots, \mathbf{x}_N\} \subset \mathbb{R}^C
 ```
 
-Each spectrum is projected onto the unit sphere by L2 normalization:
+Each spectrum is **internally** projected onto the unit sphere by L2 normalization (selection only):
 
 ```math
 \tilde{\mathbf{x}}_i = \frac{\mathbf{x}_i}{\lVert \mathbf{x}_i \rVert_2 + \varepsilon},
@@ -38,13 +38,12 @@ This quantity grows as the angle between vectors increases:
 * $`d \approx 0`$ means the two spectra are very similar (same direction).
 * $`d \approx 2`$ means they point in opposite directions (maximally dissimilar).
 
-
 ### Farthest Point Sampling (FPS)
 
 The goal of FPS is to select a diverse subset of size
 
 ```math
-k = \max \bigl( 1, \mathrm{round}(\rho N) \bigr)
+k = \min\!\bigl( N,\ \max(1,\ \mathrm{round}(\rho N)) \bigr)
 ```
 
 Let the chosen indices be
@@ -86,7 +85,7 @@ When a new point $`\tilde{\mathbf{x}}_s`$ is chosen, the update is:
 \min \Bigl( \mathbf{d}_{\min}, \ \mathbf{1} - X_{\text{unit}} \tilde{\mathbf{x}}_{s} \Bigr),
 ```
 
-where $`X_{\text{unit}}`$ is the row-normalized data matrix.
+where $`X_{\text{unit}}`$ is the row-normalized data matrix **computed internally** from `X` (selection only).
 This update rule means:
 
 * Compute cosine distances between all points and the newly selected one ($`1 - X_{\text{unit}} \tilde{\mathbf{x}}_{s}`$).
@@ -104,28 +103,30 @@ Each iteration therefore requires only **one matrix–vector multiplication** fo
 cosine_fps_downsample(
     X: np.ndarray | torch.Tensor, *,
     ratio: float = 0.1,
-    ensure_unit_sphere: bool = True,
     seed: Optional[int] = None,
     init_index: Optional[int] = None,
     return_numpy: bool = True,
+    return_indices: bool = False,
     eps: float = 1e-12,
-) -> (np.ndarray | torch.Tensor)  # shape: (k, C), k = max(1, round(N*ratio))
+) -> (np.ndarray | torch.Tensor)  # shape: (k, C), k = min(N, max(1, round(N*ratio)))
 ```
 
 **Parameters**
 
 * `X`: `(N, C)` spectra. NumPy or Torch.
-* `ratio`: target fraction $\rho$; selects $k=\max(1,\mathrm{round}(\rho N))$.
-* `ensure_unit_sphere`: if `True`, L2-normalizes rows internally before FPS.
+* `ratio`: target fraction $\rho$; selects $k=\min(N,\max(1,\mathrm{round}(\rho N)))$.
 * `seed`: RNG seed for the initial point (used if `init_index` is `None`).
 * `init_index`: fix the initial index deterministically.
 * `return_numpy`: `True` → return NumPy; `False` → return Torch tensor.
+* `return_indices`: if `True`, also returns the selected indices.
+* `eps`: numerical stability term for normalization.
 
 **Behavior & Types**
 
-* **Device:** runs on CUDA automatically when available; falls back to CPU. 
-* **Return type:** NumPy in → NumPy out by default; Torch in → stays Torch if `return_numpy=False` (device preserved). 
-* **Complexity:** $O(Nk)$ inner products; memory $O(N)$. Implementation reuses temporaries to reduce GPU churn. 
+* **Device:** runs on CUDA automatically when available; falls back to CPU.
+* **Return type:** NumPy in → NumPy out by default; Torch in → stays Torch if `return_numpy=False` (device preserved).
+* **Internal normalization:** rows are **always** L2-normalized internally for selection; the returned subset is taken from the **original-scale** `X`.
+* **Complexity:** $O(Nk)$ inner products; memory $O(N)$. Implementation reuses temporaries to reduce GPU churn.
 
 ---
 
@@ -138,7 +139,7 @@ import numpy as np
 from chemomae.preprocessing import cosine_fps_downsample
 
 # X: (N, C) NumPy array (e.g., after SNV)
-X_sub = cosine_fps_downsample(X, ratio=0.10, ensure_unit_sphere=True, seed=42)
+X_sub = cosine_fps_downsample(X, ratio=0.10, seed=42)
 # -> NumPy array, shape (ceil(0.1*N), C)
 ```
 
@@ -161,17 +162,17 @@ X_snv = SNVScaler().transform(X)                  # per-spectrum standardization
 X_sub = cosine_fps_downsample(X_snv, ratio=0.1)   # diversity-first subset
 ```
 
-(Use L2 normalization internally via `ensure_unit_sphere=True`.) 
+(Per-row L2 normalization is applied **internally** during selection.)
 
 ---
 
 ## Design Notes & Edge Cases
 
-* **Internal normalization:** When `ensure_unit_sphere=True`, the function computes row L2 norms and normalizes once; the returned subset comes from the **original** `X`. 
-* **CUDA auto-selection:** uses `torch.cuda.is_available()` to decide device; tensors are moved once and kept there. 
-* **In-place / buffer reuse:** distance updates avoid new allocations (`addmv_`, `minimum(..., out=...)`), reducing “reserved memory creep”. 
+* **Internal normalization:** The function **always** performs per-row L2 normalization internally (cosine geometry). The returned subset comes from the **original-scale** `X`.
+* **CUDA auto-selection:** uses `torch.cuda.is_available()` to decide device; tensors are moved once and kept there.
+* **In-place / buffer reuse:** distance updates avoid new allocations (`addmv_`, `minimum(..., out=...)`), reducing “reserved memory creep”.
 * **Empty input:** if `N=0`, returns an empty array/tensor with shape `(0, C)`.
-* **Seed & determinism:** set `seed` or provide `init_index` for reproducible starts. Subsequent choices are deterministic given the start. 
+* **Seed & determinism:** set `seed` or provide `init_index` for reproducible starts. Subsequent choices are deterministic given the start.
 
 ---
 
@@ -184,7 +185,7 @@ X_sub = cosine_fps_downsample(X_snv, ratio=0.1)   # diversity-first subset
 * **Preprocessing with FPS (HSI/NIR)** <br>
   After **SNV** or **L2 normalization** (i.e., scaling that constrains data onto the unit sphere), apply **`cosine_fps_downsample`** to create a compact training subset that emphasizes **diversity**.
 
-* **Unit of application:** <br> 
+* **Unit of application:** <br>
   Recommended at the **per-sample or per-tile level** (e.g., within each image or lot spectrum set). This removes local redundancy and stabilizes batch-wise directional coverage.
 
 ---
@@ -192,7 +193,6 @@ X_sub = cosine_fps_downsample(X_snv, ratio=0.1)   # diversity-first subset
 ## Common Pitfalls
 
 * **Expecting density weighting:** FPS is diversity-first; it won’t oversample dense regions by design.
-* **Forgetting internal normalization:** if you disable `ensure_unit_sphere`, cosine geometry assumptions may break unless your input already lies on the unit sphere. 
 * **Reading GPU memory graphs:** PyTorch **reserves** CUDA memory; “reserved” can grow and plateau even when “allocated” goes up/down—this is normal, not a leak.
 
 ---
@@ -213,11 +213,11 @@ A = cosine_fps_downsample(X, ratio=0.2, seed=111)
 B = cosine_fps_downsample(X, ratio=0.2, seed=111)
 np.testing.assert_allclose(A, B)
 
-# Invariance to row scaling when ensure_unit_sphere=True
+# Invariance to row scaling (always normalized internally)
 scales = np.exp(np.random.randn(X.shape[0], 1).astype(np.float32))
 X2 = X * scales
-U  = cosine_fps_downsample(X,  ratio=0.1, ensure_unit_sphere=True)
-U2 = cosine_fps_downsample(X2, ratio=0.1, ensure_unit_sphere=True)
+U  = cosine_fps_downsample(X,  ratio=0.1)
+U2 = cosine_fps_downsample(X2, ratio=0.1)
 def unit(Z): return Z / (np.linalg.norm(Z, axis=1, keepdims=True) + 1e-12)
 np.testing.assert_allclose(unit(U), unit(U2), atol=1e-5)
 ```
@@ -226,4 +226,4 @@ np.testing.assert_allclose(unit(U), unit(U2), atol=1e-5)
 
 ## Version
 
-* Introduced in `chemomae.preprocessing.downsampling` — initial public draft. 
+* Introduced in `chemomae.preprocessing.downsampling` — initial public draft.

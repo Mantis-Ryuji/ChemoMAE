@@ -6,7 +6,7 @@ import torch
 import pytest
 
 # --- import cosine_fps_downsample  ---
-from chemomae.preprocessing.downsampling import cosine_fps_downsample 
+from chemomae.preprocessing.downsampling import cosine_fps_downsample
 
 
 def _make_unit_sphere_data(N=500, C=64, seed=0):
@@ -29,7 +29,7 @@ def _scale_rows(X, seed=1):
 @pytest.mark.parametrize("return_numpy", [True, False])
 def test_shape_and_type_numpy_input(ratio, return_numpy):
     X = _make_unit_sphere_data(N=123, C=7, seed=7)  # 非10の倍数で round の確認
-    k = max(1, int(round(X.shape[0] * ratio)))
+    k = min(max(1, int(round(X.shape[0] * ratio))), X.shape[0])
     out = cosine_fps_downsample(X, ratio=ratio, return_numpy=return_numpy, seed=42)
 
     if return_numpy:
@@ -46,7 +46,7 @@ def test_shape_and_type_numpy_input(ratio, return_numpy):
 @pytest.mark.parametrize("return_numpy", [True, False])
 def test_shape_and_type_torch_input(ratio, return_numpy):
     X = torch.as_tensor(_make_unit_sphere_data(N=200, C=5, seed=0))
-    k = max(1, int(round(X.shape[0] * ratio)))
+    k = min(max(1, int(round(X.shape[0] * ratio))), X.shape[0])
     out = cosine_fps_downsample(X, ratio=ratio, return_numpy=return_numpy, seed=123)
 
     if return_numpy:
@@ -70,11 +70,11 @@ def test_reproducibility_with_seed():
 
 
 def test_init_index_controls_first_choice():
-    # 等間隔の単位円（C=2）で、init_index=0なら次は反対側（index 4）を選びやすいケース
+    # 等間隔の単位円（C=2）で、init_index=0なら次は反対側（index 4）が最遠
     t = np.linspace(0, 2*np.pi, 8, endpoint=False)
     X = np.stack([np.cos(t), np.sin(t)], axis=1).astype(np.float32)
     # ratio=0.25 → k=2
-    out = cosine_fps_downsample(X, ratio=0.25, init_index=0, ensure_unit_sphere=True, return_numpy=True)
+    out = cosine_fps_downsample(X, ratio=0.25, init_index=0, return_numpy=True)
     # 期待する2点は X[0], X[4]
     expected = X[[0, 4]]
     # 順序も保持される（init_index=0 → 次は反対側が最遠）
@@ -82,28 +82,18 @@ def test_init_index_controls_first_choice():
 
 
 # -----------------------------
-# 単位球正規化の影響
+# 単位球正規化に対する不変性（内部で常に実施）
 # -----------------------------
-def test_invariance_to_row_scaling_when_ensure_unit_sphere_true():
+def test_invariance_to_row_scaling_internal_unit_normalization():
     X = _make_unit_sphere_data(N=256, C=8, seed=123)
     X_scaled = _scale_rows(X, seed=456)  # 行ごとのスケーリングを導入
 
-    A = cosine_fps_downsample(X, ratio=0.1, ensure_unit_sphere=True, seed=7, return_numpy=True)
-    B = cosine_fps_downsample(X_scaled, ratio=0.1, ensure_unit_sphere=True, seed=7, return_numpy=True)
+    A = cosine_fps_downsample(X, ratio=0.1, seed=7, return_numpy=True)
+    B = cosine_fps_downsample(X_scaled, ratio=0.1, seed=7, return_numpy=True)
 
-    # 行スケーリングは cos 幾何では不変 → 選抜結果（元スケールの値）は比例するが、
-    # X と X_scaled は行方向に定数倍なので、単位方向は一致。
-    # ここでは方向一致を評価：正規化して比較
+    # 行スケーリングは cos 幾何では不変 → 選抜結果の方向は一致するはず
     def unit(v): return v / (np.linalg.norm(v, axis=1, keepdims=True) + 1e-12)
     assert np.allclose(unit(A), unit(B), atol=1e-5)
-
-
-def test_no_difference_when_already_unit_and_ensure_unit_sphere_toggled():
-    # すでに単位球 → ensure_unit_sphere のON/OFFで結果は同じになるはず
-    X = _make_unit_sphere_data(N=200, C=6, seed=11)
-    A = cosine_fps_downsample(X, ratio=0.15, ensure_unit_sphere=True, seed=77, return_numpy=True)
-    B = cosine_fps_downsample(X, ratio=0.15, ensure_unit_sphere=False, seed=77, return_numpy=True)
-    assert np.allclose(A, B, atol=1e-6)
 
 
 # -----------------------------
@@ -115,17 +105,58 @@ def test_empty_input_numpy():
     assert isinstance(out, np.ndarray)
     assert out.shape == (0, 8)
 
+
 def test_empty_input_torch():
     X = torch.empty((0, 5), dtype=torch.float32)
     out = cosine_fps_downsample(X, ratio=0.3, return_numpy=False)
     assert isinstance(out, torch.Tensor)
     assert out.shape == (0, 5)
 
+
 def test_invalid_dim_raises():
     with pytest.raises(ValueError):
         cosine_fps_downsample(np.zeros((3, 4, 5), dtype=np.float32))
+
 
 def test_init_index_out_of_range_raises():
     X = _make_unit_sphere_data(N=10, C=3, seed=0)
     with pytest.raises(ValueError):
         cosine_fps_downsample(X, ratio=0.2, init_index=999)
+
+
+# -----------------------------
+# 返り値: indices の検証（推奨オプション）
+# -----------------------------
+@pytest.mark.parametrize("as_numpy", [True, False])
+def test_return_indices_matches_rows(as_numpy):
+    X = _make_unit_sphere_data(N=64, C=9, seed=5)
+    subset, indices = cosine_fps_downsample(
+        X, ratio=0.25, seed=2024, return_numpy=as_numpy, return_indices=True
+    )
+    # インデックス経由で元データから取ってきたものと一致するか
+    if as_numpy:
+        assert isinstance(subset, np.ndarray) and isinstance(indices, np.ndarray)
+        assert np.allclose(subset, X[indices])
+    else:
+        assert torch.is_tensor(subset) and torch.is_tensor(indices)
+        X_t = torch.as_tensor(X)
+        assert torch.allclose(subset, X_t.index_select(0, indices))
+
+
+# -----------------------------
+# dtype / device の往復（torch入力）
+# -----------------------------
+def test_dtype_device_roundtrip_torch():
+    dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    X = torch.as_tensor(_make_unit_sphere_data(N=50, C=7, seed=77), dtype=torch.float32, device=dev)
+
+    # torch入力 → return_numpy=False なら同じ device / dtype
+    out_t = cosine_fps_downsample(X, ratio=0.2, seed=99, return_numpy=False)
+    assert torch.is_tensor(out_t)
+    assert out_t.device == X.device
+    assert out_t.dtype == X.dtype
+
+    # torch入力 → return_numpy=True なら numpy に落ちる
+    out_np = cosine_fps_downsample(X, ratio=0.2, seed=99, return_numpy=True)
+    assert isinstance(out_np, np.ndarray)
+    assert out_np.shape[1] == X.shape[1]

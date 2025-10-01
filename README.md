@@ -22,7 +22,7 @@ A **Transformer-based Masked Autoencoder (MAE)** tailored to **1D spectra** enab
 
 ### 2) Self-Supervised Learning (direction-aware)
 
-We apply block masking to **SNV-preprocessed** spectra and optimize a masked MSE only on the hidden positions. The encoder exposes a **unit-norm embedding** `z`, which the decoder uses to reconstruct the masked spans—so the resulting embeddings work out of the box with **cosine similarity** and **hyperspherical clustering** (e.g., Cosine-KMeans, vMFMixture).
+We apply block masking to **SNV-preprocessed** spectra and optimize a masked MSE only on the hidden positions. The encoder outputs a **unit-norm embedding** `z`, capturing the directional  information. This design is consistent with the hyperspherical geometry induced by SNV and yields embeddings that are naturally suited for cosine similarity and hyperspherical clustering, while also transferring effectively to downstream tasks.
 
 ### 3) Spherical Geometry Toolkit (for downstream use)
 
