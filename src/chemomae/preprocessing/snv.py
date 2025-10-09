@@ -106,11 +106,11 @@ class SNVScaler:
 
     Examples
     --------
-    >>> scaler = SNVScaler()
+    >>> scaler = SNVScaler(transform_stats=True)
     >>> X = np.array([[1.0, 2.0, 3.0],
     ...               [4.0, 5.0, 6.0]], dtype=np.float32)
-    >>> Y, mu, sd = SNVScaler(transform_stats=True).transform(X)
-    >>> X_rec = SNVScaler().inverse_transform(Y, mu=mu, sd=sd)
+    >>> Y, mu, sd = scaler.transform(X)
+    >>> X_rec = scaler.inverse_transform(Y, mu=mu, sd=sd)
     """
     eps: float = 1e-12
     copy: bool = True

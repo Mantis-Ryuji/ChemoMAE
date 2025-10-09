@@ -88,7 +88,7 @@ Y = scaler.transform(X)  # -> np.ndarray, dtype float32, same shape
 ```python
 scaler = SNVScaler(transform_stats=True)
 Y, mu, sd = scaler.transform(X)  # sd already includes eps
-X_rec = SNVScaler().inverse_transform(Y, mu=mu, sd=sd)
+X_rec = scaler.inverse_transform(Y, mu=mu, sd=sd)
 ```
 
 ### PyTorch — device/dtype preserved
@@ -100,23 +100,11 @@ from chemomae.preprocessing.snv import SNVScaler
 Xt = torch.tensor([[1.0, 2.0, 3.0],
                    [4.0, 5.0, 6.0]], dtype=torch.float32, device="cuda")
 
-Yt = SNVScaler().transform(Xt)      # -> torch.Tensor on CUDA, dtype float32
+scaler = SNVScaler(transform_stats=True)
 
 # With stats (mu, sd returned as NumPy float32 for lightness)
-Yt, mu, sd = SNVScaler(transform_stats=True).transform(Xt)
-Xt_rec = SNVScaler().inverse_transform(Yt, mu=mu, sd=sd)
-```
-
-### Composing with L2 normalization (optional)
-
-```python
-# After SNV, project to the unit sphere if cosine metrics are used
-def l2_normalize_rows(X, eps=1e-12):
-    n = np.linalg.norm(X, axis=1, keepdims=True)
-    return X / (n + eps)
-
-X_snv = SNVScaler().transform(X)
-X_snv_unit = l2_normalize_rows(X_snv)
+Yt, mu, sd = scaler.transform(Xt)
+Xt_rec = scaler.inverse_transform(Yt, mu=mu, sd=sd)
 ```
 
 ---
@@ -134,7 +122,6 @@ X_snv_unit = l2_normalize_rows(X_snv)
 ## When to Use SNV in ChemoMAE Pipelines
 
 * **Spectral pre-processing:** SNV is a strong baseline for removing per-spectrum intensity offsets and scaling effects prior to self-supervised training with ChemoMAE or downstream clustering (e.g., cosine K-Means).
-* **Raman / NIR:** Works for both modalities; consider additional baseline corrections or smoothing if your acquisition introduces broad trends or spikes.
 * **Downstream cosine metrics:** Since SNV outputs lie on a hypersphere of radius $`\sqrt{L}`$, relative angles are preserved. For unit vectors, apply L2 normalization.
 
 ---
@@ -165,7 +152,7 @@ assert Y.shape == X.shape
 # Inverse round-trip (approx)
 sc = SNVScaler(transform_stats=True)
 Y, mu, sd = sc.transform(X)
-X_rec = SNVScaler().inverse_transform(Y, mu=mu, sd=sd)
+X_rec = sc.inverse_transform(Y, mu=mu, sd=sd)
 np.testing.assert_allclose(X_rec, X, rtol=1e-5, atol=1e-5)
 ```
 
