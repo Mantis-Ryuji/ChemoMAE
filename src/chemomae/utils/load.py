@@ -44,9 +44,6 @@ _DEFAULT_CFG: Dict[str, Any] = dict(
 _DEFAULT_WEIGHT_NAME = "chemomae_base_256.pt"
 
 
-# -------------------------
-# 内部ユーティリティ
-# -------------------------
 def _asset_dir() -> Path:
     """パッケージ同梱 assets ディレクトリへのパス（存在しない場合もある）。"""
     try:
@@ -122,9 +119,6 @@ def _build_model_default(device: Optional[str | torch.device]) -> ChemoMAE:
     return model.to(dev)
 
 
-# -------------------------
-# 公開 API
-# -------------------------
 def load_default_pretrained(
     weight_path: Optional[str | os.PathLike[str]] = None,
     *,

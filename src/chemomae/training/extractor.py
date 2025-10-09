@@ -13,7 +13,7 @@ from ..models.chemo_mae import ChemoMAE
 @dataclass
 class ExtractConfig:
     r"""
-    Configuration for latent feature extraction with `Extracter`.
+    Configuration for latent feature extraction with `Extractor`.
 
     概要
     ----
@@ -38,7 +38,7 @@ class ExtractConfig:
 
     Notes
     -----
-    - `Extracter` は常に **全可視** で `model.encode(x, visible)` を呼び出すため、
+    - `Extractor` は常に **全可視** で `model.encode(x, visible)` を呼び出すため、
       乱数マスクに依存しない **決定的な特徴抽出** を行う。
     - 保存と返却形式は独立：`save_path=".npy"` かつ `return_numpy=False` のような組み合わせも可。
     """
@@ -76,7 +76,7 @@ class Extractor:
 
     Notes
     -----
-    - **マスクは一切使わない**ため、乱数に依存しない決定的な潜在表現が得られる。
+    - **マスクは一切使わない** ため、乱数に依存しない決定的な潜在表現が得られる。
     - `save_path`:
         * 拡張子が ".npy" の場合 → `np.save` で保存。
         * それ以外 → `torch.save` で保存。

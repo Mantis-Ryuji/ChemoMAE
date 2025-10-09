@@ -7,9 +7,7 @@ from typing import Tuple
 
 __all__ = ["build_optimizer", "build_scheduler"]
 
-# -------------------------
-# walk helper
-# -------------------------
+
 def _walk_to_module(root: nn.Module, param_name: str):
     """
     'blocks.0.norm1.weight' → [root, blocks, blocks[0], norm1]
@@ -24,9 +22,6 @@ def _walk_to_module(root: nn.Module, param_name: str):
     return out
 
 
-# -------------------------
-# Optimizer builder
-# -------------------------
 def build_optimizer(
     model: nn.Module,
     *,
@@ -99,9 +94,6 @@ def build_optimizer(
     return optim.AdamW(param_groups, lr=lr, betas=betas, eps=eps)
 
 
-# -------------------------
-# Scheduler builders
-# -------------------------
 def build_warmup_cosine(
     optimizer: optim.Optimizer,
     *,

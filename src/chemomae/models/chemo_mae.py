@@ -13,9 +13,7 @@ __all__ = [
     "sinusoidal_positional_encoding",
 ]
 
-# -----------------------------------------------------------------------------
-# Positional encoding & mask
-# -----------------------------------------------------------------------------
+
 def sinusoidal_positional_encoding(L: int, d_model: int, device: torch.device) -> torch.Tensor:
     r"""
     Sinusoidal positional encoding for 1D sequences.
@@ -128,9 +126,7 @@ def make_block_mask(
     mask.scatter_(1, ids_mask, True)
     return mask
 
-# -----------------------------------------------------------------------------
-# Encoder (visible tokens + CLS)
-# -----------------------------------------------------------------------------
+
 class ChemoEncoder(nn.Module):
     r"""
     ChemoEncoder: Transformer encoder for 1D spectra.
@@ -280,9 +276,6 @@ class ChemoEncoder(nn.Module):
         return z
 
 
-# -----------------------------------------------------------------------------
-# Decoder (MLP: z -> R^L)
-# -----------------------------------------------------------------------------
 class ChemoDecoderMLP(nn.Module):
     r"""
     ChemoDecoderMLP: 潜在表現 z から 1D 系列 x を再構成する MLP デコーダ。
@@ -341,9 +334,6 @@ class ChemoDecoderMLP(nn.Module):
         return self.net(z)
 
 
-# -----------------------------------------------------------------------------
-# ChemoMAE
-# -----------------------------------------------------------------------------
 class ChemoMAE(nn.Module):
     r"""
     ChemoMAE: Masked Autoencoder for 1D spectra.

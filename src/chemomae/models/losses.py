@@ -3,6 +3,7 @@ import torch
 
 __all__ = ["masked_sse", "masked_mse"]
 
+
 def masked_sse(
     x_recon: torch.Tensor,
     x: torch.Tensor,

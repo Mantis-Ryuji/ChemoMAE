@@ -8,6 +8,7 @@ import torch.nn as nn
 
 __all__ = ["VMFMixture", "vmf_logC", "vmf_bessel_ratio"]
 
+
 # -----------------------------------------------------------------------------
 # Utilities: stable approximations for log I_v(kappa) and ratio I_{v+1}/I_v
 # We avoid torch.special.iv (not available in PyTorch 2.6) and use piecewise
@@ -95,10 +96,7 @@ def vmf_logC(d: int, kappa: torch.Tensor) -> torch.Tensor:
     return nu_t * torch.log(kappa.clamp_min(1e-12)) - (nu_t + 1.0) * math.log(2.0 * math.pi) - logIv
 
 
-# -----------------------------------------------------------------------------
 # VMFMixture: EM with chunked E-step / sufficient-statistics accumulation.
-# -----------------------------------------------------------------------------
-
 class VMFMixture(nn.Module):
     r"""
     vMF Mixture Model with chunked E-step and torch-only Bessel approximations.
@@ -471,9 +469,7 @@ class VMFMixture(nn.Module):
         return obj
 
 
-# -----------------------------------------------------------------------------
 # vMF sampler (eager mode)
-# -----------------------------------------------------------------------------
 @torch.no_grad()
 def _sample_vmf(mu: torch.Tensor, kappa: torch.Tensor, n: int) -> torch.Tensor:
     """Wood's method (approx) with Householder transform, torch-only.
