@@ -9,14 +9,6 @@ import torch.nn as nn
 __all__ = ["VMFMixture", "vmf_logC", "vmf_bessel_ratio"]
 
 
-# -----------------------------------------------------------------------------
-# Utilities: stable approximations for log I_v(kappa) and ratio I_{v+1}/I_v
-# We avoid torch.special.iv (not available in PyTorch 2.6) and use piecewise
-# series / asymptotics with smooth blending. These are differentiable and
-# work on CPU/GPU (pure torch ops).
-# -----------------------------------------------------------------------------
-
-
 def _logIv_small(nu: torch.Tensor, k: torch.Tensor) -> torch.Tensor:
     """Small-κ expansion of log I_ν(κ).
     I_ν(κ) = (κ/2)^ν / Γ(ν+1) * [1 + κ^2/(4(ν+1)) + κ^4/(32(ν+1)(ν+2)) + ...]
