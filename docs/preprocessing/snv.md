@@ -27,10 +27,10 @@ Y_{ij} = \frac{X_{ij}-\mu_i}{\,s_i + \varepsilon\,}
 > **Note:** After SNV, each spectrum has **zero mean** and **unit variance**. This also implies that the **L2 norm of each spectrum is constant** across samples:
 >
 > $$
-> \|Y_i\|_2 = \sqrt{L}
+> \|Y_i\|_2 = \sqrt{L-1}
 > $$
 >
-> Therefore, spectra are mapped onto a hypersphere of radius $`\sqrt{L}`$. This is useful for cosine similarity–based methods, since the relative angles between spectra are preserved. If you prefer a unit sphere (radius 1), apply an additional L2 normalization step after SNV.
+> Therefore, spectra are mapped onto a hypersphere of radius $`\sqrt{L-1}`$. This is useful for cosine similarity–based methods, since the relative angles between spectra are preserved. If you prefer a unit sphere (radius 1), apply an additional L2 normalization step after SNV.
 
 ---
 

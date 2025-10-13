@@ -3,8 +3,6 @@ include README.md
 include LICENSE
 include NOTICE
 include pyproject.toml
-
-recursive-include src/chemomae/assets *.pt *.sha256
 include src/chemomae/py.typed
 
 global-exclude __pycache__/*

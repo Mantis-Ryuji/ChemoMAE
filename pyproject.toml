@@ -77,6 +77,6 @@ license-files = ["LICENSE", "NOTICE"]
 where = ["src"]
 include = ["chemomae*"]                        # サブパッケージも含める
 
-# wheel に同梱させたい静的ファイル（assets/ と py.typed）
+# wheel に同梱させたい静的ファイル（py.typed）
 [tool.setuptools.package-data]
-chemomae = ["assets/*.pt", "assets/*.sha256", "py.typed"]
+chemomae = ["py.typed"]
