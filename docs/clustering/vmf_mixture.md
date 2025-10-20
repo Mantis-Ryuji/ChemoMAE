@@ -1,4 +1,4 @@
-# VMFMixture — von Mises–Fisher Mixture on the Unit Sphere
+# VMFMixture — von Mises–Fisher Mixture on the Unit Hypersphere
 
 > Module: `chemomae.clustering.vmf_mixture` <br>
 > Purpose: probabilistic clustering of L2-normalized features on ($`S^{d-1}`$) with an EM algorithm; model selection via `elbow_vmf`; visualization via `plot_elbow_vmf`.
@@ -29,7 +29,7 @@ resultant length ($`\bar R_k=|\sum_i\gamma_{ik}x_i|/N_k`$) gives a fast **closed
   \qquad \pi_k=N_k/N.
 ```
 
-* **Initialization**: cosine (spherical) k-means++ seeding.
+* **Initialization**: cosine (hyperspherical) k-means++ seeding.
 
 * **Special functions**: stable, torch-only approximations for ($`\log I_\nu(\kappa)`$) and ($`I_{\nu+1}/I_\nu`$) by blending small/large-($`\kappa`$) series—as `torch.special.iv` may be unavailable.
 

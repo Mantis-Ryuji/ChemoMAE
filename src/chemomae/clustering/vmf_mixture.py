@@ -384,7 +384,7 @@ class VMFMixture(nn.Module):
     @torch.inference_mode()
     def num_params(self) -> int:
         """自由度 p for BIC.
-        Each component: μ has (d-1) dof on sphere + κ (1). Mixing weights contribute (K-1).
+        Each component: μ has (d-1) dof on hypersphere + κ (1). Mixing weights contribute (K-1).
         → p = K*(d-1+1) + (K-1) = K*d + (K-1).
         """
         assert self.d is not None

@@ -1,8 +1,8 @@
-# CosineKMeans — Spherical K-Means Clustering
+# CosineKMeans — Hyperspherical K-Means Clustering
 
 > Module: `chemomae.clustering.cosine_kmeans`
 
-This document describes **CosineKMeans**, an implementation of spherical k-means with cosine similarity, and **elbow_ckmeans** for model selection.
+This document describes **CosineKMeans**, an implementation of hyperspherical k-means with cosine similarity, and **elbow_ckmeans** for model selection.
 
 <p align="center">
 <img src="../../images/Cosine-KMeans.svg">

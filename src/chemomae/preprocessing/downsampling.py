@@ -16,7 +16,7 @@ def cosine_fps_downsample(
     eps: float = 1e-12,
 ) -> Union[np.ndarray, torch.Tensor, Tuple[Union[np.ndarray, torch.Tensor], Union[np.ndarray, torch.Tensor]]]:
     """
-    Farthest-Point Sampling (FPS) on the unit sphere with cosine geometry.
+    Farthest-Point Sampling (FPS) on the unit hypersphere with cosine geometry.
 
     概要
     ----

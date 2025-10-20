@@ -6,26 +6,34 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 
-> **ChemoMAE**: A Research-Oriented PyTorch Toolkit and Models for **1D Spectral Representation Learning and Spherical Clustering**.
+> **ChemoMAE**: A Research-Oriented PyTorch Toolkit and Models for **1D Spectral Representation Learning and Hyperspherical Clustering**.
 
 [**Research Repository**](https://github.com/Mantis-Ryuji/WoodDegradationSeg-NIRHSI): Unsupervised Segmentation of Wood Degradation Patterns with NIR-HSI (preparing)
 
 ---
 
-## Why ChemoMAE ?
+## Why ChemoMAE?
 
-Traditional chemometrics has long relied on **linear methods** such as PCA and PLS. These remain foundational, but they can struggle with **nonlinear structure** and **high-dimensional variability** in modern spectral datasets.<br>
-**ChemoMAE** is architected to respect the **spherical geometry** induced by the Standard Normal Variate (SNV) transformation, a fundamental preprocessing step in chemometrics that normalizes spectra onto a constant-radius hypersphere. ChemoMAE learns representations suited to this geometry and uses them consistently in downstream tasks.
+Traditional chemometrics has long relied on **linear methods** such as PCA and PLS.
+These remain foundational, but they often struggle to capture **nonlinear structure** and **high-dimensional variability** in modern spectral datasets.<br>
+**ChemoMAE** is designed to respect the **hyperspherical geometry** induced by the Standard Normal Variate (SNV) transformation —
+a fundamental preprocessing step in chemometrics that normalizes each spectrum to zero mean and unit variance,
+placing all samples on a **hypersphere of constant norm**. <br>
+ChemoMAE learns representations consistent with this geometry and preserves it across downstream tasks.
 
 ### 1. Extending Chemometrics with Deep Learning
 
-A **Transformer-based Masked Autoencoder (MAE)** tailored to **1D spectra** enables flexible, data-driven representation learning.
-<br>
-We apply block masking to **SNV-preprocessed** spectra and optimize a masked MSE only on the hidden positions. The encoder outputs a **unit-norm embedding** `z`, capturing the directional  information. This design is consistent with the hyperspherical geometry induced by SNV and yields embeddings that are naturally suited for cosine similarity and hyperspherical clustering.
+A **Transformer-based Masked Autoencoder (MAE)** specialized for **1D spectra** enables flexible, data-driven representation learning.
+We apply **block-wise masking** to SNV-preprocessed spectra, optimizing the **MSE loss** only over the hidden spectral regions.
+The encoder produces **unit-norm embeddings** `z` that capture **directional spectral information**.
+This design aligns naturally with the hyperspherical geometry induced by SNV, yielding representations that are inherently suitable for **cosine similarity** and **hyperspherical clustering**.
 
-### 2. Spherical Geometry Toolkit (for downstream use)
 
-Because embeddings are **L2-normalized**, they live on the **unit hypersphere**. Built-in clustering modules (e.g., Cosine-KMeans, vMFMixture) operate natively in this geometry, enabling clustering that respects spectral shape after SNV.
+### 2. Hyperspherical Geometry Toolkit (for downstream use)
+
+Because embeddings are **L2-normalized**, they lie on the **unit hypersphere**.
+Built-in clustering modules such as **Cosine-KMeans** and **vMFMixture** operate natively within this geometry,
+enabling clustering that faithfully reflects **spectral shape** after SNV preprocessing.
 
 ---
 
@@ -272,7 +280,7 @@ labels = ckm.predict(latent_test, chunk=5000000)
 
 ```python
 # === 8. Clustering with vMF Mixture (von Mises–Fisher) ===
-# For spherical latent representations, the vMF mixture model provides a probabilistic alternative.
+# For hyperspherical latent representations, the vMF mixture model provides a probabilistic alternative.
 
 from chemomae.clustering import VMFMixture, elbow_vmf
 

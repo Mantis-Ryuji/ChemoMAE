@@ -12,7 +12,7 @@ __all__ = ["CosineKMeans", "elbow_ckmeans"]
 
 class CosineKMeans(nn.Module):
     r"""
-    Cosine (spherical) K-Means with k-means++ init and optional streaming.
+    Cosine (hyperspherical) K-Means with k-means++ init and optional streaming.
 
     概要
     ----

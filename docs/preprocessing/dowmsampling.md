@@ -1,4 +1,4 @@
-# FPS Downsampling — Farthest-Point Sampling on the unit sphere
+# FPS Downsampling — Farthest-Point Sampling on the unit hypersphere
 
 > Module: `chemomae.preprocessing.downsampling`
 
@@ -18,7 +18,7 @@ We start from a collection of spectra
 X = \{\mathbf{x}_1, \dots, \mathbf{x}_N\} \subset \mathbb{R}^C
 ```
 
-Each spectrum is **internally** projected onto the unit sphere by L2 normalization (selection only):
+Each spectrum is **internally** projected onto the unit hypersphere by L2 normalization (selection only):
 
 ```math
 \tilde{\mathbf{x}}_i = \frac{\mathbf{x}_i}{\lVert \mathbf{x}_i \rVert_2 + \varepsilon},

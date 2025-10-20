@@ -2,7 +2,7 @@
 
 > Module: `chemomae.clustering.ops`
 
-This document describes helper functions for spherical k-means clustering: **row normalization**, **cosine similarity/dissimilarity**, **elbow detection**, and **plotting**.
+This document describes helper functions for hyperspherical k-means clustering: **row normalization**, **cosine similarity/dissimilarity**, **elbow detection**, and **plotting**.
 
 ---
 
