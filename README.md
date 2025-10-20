@@ -8,6 +8,8 @@
 
 > **ChemoMAE**: A Research-Oriented PyTorch Toolkit and Models for **1D Spectral Representation Learning and Spherical Clustering**.
 
+[**Research Repository**](https://github.com/Mantis-Ryuji/WoodDegradationSeg-NIRHSI): Unsupervised Segmentation of Wood Degradation Patterns with NIR-HSI (preparing)
+
 ---
 
 ## Why ChemoMAE ?
@@ -320,10 +322,9 @@ a permissive open-source license that allows both academic and commercial use wi
 
 Under this license, you are free to:
 
-* ✅ **Use** the source code for research or commercial projects.
-* ✅ **Modify** and adapt it to your own needs.
-* ✅ **Distribute** modified or unmodified versions, provided that
-  the original copyright notice and license text are preserved.
+* **Use** the source code for research or commercial projects.
+* **Modify** and adapt it to your own needs.
+* **Distribute** modified or unmodified versions, provided that the original copyright notice and license text are preserved.
 
 However, there is **no warranty** of any kind —
 the software is provided “*as is*,” without guarantee of fitness for any particular purpose or liability for damages.

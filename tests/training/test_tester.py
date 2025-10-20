@@ -41,7 +41,7 @@ def test_tester_runs_and_writes_history(tmp_path):
     assert hist_path.exists()
     items = json.loads(hist_path.read_text(encoding="utf-8"))
     assert isinstance(items, list) and len(items) >= 1
-    assert items[-1]["phase"] == "test" and items[-1]["criterion"] == "sse"
+    assert items[-1]["phase"] == "test" and items[-1]["loss_type"] == "sse"
 
 
 def test_tester_fixed_visible_path(tmp_path):
