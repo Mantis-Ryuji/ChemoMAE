@@ -14,17 +14,14 @@
 
 ## Why ChemoMAE ?
 
-Traditional chemometrics has long relied on **linear methods** such as PCA and PLS. These remain foundational, but they can struggle with **nonlinear structure** and **high-dimensional variability** in modern spectral datasets.
-
-<br>
-
+Traditional chemometrics has long relied on **linear methods** such as PCA and PLS. These remain foundational, but they can struggle with **nonlinear structure** and **high-dimensional variability** in modern spectral datasets.<br>
 **ChemoMAE** is architected to respect the **spherical geometry** induced by the Standard Normal Variate (SNV) transformation, a fundamental preprocessing step in chemometrics that normalizes spectra onto a constant-radius hypersphere. ChemoMAE learns representations suited to this geometry and uses them consistently in downstream tasks.
 
 ### 1. Extending Chemometrics with Deep Learning
 
 A **Transformer-based Masked Autoencoder (MAE)** tailored to **1D spectra** enables flexible, data-driven representation learning.
 <br>
-We apply block masking to **SNV-preprocessed** spectra and optimize a masked MSE only on the hidden positions. The encoder outputs a **unit-norm embedding** `z`, capturing the directional  information. This design is consistent with the hyperspherical geometry induced by SNV and yields embeddings that are naturally suited for cosine similarity and hyperspherical clustering, while also transferring effectively to downstream tasks.
+We apply block masking to **SNV-preprocessed** spectra and optimize a masked MSE only on the hidden positions. The encoder outputs a **unit-norm embedding** `z`, capturing the directional  information. This design is consistent with the hyperspherical geometry induced by SNV and yields embeddings that are naturally suited for cosine similarity and hyperspherical clustering.
 
 ### 2. Spherical Geometry Toolkit (for downstream use)
 
@@ -311,7 +308,111 @@ labels = vmf.predict(latent_test, chunk=5000000)
 
 ## Library Features
 
-API、コード例 + docs_link
+<details>
+<summary><b><code>chemomae.preprocessing</code></b></summary>
+<br>
+
+- **SNVScaler**
+- [Document](docs/preprocessing/snv.md)
+- [Implementation](src/chemomae/preprocessing/snv.py)
+
+```python
+```
+
+- **cosine_fps_downsample**
+- [Document](docs/preprocessing/dowmsampling.md)
+- [Implementation](src/chemomae/preprocessing/downsampling.py)
+
+```python
+```
+</details>
+
+
+<details>
+<summary><b><code>chemomae.models</code></b></summary>
+<br>
+
+- **ChemoMAE**
+- [Document](docs/models/chemo_mae.md)
+- [Implementation](src/chemomae/models/chemo_mae.py)
+
+```python
+```
+</details>
+
+
+<details>
+<summary><b><code>chemomae.training</code></b></summary>
+<br>
+
+- **build_optimizer & build_scheduler**
+- [Document](docs/training/optim.md)
+- [Implementation](src/chemomae/training/optim.py)
+
+```python
+```
+
+- **Trainer**
+- [Document](docs/training/trainer.md)
+- [Implementation](src/chemomae/training/trainer.py)
+
+```python
+```
+
+- **Tester**
+- [Document](docs/training/tester.md)
+- [Implementation](src/chemomae/training/tester.py)
+
+```python
+```
+
+- **Extractor**
+- [Document](docs/training/extractor.md)
+- [Implementation](src/chemomae/training/extractor.py)
+
+```python
+```
+</details>
+
+
+<details>
+<summary><b><code>chemomae.clustering</code></b></summary>
+<br>
+
+- **CosineKMeans & elbow_ckmeans**
+- [Document](docs/clustering/cosine_kmeans.md)
+- [Implementation](src/chemomae/clustering/cosine_kmeans.py)
+
+```python
+```
+
+- **VMFMixture & elbow_vmf**
+- [Document](docs/clustering/vmf_mixture.md)
+- [Implementation](src/chemomae/clustering/vmf_mixture.py)
+
+```python
+```
+
+- **silhouette_samples_cosine_gpu & silhouette_score_cosine_gpu**
+- [Document](docs/clustering/metric.md)
+- [Implementation](src/chemomae/clustering/metric.py)
+
+```python
+```
+</details>
+
+
+<details>
+<summary><b><code>chemomae.utils</code></b></summary>
+<br>
+
+- **set_global_seed**
+- [Document](docs/utils/seed.md)
+- [Implementation](src/chemomae/utils/seed.py)
+
+```python
+```
+</details>
 
 ---
 
