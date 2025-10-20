@@ -50,16 +50,14 @@ pip install chemomae
 <details>
 <summary><b>Example</b></summary>
 
+#### 1. SNV Preprocessing 
+
+Import the Standard Normal Variate (SNV) scaler. <br>
+SNV standardizes each spectrum to have zero mean and unit variance. This removes baseline and scaling effects while preserving the spectral shape (direction). <br>
+After SNV, all spectra have an identical L2 norm of sqrt(L - 1) (e.g., for 256-dimensional spectra, ||x_snv||₂ = √255 ≈ 15.97) <br>
+Hence, SNV maps spectra onto a constant-radius hypersphere.
+
 ```python
-# === 1. SNV Preprocessing ===
-# Import the Standard Normal Variate (SNV) scaler.
-# SNV standardizes each spectrum to have zero mean and unit variance:
-#   x_snv = (x - mean(x)) / std(x)
-#
-# This removes baseline and scaling effects while preserving the spectral shape (direction).
-# After SNV, all spectra have an identical L2 norm of sqrt(C - 1)
-#   e.g., for 256-dimensional spectra, ||x_snv||₂ = √255 ≈ 15.97
-# Hence, SNV maps spectra onto a constant-radius hypersphere.
 from chemomae.preprocessing import SNVScaler
 
 # X_*: reflectance data (np.ndarray)
@@ -73,12 +71,12 @@ for X in [X_train, X_val, X_test]:
 # Unpack processed datasets
 X_train_snv, X_val_snv, X_test_snv = preprocessed
 ```
+#### 2. Dataset and DataLoader Preparation
+
+Convert preprocessed numpy arrays to PyTorch tensors.
+DataLoader wraps datasets with batching, shuffling, and GPU pipeline support.
 
 ```python
-# === 2. Dataset and DataLoader Preparation ===
-# Convert preprocessed numpy arrays to PyTorch tensors.
-# DataLoader wraps datasets with batching, shuffling, and GPU pipeline support.
-
 from chemomae.utils import set_global_seed
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -94,12 +92,12 @@ train_loader = DataLoader(train_ds, batch_size=1024, shuffle=True,  drop_last=Fa
 val_loader   = DataLoader(val_ds,   batch_size=1024, shuffle=False, drop_last=False)
 test_loader  = DataLoader(test_ds,  batch_size=1024, shuffle=False, drop_last=False)
 ```
+#### 3. Model, Optimizer, and Scheduler Setup
+
+Define ChemoMAE (Masked AutoEncoder for spectral data).
+This model learns to reconstruct masked blocks, capturing spectral structure.
 
 ```python
-# === 3. Model, Optimizer, and Scheduler Setup ===
-# Define ChemoMAE (Masked AutoEncoder for spectral data).
-# This model learns to reconstruct masked blocks, capturing spectral structure.
-
 from chemomae.models import ChemoMAE
 from chemomae.training import build_optimizer, build_scheduler
 
@@ -135,15 +133,15 @@ sched = build_scheduler(
     min_lr_scale=0.1     # final LR = base_lr * 0.1
 )
 ```
+#### 4. Training Setup (Trainer + Config)
+
+Trainer orchestrates the full training loop with:
+- AMP (Automatic Mixed Precision)
+- EMA (Exponential Moving Average of model weights)
+- Early stopping and learning-rate scheduling
+- Checkpointing and full logging for reproducibility
 
 ```python
-# === 4. Training Setup (Trainer + Config) ===
-# Trainer orchestrates the full training loop with:
-# - AMP (Automatic Mixed Precision)
-# - EMA (Exponential Moving Average of model weights)
-# - Early stopping and learning-rate scheduling
-# - Checkpointing and full logging for reproducibility
-
 from chemomae.training import TrainerConfig, Trainer
 
 trainer_cfg = TrainerConfig(
@@ -198,11 +196,11 @@ trainer = Trainer(
 # Begin training for 500 epochs (or until early stopping triggers)
 _ = trainer.fit(epochs=500)
 ```
+#### 5. Evaluation (Tester + Config)
+
+The Tester evaluates the trained model on unseen test data.
 
 ```python
-# === 5. Evaluation (Tester) ===
-# The Tester evaluates the trained model on unseen test data.
-
 from chemomae.training import TesterConfig, Tester
 
 tester_cfg = TesterConfig(
@@ -223,11 +221,11 @@ tester = Tester(model, tester_cfg)
 test_loss = tester(test_loader)
 print(f"Test Loss : {test_loss:.2f}")
 ```
+#### 6. Latent Extraction (Extractor + Config)
+
+Extract latent embeddings from the trained ChemoMAE model.
 
 ```python
-# === 6. Latent Extraction ===
-# Extract latent embeddings from the trained ChemoMAE model.
-
 from chemomae.training import ExtractorConfig, Extractor
 
 extractor_cfg = ExtractorConfig(
@@ -242,12 +240,12 @@ extractor = Extractor(model, extractor_cfg)
 
 latent_test = extractor(test_loader)
 ```
+#### 7. Clustering with CosineKMeans
+
+Cluster the latent vectors based on cosine similarity.
+The elbow method automatically determines an optimal K by analyzing inertia.
 
 ```python
-# === 7. Clustering with CosineKMeans ===
-# Cluster the latent vectors based on cosine similarity.
-# The elbow method automatically determines an optimal K by analyzing inertia.
-
 from chemomae.clustering import CosineKMeans, elbow_ckmeans
 
 k_list, inertias, K, idx, kappa = elbow_ckmeans(
@@ -275,11 +273,11 @@ ckm.save_centroids("runs/ckm.pt")
 # ckm.load_centroids("runs/ckm.pt")
 labels = ckm.predict(latent_test, chunk=5000000)
 ```
+#### 8. Clustering with vMF Mixture (von Mises–Fisher)
+
+For hyperspherical latent representations, the vMF mixture model provides a probabilistic alternative.
 
 ```python
-# === 8. Clustering with vMF Mixture (von Mises–Fisher) ===
-# For hyperspherical latent representations, the vMF mixture model provides a probabilistic alternative.
-
 from chemomae.clustering import VMFMixture, elbow_vmf
 
 k_list, scores, K, idx, kappa = elbow_vmf(
