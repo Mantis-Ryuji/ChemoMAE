@@ -26,15 +26,18 @@ def test_trainer_fit_one_epoch_and_check_artifacts(tmp_path):
     opt = build_optimizer(model, lr=1e-3, weight_decay=0.01)
     sch = build_scheduler(opt, steps_per_epoch=len(train_dl), epochs=2, warmup_epochs=1, min_lr_scale=0.1)
 
+    # device は テストの再現性のため明示的に CPU 指定
     cfg = TrainerConfig(
         out_dir=str(tmp_path),
+        device="cpu", 
         amp=False, enable_tf32=False,
         grad_clip=1.0, use_ema=True, ema_decay=0.9,
         loss_type="sse", reduction="batch_mean",
         early_stop_patience=5, early_stop_min_delta=0.0,
-        resume_from=None,  # no resume in this test
+        resume_from=None,           # no resume in this test              
     )
-    t = Trainer(model, opt, train_dl, val_dl, device="cpu", scheduler=sch, cfg=cfg)
+
+    t = Trainer(model, opt, train_dl, val_dl, scheduler=sch, cfg=cfg)
 
     out = t.fit(epochs=2)
     # best updated within 2 epochs

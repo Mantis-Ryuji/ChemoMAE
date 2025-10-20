@@ -59,17 +59,17 @@ ChemoMAE adapts the **Masked Autoencoder (MAE)** framework (He et al., 2022) to 
 ```python
 mae = ChemoMAE(
     seq_len=256,
-    d_model=384,
-    nhead=6,
-    num_layers=6,
-    dim_feedforward=1536,
+    d_model=256,
+    nhead=4,
+    num_layers=4,
+    dim_feedforward=1024,
     dropout=0.1,
     use_learnable_pos=True,
     latent_dim=64,
     dec_hidden=256,
     dec_dropout=0.1,
     n_blocks=32,
-    n_mask=24,
+    n_mask=16,
 )
 ```
 
@@ -86,7 +86,7 @@ mae = ChemoMAE(
 * `dec_hidden` (`int`, default=256): Decoder hidden dimension.
 * `dec_dropout` (`float`, default=0.1): Decoder dropout rate.
 * `n_blocks` (`int`, default=32): Number of equal blocks along the sequence.
-* `n_mask` (`int`, default=24): Default number of blocks to mask.
+* `n_mask` (`int`, default=16): Default number of blocks to mask.
 
 **Methods**
 

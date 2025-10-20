@@ -149,13 +149,13 @@ class ChemoEncoder(nn.Module):
         入力系列長 L（スペクトルの波長チャンネル数など）。
     latent_dim : int, default=64
         出力潜在表現の次元 D。
-    d_model : int, default=384
+    d_model : int, default=256
         Transformer モデル幅。
-    nhead : int, default=6
+    nhead : int, default=4
         Multi-Head Attention のヘッド数。
-    num_layers : int, default=6
+    num_layers : int, default=4
         Transformer Encoder 層の数。
-    dim_feedforward : int, default=1536
+    dim_feedforward : int, default=1024
         各層の FFN の隠れ次元。
     dropout : float, default=0.1
         Dropout 率。
@@ -198,10 +198,10 @@ class ChemoEncoder(nn.Module):
         *,
         seq_len: int,
         latent_dim: int = 64,
-        d_model: int = 384,
-        nhead: int = 6,
-        num_layers: int = 6,
-        dim_feedforward: int = 1536,
+        d_model: int = 256,
+        nhead: int = 4,
+        num_layers: int = 4,
+        dim_feedforward: int = 1024,
         dropout: float = 0.1,
         use_learnable_pos: bool = True,
     ) -> None:
@@ -382,13 +382,13 @@ class ChemoMAE(nn.Module):
     ----------
     seq_len : int
         入力系列長 L。
-    d_model : int, default=384
+    d_model : int, default=256
         Transformer Encoder のモデル幅。
-    nhead : int, default=6
+    nhead : int, default=4
         Multi-Head Attention のヘッド数 (d_model % nhead == 0 が必要)。
-    num_layers : int, default=6
+    num_layers : int, default=4
         Encoder 層数。
-    dim_feedforward : int, default=1536
+    dim_feedforward : int, default=1024
         各 Encoder 層の MLP の中間次元。
     dropout : float, default=0.1
         Encoder 内のドロップアウト率。
@@ -402,8 +402,8 @@ class ChemoMAE(nn.Module):
         Decoder 内のドロップアウト率。
     n_blocks : int, default=32
         系列を等分するブロック数。
-    n_mask : int, default=24
-        デフォルトでマスクするブロック数 (可視マスク生成に使用)。
+    n_mask : int, default=16
+        デフォルトでマスクするブロック数。
 
     Notes
     -----
@@ -418,10 +418,10 @@ class ChemoMAE(nn.Module):
         *,
         seq_len: int,
         # encoder
-        d_model: int = 384,
-        nhead: int = 6,
-        num_layers: int = 6,
-        dim_feedforward: int = 1536,
+        d_model: int = 256,
+        nhead: int = 4,
+        num_layers: int = 4,
+        dim_feedforward: int = 1024,
         dropout: float = 0.1,
         use_learnable_pos: bool = True,
         latent_dim: int = 64,
@@ -430,7 +430,7 @@ class ChemoMAE(nn.Module):
         dec_dropout: float = 0.1,
         # masking
         n_blocks: int = 32,
-        n_mask: int = 24,
+        n_mask: int = 16,
     ) -> None:
         super().__init__()
         self.seq_len = int(seq_len)

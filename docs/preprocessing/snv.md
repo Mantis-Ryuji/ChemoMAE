@@ -122,7 +122,7 @@ Xt_rec = scaler.inverse_transform(Yt, mu=mu, sd=sd)
 ## When to Use SNV in ChemoMAE Pipelines
 
 * **Spectral pre-processing:** SNV is a strong baseline for removing per-spectrum intensity offsets and scaling effects prior to self-supervised training with ChemoMAE or downstream clustering (e.g., cosine K-Means).
-* **Downstream cosine metrics:** Since SNV outputs lie on a hypersphere of radius $`\sqrt{L}`$, relative angles are preserved. For unit vectors, apply L2 normalization.
+* **Downstream cosine metrics:** Since SNV outputs lie on a hypersphere of radius $`\sqrt{L-1}`$, relative angles are preserved. For unit vectors, apply L2 normalization.
 
 ---
 

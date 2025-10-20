@@ -18,15 +18,15 @@ class TesterConfig:
 
     Attributes
     ----------
+    out_dir : str | Path, default="runs"
+        評価履歴を保存するディレクトリ。
     device : str | torch.device, default="cuda"
         評価に使用するデバイス（"cuda" または "cpu"）。
     amp : bool, default=True
         自動混合精度 (Automatic Mixed Precision, AMP) を有効にするかどうか。
     amp_dtype : {"bf16", "fp16"}, default="bf16"
         AMPで使用するデータ型。bf16推奨（Ampere以降）。
-    out_dir : str | Path, default="runs"
-        評価履歴を保存するディレクトリ。
-    criterion : {"sse", "mse"}, default="mse"
+    loss_type : {"sse", "mse"}, default="mse"
         再構成誤差の指標。sse=二乗和誤差、mse=平均二乗誤差。
     reduction : {"sum", "mean", "batch_mean"}, default="mean"
         損失の集約方法。
@@ -41,12 +41,12 @@ class TesterConfig:
     history_filename : str, default="training_history.json"
         履歴を保存するファイル名。
     """
+    out_dir: str | Path = "runs"
     device: str | torch.device = "cuda"
     amp: bool = True
     amp_dtype: Literal["bf16", "fp16"] = "bf16"
-    out_dir: str | Path = "runs"
     # loss settings
-    criterion: Literal["sse", "mse"] = "mse"
+    loss_type: Literal["sse", "mse"] = "mse"
     reduction: Literal["sum", "mean", "batch_mean"] = "mean"
     fixed_visible: Optional[torch.Tensor] = None  # True=visible のブールマスク
     # logging
@@ -128,7 +128,7 @@ class Tester:
         total = torch.zeros((), device=self.device)
         count = 0
 
-        crit = self.cfg.criterion
+        crit = self.cfg.loss_type
         red = self.cfg.reduction
         fixed_visible = self.cfg.fixed_visible
 
@@ -155,7 +155,7 @@ class Tester:
                 elif crit == "mse":
                     loss = masked_mse(x_recon, x, masked, reduction=red)
                 else:
-                    raise ValueError(f"unknown criterion: {crit}")
+                    raise ValueError(f"unknown loss_type: {crit}")
 
                 total += loss.detach() * B
                 count += B
@@ -164,7 +164,7 @@ class Tester:
         self._append_history({
             "phase": "test",
             "test_loss": float(avg),
-            "criterion": crit,
+            "loss_type": crit,
             "reduction": red,
         })
         return avg

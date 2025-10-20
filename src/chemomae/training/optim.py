@@ -26,7 +26,7 @@ def build_optimizer(
     model: nn.Module,
     *,
     lr: float = 3e-4,
-    weight_decay: float = 0.05,
+    weight_decay: float = 1e-4,
     betas: Tuple[float, float] = (0.9, 0.95),
     eps: float = 1e-8,
 ) -> optim.Optimizer:
@@ -47,7 +47,7 @@ def build_optimizer(
         最適化対象のモデル。
     lr : float, default=3e-4
         学習率。
-    weight_decay : float, default=0.05
+    weight_decay : float, default=1e-4
         weight decay をかけるパラメータ群に対する係数。
     betas : Tuple[float, float], default=(0.9, 0.95)
         AdamW の β 値。
@@ -68,7 +68,7 @@ def build_optimizer(
     使用例
     ------
     >>> model = ChemoMAE(seq_len=256)
-    >>> optimizer = build_optimizer(model, lr=1e-4, weight_decay=0.05)
+    >>> optimizer = build_optimizer(model, lr=1e-4, weight_decay=1e-4)
     >>> for p in optimizer.param_groups:
     ...     print(len(p["params"]), p["weight_decay"])
     """

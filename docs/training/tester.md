@@ -11,7 +11,7 @@ This document describes the **Tester** and its configuration, designed for evalu
 The `Tester` computes reconstruction loss over an entire DataLoader:
 
 * **Masked-only loss**: Error is restricted to masked positions (as in MAE training).
-* **Criterion**: Supports SSE (sum of squared errors) or MSE (mean squared error).
+* **loss_type**: Supports SSE (sum of squared errors) or MSE (mean squared error).
 * **Precision**: Supports Automatic Mixed Precision (AMP) with `bf16` or `fp16`.
 * **Logging**: Optionally appends results to a JSON file under `out_dir`.
 * **Fixed visible mask**: Can use a pre-specified mask instead of random masking.
@@ -23,11 +23,11 @@ The `Tester` computes reconstruction loss over an entire DataLoader:
 ```python
 @dataclass
 class TesterConfig:
+    out_dir: str | Path = "runs"
     device: str | torch.device = "cuda"
     amp: bool = True
     amp_dtype: Literal["bf16", "fp16"] = "bf16"
-    out_dir: str | Path = "runs"
-    criterion: Literal["sse", "mse"] = "mse"
+    loss_type: Literal["sse", "mse"] = "mse"
     reduction: Literal["sum", "mean", "batch_mean"] = "mean"
     fixed_visible: Optional[torch.Tensor] = None
     log_history: bool = True
@@ -36,11 +36,11 @@ class TesterConfig:
 
 **Fields**
 
+* `out_dir`: Directory to save evaluation history.
 * `device`: Which device to run on (`"cuda"` or `"cpu"`).
 * `amp`: Whether to enable mixed precision evaluation.
 * `amp_dtype`: Data type for AMP (`bf16` recommended on Ampere+).
-* `out_dir`: Directory to save evaluation history.
-* `criterion`: Error type (`"sse"` = squared sum, `"mse"` = mean squared error).
+* `loss_type`: Error type (`"sse"` = squared sum, `"mse"` = mean squared error).
 * `reduction`: Aggregation mode (see *Loss Handling* below).
 * `fixed_visible`: Optional fixed visible mask (1D or 2D bool tensor).
 * `log_history`: Append evaluation results to JSON file if `True`.
@@ -79,7 +79,7 @@ avg_loss = tester(data_loader)
 {
   "phase": "test",
   "test_loss": 0.1342,
-  "criterion": "mse",
+  "loss_type": "mse",
   "reduction": "mean"
 }
 ```
@@ -90,7 +90,7 @@ avg_loss = tester(data_loader)
 
 ## Loss Handling
 
-### Criterion
+### loss_type
 
 * **SSE (`"sse"`)**: Uses `masked_sse`.
 * **MSE (`"mse"`)**: Uses `masked_mse`.
@@ -114,7 +114,7 @@ avg_loss = tester(data_loader)
 ```python
 from chemomae.training import Tester, TesterConfig
 
-tester = Tester(model, TesterConfig(device="cuda", criterion="mse", reduction="mean"))
+tester = Tester(model, TesterConfig(device="cuda", loss_type="mse", reduction="mean"))
 avg_loss = tester(test_loader)
 print("Test MSE:", avg_loss)
 ```
@@ -123,7 +123,7 @@ print("Test MSE:", avg_loss)
 
 ```python
 visible = torch.ones(seq_len, dtype=torch.bool)
-cfg = TesterConfig(fixed_visible=visible, criterion="sse", reduction="batch_mean")
+cfg = TesterConfig(fixed_visible=visible, loss_type="sse", reduction="batch_mean")
 tester = Tester(model, cfg)
 avg_loss = tester(test_loader)
 ```
@@ -141,7 +141,7 @@ avg_loss = tester(test_loader)
 ## Minimal Tests
 
 ```python
-cfg = TesterConfig(device="cpu", criterion="mse", reduction="mean", log_history=False)
+cfg = TesterConfig(device="cpu", loss_type="mse", reduction="mean", log_history=False)
 tester = Tester(model, cfg)
 loss = tester(test_loader)
 assert isinstance(loss, float)

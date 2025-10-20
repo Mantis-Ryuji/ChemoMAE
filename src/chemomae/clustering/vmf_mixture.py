@@ -6,7 +6,7 @@ from typing import Optional, Tuple, List, Union, Dict, Any, Callable
 import torch
 import torch.nn as nn
 
-__all__ = ["VMFMixture", "vmf_logC", "vmf_bessel_ratio"]
+__all__ = ["VMFMixture", "elbow_vmf", "vmf_logC", "vmf_bessel_ratio"]
 
 
 def _logIv_small(nu: torch.Tensor, k: torch.Tensor) -> torch.Tensor:

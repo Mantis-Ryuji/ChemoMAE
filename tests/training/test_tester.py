@@ -21,10 +21,10 @@ def test_tester_runs_and_writes_history(tmp_path):
     model = _tiny_model(L)
 
     cfg = TesterConfig(
-        device="cpu",
         out_dir=tmp_path,
+        device="cpu",
         amp=False,                    # CPU なのでAMPは無効
-        criterion="sse",
+        loss_type="sse",
         reduction="batch_mean",
         fixed_visible=None,
         log_history=True,
@@ -55,10 +55,10 @@ def test_tester_fixed_visible_path(tmp_path):
     visible[: L // 2] = True
 
     cfg = TesterConfig(
-        device="cpu",
         out_dir=tmp_path,
+        device="cpu",
         amp=False,
-        criterion="mse",
+        loss_type="mse",
         reduction="batch_mean",
         fixed_visible=visible,
         log_history=False,        

@@ -28,6 +28,8 @@ class TrainerConfig:
     ----------
     out_dir : str | Path, default="runs"
         すべての出力（チェックポイント, 履歴, 可視化画像など）を保存するディレクトリ。
+    device : {"cuda","mps","cpu"} | None, default=None
+        使用デバイス。None の場合は自動判定（cuda → mps → cpu の優先順）。
     amp : bool, default=True
         AMP (Automatic Mixed Precision) を使用するかどうか。
     amp_dtype : {"bf16", "fp16"}, default="bf16"
@@ -63,6 +65,7 @@ class TrainerConfig:
         - None なら常に新規学習。
     """
     out_dir: str | Path = "runs"
+    device: Optional[str] = None
     amp: bool = True
     amp_dtype: str = "bf16"  # "bf16" | "fp16"
     enable_tf32: bool = False
@@ -119,12 +122,10 @@ class Trainer:
         学習データローダー。
     val_loader : Iterable, optional
         検証データローダー。
-    device : str | torch.device, default="cuda"
-        学習に用いるデバイス。
     scheduler : torch.optim.lr_scheduler.LambdaLR, optional
         学習率スケジューラ。
     cfg : TrainerConfig, default=TrainerConfig()
-        学習設定（AMP, EMA, early stop, 出力先など）。
+        学習設定（デバイス、AMP, EMA, early stop, 出力先など）。
 
     戻り値
     ------
@@ -134,7 +135,8 @@ class Trainer:
 
     使用例
     ------
-    >>> trainer = Trainer(model, optimizer, train_loader, val_loader, device="cuda", cfg=TrainerConfig())
+    >>> cfg = TrainerConfig(device=None)  # None → 自動判定（cuda/mps/cpu）
+    >>> trainer = Trainer(model, optimizer, train_loader, val_loader, scheduler=scheduler, cfg=cfg)
     >>> history = trainer.fit(epochs=100)
     >>> print(history["best"])
     {'epoch': 42, 'val_loss': 0.0123}
@@ -146,15 +148,24 @@ class Trainer:
         train_loader: Iterable,
         val_loader: Optional[Iterable] = None,
         *,
-        device: str | torch.device = "cuda",
         scheduler: Optional[LambdaLR] = None,
         cfg: TrainerConfig = TrainerConfig(),
     ):
-        self.model = model.to(device)
+        # ---- device 決定（cfg.device が None の場合は自動判定）----
+        if cfg.device is None:
+            if torch.cuda.is_available():
+                resolved_device = "cuda"
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():  # macOS Metal
+                resolved_device = "mps"
+            else:
+                resolved_device = "cpu"
+            cfg.device = resolved_device  # cfg にも反映（ログ/保存のため）
+        self.device = torch.device(cfg.device)
+
+        self.model = model.to(self.device)
         self.optimizer = optimizer
         self.train_loader = train_loader
         self.val_loader = val_loader
-        self.device = torch.device(device)
         self.scheduler = scheduler
         self.cfg = cfg
 
@@ -229,6 +240,7 @@ class Trainer:
             "amp": {"enabled": self.amp, "dtype": self.amp_dtype},
             "best": dict(self.best),
             "history": list(self.history),
+            "device": self.device.type, 
         }
 
     def save_checkpoint(self, epoch: int, *, is_best: bool):

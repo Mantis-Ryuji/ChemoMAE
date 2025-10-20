@@ -29,6 +29,7 @@ The model is assumed to return `(x_recon, z, visible_mask)`, and the Trainer com
 @dataclass
 class TrainerConfig:
     out_dir: str | Path = "runs"
+    device: Optional[str] = None   # {"cuda","mps","cpu"} or None (= auto-detect)
     amp: bool = True
     amp_dtype: str = "bf16"    # {"bf16","fp16"}
     enable_tf32: bool = False
@@ -45,6 +46,7 @@ class TrainerConfig:
 
 **Key fields**
 
+* **Device:** `device` can be `"cuda"`, `"mps"`, or `"cpu"`. If `None`, the trainer **auto-detects** availability in the order `cuda → mps → cpu`.
 * **Precision:** `amp=True` enables autocast; `amp_dtype` selects `bf16` (stable default) or `fp16`.
 * **TF32:** Enable on Ampere+ for faster GEMMs/conv: `enable_tf32=True`.
 * **EMA:** Turn on with `use_ema`; `ema_decay≈0.999` is a robust starting point.
@@ -62,7 +64,7 @@ trainer = Trainer(
     optimizer: optim.Optimizer,
     train_loader: Iterable,
     val_loader: Optional[Iterable] = None,
-    *, device: str | torch.device = "cuda",
+    *,
     scheduler: Optional[LambdaLR] = None,
     cfg: TrainerConfig = TrainerConfig(),
 )

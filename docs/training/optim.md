@@ -8,7 +8,7 @@ This document describes the utility functions that build a **parameter‑grouped
 
 ## Summary
 
-* **`build_optimizer(model, lr=3e-4, weight_decay=0.05, betas=(0.9,0.95), eps=1e-8)`**
+* **`build_optimizer(model, lr=3e-4, weight_decay=1e-4, betas=(0.9,0.95), eps=1e-8)`**
 
   * Returns **AdamW** with **standard weight‑decay exclusions**:
 
@@ -59,7 +59,7 @@ from chemomae.models import ChemoMAE
 from chemomae.training.optim import build_optimizer
 
 model = ChemoMAE(seq_len=256)
-optimizer = build_optimizer(model, lr=1e-4, weight_decay=0.05)
+optimizer = build_optimizer(model, lr=1e-4, weight_decay=1e-4)
 
 # Inspect groups
 for i, g in enumerate(optimizer.param_groups):
@@ -94,7 +94,7 @@ Actual LR is `lr(s) = base_lr * λ(s)`.
 
 ```python
 from chemomae.training.optim import build_optimizer, build_scheduler
-optimizer = build_optimizer(model, lr=3e-4, weight_decay=0.05)
+optimizer = build_optimizer(model, lr=3e-4, weight_decay=1e-4)
 scheduler = build_scheduler(optimizer,
                             steps_per_epoch=len(train_loader),
                             epochs=100, warmup_epochs=5, min_lr_scale=0.1)
