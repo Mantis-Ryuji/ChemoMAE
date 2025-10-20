@@ -11,7 +11,7 @@ from ..models.chemo_mae import ChemoMAE
 
 
 @dataclass
-class ExtractConfig:
+class ExtractorConfig:
     r"""
     Configuration for latent feature extraction with `Extractor`.
 
@@ -58,19 +58,19 @@ class Extractor:
     - `ChemoMAE.encode` を **全可視マスク (visible_mask=True)** で呼び出し、
       潜在表現 Z を一括で抽出する。
     - 推論時は AMP (bf16/fp16) に対応し、結果は CPU に集約される。
-    - `ExtractConfig.save_path` が指定されていれば自動保存される。
+    - `ExtractorConfig.save_path` が指定されていれば自動保存される。
 
     Parameters
     ----------
     model : ChemoMAE
         学習済み ChemoMAE モデル。
-    cfg : ExtractConfig, default=ExtractConfig()
+    cfg : ExtractorConfig, default=ExtractorConfig()
         抽出処理の設定（デバイス、AMP、保存先、返却形式など）。
 
     Usage
     -----
     >>> model = ChemoMAE(...)
-    >>> cfg = ExtractConfig(device="cuda", save_path="latent.npy", return_numpy=True)
+    >>> cfg = ExtractorConfig(device="cuda", save_path="latent.npy", return_numpy=True)
     >>> extractor = Extractor(model, cfg)
     >>> Z = extractor(loader)   # -> np.ndarray shape (N, D)
 
@@ -82,7 +82,7 @@ class Extractor:
         * それ以外 → `torch.save` で保存。
     - 返り値の型は `cfg.return_numpy` に依存する。
     """
-    def __init__(self, model: ChemoMAE, cfg: ExtractConfig = ExtractConfig()):
+    def __init__(self, model: ChemoMAE, cfg: ExtractorConfig = ExtractorConfig()):
         self.model = model
         self.cfg = cfg
         self.device = torch.device(cfg.device)

@@ -1,6 +1,6 @@
 from .trainer import Trainer, TrainerConfig
 from .tester import TesterConfig, Tester
-from .extractor import Extractor, ExtractConfig
+from .extractor import Extractor, ExtractorConfig
 from .optim import build_optimizer, build_scheduler
 
 __all__ = [
@@ -9,7 +9,7 @@ __all__ = [
     "TesterConfig",
     "Tester",
     "Extractor", 
-    "ExtractConfig",
+    "ExtractorConfig",
     "build_optimizer",
     "build_scheduler"
 ]

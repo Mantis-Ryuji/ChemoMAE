@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from chemomae.training.extractor import Extractor, ExtractConfig
+from chemomae.training.extractor import Extractor, ExtractorConfig
 from chemomae.models.chemo_mae import ChemoMAE
 
 
@@ -19,7 +19,7 @@ def test_extracter_returns_cpu_tensor_and_respects_return_numpy(tmp_path):
     loader = DataLoader(TensorDataset(x), batch_size=2, shuffle=False)
 
     model = _make_tiny_model(seq_len=L, d_model=16, latent_dim=8)
-    cfg = ExtractConfig(device="cpu", amp=False, save_path=tmp_path / "z.pt", return_numpy=False)
+    cfg = ExtractorConfig(device="cpu", amp=False, save_path=tmp_path / "z.pt", return_numpy=False)
     ext = Extractor(model, cfg)
 
     Z = ext(loader)
@@ -31,6 +31,6 @@ def test_extracter_returns_cpu_tensor_and_respects_return_numpy(tmp_path):
     assert (tmp_path / "z.pt").exists()
 
     # numpy return path
-    cfg2 = ExtractConfig(device="cpu", amp=False, save_path=tmp_path / "z.npy", return_numpy=True)
+    cfg2 = ExtractorConfig(device="cpu", amp=False, save_path=tmp_path / "z.npy", return_numpy=True)
     Znp = Extractor(model, cfg2)(loader)
     assert Znp.shape == (B, 8)

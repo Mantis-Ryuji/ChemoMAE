@@ -2,7 +2,7 @@
 
 > Module: `chemomae.training.extractor`
 
-This document describes the **Extractor** and its **ExtractConfig**, which enable latent feature extraction from trained ChemoMAE models.
+This document describes the **Extractor** and its **ExtractorConfig**, which enable latent feature extraction from trained ChemoMAE models.
 
 ---
 
@@ -17,11 +17,11 @@ This is particularly useful for downstream tasks such as clustering (e.g., Cosin
 
 ---
 
-## Configuration — `ExtractConfig`
+## Configuration — `ExtractorConfig`
 
 ```python
 @dataclass
-class ExtractConfig:
+class ExtractorConfig:
     device: str | torch.device = "cuda"
     amp: bool = True
     amp_dtype: Literal["bf16", "fp16"] = "bf16"
@@ -47,7 +47,7 @@ class ExtractConfig:
 ### Initialization
 
 ```python
-extractor = Extractor(model, cfg=ExtractConfig())
+extractor = Extractor(model, cfg=ExtractorConfig())
 ```
 
 * `model`: Trained ChemoMAE.
@@ -83,9 +83,9 @@ If `save_path` is provided:
 ### Extract features to memory
 
 ```python
-from chemomae.training import Extractor, ExtractConfig
+from chemomae.training import Extractor, ExtractorConfig
 
-cfg = ExtractConfig(device="cuda", return_numpy=True)
+cfg = ExtractorConfig(device="cuda", return_numpy=True)
 extractor = Extractor(model, cfg)
 Z = extractor(loader)  # np.ndarray, shape (N, D)
 ```
@@ -93,7 +93,7 @@ Z = extractor(loader)  # np.ndarray, shape (N, D)
 ### Save features to disk
 
 ```python
-cfg = ExtractConfig(device="cuda", save_path="latent.npy", return_numpy=False)
+cfg = ExtractorConfig(device="cuda", save_path="latent.npy", return_numpy=False)
 extractor = Extractor(model, cfg)
 Z = extractor(loader)  # torch.Tensor
 # latent.npy written to disk as np.ndarray
@@ -102,7 +102,7 @@ Z = extractor(loader)  # torch.Tensor
 ### Torch save format
 
 ```python
-cfg = ExtractConfig(device="cuda", save_path="latent.pt")
+cfg = ExtractorConfig(device="cuda", save_path="latent.pt")
 extractor = Extractor(model, cfg)
 Z = extractor(loader)
 # latent.pt contains torch.Tensor
@@ -122,7 +122,7 @@ Z = extractor(loader)
 ## Minimal Tests
 
 ```python
-cfg = ExtractConfig(device="cpu", return_numpy=True, save_path=None)
+cfg = ExtractorConfig(device="cpu", return_numpy=True, save_path=None)
 extractor = Extractor(model, cfg)
 Z = extractor(loader)
 assert isinstance(Z, np.ndarray)
