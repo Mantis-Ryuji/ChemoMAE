@@ -31,7 +31,7 @@ resultant length ($`\bar R_k=|\sum_i\gamma_{ik}x_i|/N_k`$) gives a fast **closed
 
 * **Initialization**: cosine (hyperspherical) k-means++ seeding.
 
-* **Special functions**: stable, torch-only approximations for ($`\log I_\nu(\kappa)`$) and ($`I_{\nu+1}/I_\nu`$) by blending small/large-($`\kappa`$) series—as `torch.special.iv` may be unavailable.
+* **Special functions**: stable, torch-only approximations for ($`\log I_\nu(\kappa)`$) and ($`\frac{I_{\nu+1}(\kappa)}{I_\nu(\kappa)}`$) by blending small/large-($`\kappa`$) series.
 
 * **Scalability**: chunked E-step (`chunk`) streams large (N) from CPU→GPU.
 
@@ -173,8 +173,8 @@ assert torch.allclose(vmf.mus, vmf2.mus, atol=1e-6)
 ## Design Notes & Tips
 
 * **Normalization**: Inputs are L2-normalized internally; you can pre-normalize too.
-* **Bessel approximations**: ($`\log I_\nu`$) and ($`I_{\nu+1}/I_\nu`$) use blended small/large-($`\kappa`$) expansions for stability on GPU.
-* **($`\kappa`$) update**: closed-form from resultant length; swap to Newton solves with $`I_{\nu+1}/I_\nu`$ if you need higher accuracy.
+* **Bessel approximations**: ($`\log I_\nu(\kappa)`$) and ($`\frac{I_{\nu+1}(\kappa)}{I_\nu(\kappa)}`$) use blended small/large-($`\kappa`$) expansions for stability on GPU.
+* **($`\kappa`$) update**: closed-form from resultant length; swap to Newton solves with $`\frac{I_{\nu+1}(\kappa)}{I_\nu(\kappa)}`$ if you need higher accuracy.
 * **Chunked E-step**: set `chunk` to fit very large (N) with limited VRAM.
 * **Robustness**: soft responsibilities usually down-weight outliers; if you observe “spiky outlier components,” consider ($`\kappa`$) caps/priors or adding a uniform background component.
 

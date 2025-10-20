@@ -319,7 +319,7 @@ labels = vmf.predict(latent_test, chunk=5000000)
 
 ---
 
-#### `SNVScaler`
+### `SNVScaler`
 
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/preprocessing/snv.md)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/preprocessing/snv.py)
@@ -374,7 +374,7 @@ Xt_rec = scaler.inverse_transform(Yt, mu=mu_t, sd=sd_t)
 
 ---
 
-#### `cosine_fps_downsample`
+### `cosine_fps_downsample`
 
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/preprocessing/dowmsampling.md)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/preprocessing/downsampling.py)
@@ -428,7 +428,7 @@ X_down = cosine_fps_downsample(X_snv, ratio=0.1)
 
 ---
 
-#### `ChemoMAE`
+### `ChemoMAE`
 
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/models/chemo_mae.md)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/models/chemo_mae.py)
@@ -485,7 +485,7 @@ x_rec2 = mae.reconstruct(x, n_mask=16)
 
 ---
 
-#### `build_optimizer` & `build_scheduler`
+### `build_optimizer` & `build_scheduler`
 
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/training/optim.md)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/training/optim.py)
@@ -558,7 +558,7 @@ for epoch in range(100):
 
 ---
 
-#### `TrainerConfig` & `Trainer`
+### `TrainerConfig` & `Trainer`
 
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/training/trainer.md)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/training/trainer.py)
@@ -636,7 +636,7 @@ print("Best validation:", history["best"])
 
 ---
 
-#### `TesterConfig` & `Tester`
+### `TesterConfig` & `Tester`
 
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/training/tester.md)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/training/tester.py)
@@ -684,11 +684,11 @@ avg_loss = tester(test_loader)
 **When to Use**
 
 * Benchmarking **reconstruction quality** of ChemoMAE checkpoints under consistent masking protocols. 
-* Running **reproducible test passes** (with fixed masks) or automated CI evaluations that log into a shared `runs/` directory. 
+* Running **reproducible test passes** (with fixed masks) or automated CI evaluations that log into a shared `{out_dir}/` directory. 
 
 ---
 
-#### `ExtractorConfig` & `Extractor`
+### `ExtractorConfig` & `Extractor`
 
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/training/extractor.md)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/training/extractor.py)
@@ -739,7 +739,7 @@ Z_torch = Extractor(model, cfg)(loader)   # -> torch.Tensor; also writes "latent
 
 ---
 
-#### `CosineKMeans` & `elbow_ckmeans`
+### `CosineKMeans` & `elbow_ckmeans`
 
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/clustering/cosine_kmeans.md)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/clustering/cosine_kmeans.py)
@@ -777,7 +777,7 @@ print("Elbow K:", optimal_k)
 
 **Key Features**
 
-* **Objective & updates:** minimizes ( \mathrm{mean}(1-\cos(x,c)) ); E-step by argmax cosine, M-step by **normalized cluster means**. 
+* **Objective & updates:** minimizes $`\mathrm{mean}(1-\cos(x,c))`$ ; E-step by argmax cosine, M-step by **normalized cluster means**. 
 * **Internal normalization:** rows are L2-normalized internally; centroids are stored **unit-norm**. 
 * **k-means++ init:** with optional squared-distance variant; deterministic via `random_state`. 
 * **Streaming (CPU→GPU):** `chunk>0` enables large-N clustering with bounded VRAM; also supported in `predict` and elbow sweep. 
@@ -792,12 +792,12 @@ print("Elbow K:", optimal_k)
 
 ---
 
-#### `VMFMixture` & `elbow_vmf`
+### `VMFMixture` & `elbow_vmf`
 
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/clustering/vmf_mixture.md)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/clustering/vmf_mixture.py)
 
-`VMFMixture` fits a **von Mises–Fisher mixture** on the **unit hypersphere** ($`S^{d-1}`$) using **EM**. Inputs are internally **L2-normalized**, mean directions are kept **unit-norm**, and concentrations ($`\kappa`$) are updated from the **resultant length**. The implementation includes **torch-only** stable approximations for Bessel terms ( $`\log I_\nu`$, $`I_{\nu+1}/I_\nu`$ ) and supports **chunked E-steps** for CPU→GPU streaming at large $N$. <br>
+`VMFMixture` fits a **von Mises–Fisher mixture** on the **unit hypersphere** ($`S^{d-1}`$) using **EM**. Inputs are internally **L2-normalized**, mean directions are kept **unit-norm**, and concentrations ($`\kappa`$) are updated from the **resultant length**. The implementation includes **torch-only** stable approximations for Bessel terms ( $`\log I_\nu(\kappa)`$, $`\frac{I_{\nu+1}(\kappa)}{I_\nu(\kappa)}`$ ) and supports **chunked E-steps** for CPU→GPU streaming at large $`N`$. <br>
 `elbow_vmf` sweeps $`K=1..k_{max}`$ and selects an elbow via **curvature**, using **BIC** or **mean NLL** as the score.  
 
 ```python
@@ -828,7 +828,7 @@ vmf2 = VMFMixture.load("vmf.pt", map_location="cuda")
 **Key Features**
 
 * **EM on the sphere:** responsibilities on E-step; M-step updates unit directions and $`\kappa`$ from cluster **resultant length** (closed-form approx). 
-* **Stable special functions:** torch-only blends for $`\log I_\nu(\kappa)`$ and the Bessel ratio $`I_{\nu+1}/I_\nu`$ (small/large-$`\kappa`$ expansions with smooth transition). 
+* **Stable special functions:** torch-only blends for $`\log I_\nu(\kappa)`$ and the Bessel ratio $`\frac{I_{\nu+1}(\kappa)}{I_\nu(\kappa)}`$ (small/large-$`\kappa`$ expansions with smooth transition). 
 * **Cosine k-means++ seeding:** hyperspherical initialization for mean directions. 
 * **Chunked E-step:** stream CPU→GPU with `chunk` to handle very large datasets under limited VRAM. 
 * **Diagnostics & criteria:** `loglik`, `bic`, and **curvature-based elbow** via `elbow_vmf(…, criterion={"bic","nll"})`.  
@@ -842,7 +842,7 @@ vmf2 = VMFMixture.load("vmf.pt", map_location="cuda")
 
 ---
 
-#### `silhouette_samples_cosine_gpu` & `silhouette_score_cosine_gpu`
+### `silhouette_samples_cosine_gpu` & `silhouette_score_cosine_gpu`
 
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/clustering/metric.md)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/clustering/metric.py)
@@ -895,7 +895,7 @@ s_big = silhouette_samples_cosine_gpu(X_t, y_t, device="cuda", chunk=1_000_000)
 
 ---
 
-#### `set_global_seed`
+### `set_global_seed`
 
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/utils/seed.md)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/utils/seed.py)
