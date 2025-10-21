@@ -52,8 +52,8 @@ pip install chemomae
 
 #### 1. SNV Preprocessing 
 
-Import the Standard Normal Variate (SNV) scaler. <br>
-SNV standardizes each spectrum to have zero mean and unit variance. This removes baseline and scaling effects while preserving the spectral shape (direction). <br>
+Import the SNVscaler. <br>
+SNV standardizes each spectrum to have zero mean and unit variance. This removes baseline and scaling effects while preserving the spectral shape (direction).
 After SNV, all spectra have an identical L2 norm of sqrt(L - 1) (e.g., for 256-dimensional spectra, ||x_snv||₂ = √255 ≈ 15.97) <br>
 Hence, SNV maps spectra onto a constant-radius hypersphere.
 
@@ -73,8 +73,8 @@ X_train_snv, X_val_snv, X_test_snv = preprocessed
 ```
 #### 2. Dataset and DataLoader Preparation
 
-Convert preprocessed numpy arrays to PyTorch tensors.
-DataLoader wraps datasets with batching, shuffling, and GPU pipeline support.
+Convert preprocessed numpy arrays to PyTorch tensors. <br>
+Build a PyTorch DataLoader from preprocessed NumPy arrays to handle batching, shuffling, and GPU loading.
 
 ```python
 from chemomae.utils import set_global_seed
@@ -95,7 +95,7 @@ test_loader  = DataLoader(test_ds,  batch_size=1024, shuffle=False, drop_last=Fa
 #### 3. Model, Optimizer, and Scheduler Setup
 
 Define ChemoMAE (Masked AutoEncoder for spectral data).
-This model learns to reconstruct masked blocks, capturing spectral structure.
+This model learns to reconstruct masked spectral blocks while learning representations constrained on the unit hypersphere.
 
 ```python
 from chemomae.models import ChemoMAE
@@ -198,7 +198,7 @@ _ = trainer.fit(epochs=500)
 ```
 #### 5. Evaluation (Tester + Config)
 
-The Tester evaluates the trained model on unseen test data.
+The Tester evaluates the trained model on test data.
 
 ```python
 from chemomae.training import TesterConfig, Tester
@@ -223,7 +223,7 @@ print(f"Test Loss : {test_loss:.2f}")
 ```
 #### 6. Latent Extraction (Extractor + Config)
 
-Extract latent embeddings from the trained ChemoMAE model.
+Extract latent embeddings from the trained ChemoMAE model **without masking**.
 
 ```python
 from chemomae.training import ExtractorConfig, Extractor
@@ -242,7 +242,7 @@ latent_test = extractor(test_loader)
 ```
 #### 7. Clustering with CosineKMeans
 
-Cluster the latent vectors based on cosine similarity.
+Cluster the latent vectors based on cosine similarity. <br>
 The elbow method automatically determines an optimal K by analyzing inertia.
 
 ```python
@@ -325,7 +325,7 @@ labels = vmf.predict(latent_test, chunk=5000000)
 `SNVScaler` performs **row-wise mean subtraction and variance scaling** — each spectrum is centered and divided by its **unbiased standard deviation** (`ddof=1`). <br>
 It is a **stateless** transformer supporting both **NumPy** and **PyTorch**, automatically preserving the original **framework, device, and dtype**. <br>
 When `transform_stats=True`, it returns `(Y, mu, sd)`, where `sd` already includes `eps` and can be directly used for reconstruction. <br>
-After SNV, all rows have **zero mean** and **unit variance**, producing a constant L2 norm of $`\sqrt{L-1}`$ and thus mapping spectra onto a **hypersphere** — ideal for cosine-based clustering (e.g., **CosineKMeans**, **vMFMixture**).
+After SNV, all rows have **zero mean** and **unit variance**, producing a constant L2 norm of $`\sqrt{L-1}`$ and thus mapping spectra onto a constant-radius **hypersphere** — ideal for cosine-based clustering (e.g., **CosineKMeans**, **vMFMixture**).
 
 ```python
 # === Basic usage (NumPy) ===
@@ -363,11 +363,10 @@ Xt_rec = scaler.inverse_transform(Yt, mu=mu_t, sd=sd_t)
 * **`eps` handling:** `eps` is added to `sd` internally for numerical stability; the returned `sd` already includes it.
 * **Precision:** computations run in `float64`.
 * **Torch integration:** device and dtype are preserved when returning tensors.
-* **Complexity:** (O(N·L)) with (O(1)) memory overhead.
 
 **When to Use**
 
-* As a **standard preprocessing step** for NIR or HSI spectra to remove per-sample intensity offsets and scaling effects.
+* As a **standard preprocessing step** for NIR spectra to remove per-sample offsets and scaling effects.
 * Recommended prior to **cosine similarity–based** models (ChemoMAE, CosineKMeans, vMFMixture) to align data with hyperspherical geometry.
 
 ---
@@ -377,10 +376,10 @@ Xt_rec = scaler.inverse_transform(Yt, mu=mu_t, sd=sd_t)
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/preprocessing/dowmsampling.md)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/preprocessing/downsampling.py)
 
-`cosine_fps_downsample` performs **Farthest-Point Sampling (FPS)** under **cosine geometry**, selecting points that are most directionally distinct on the unit hypersphere. <br>
+`cosine_fps_downsample` performs **Farthest-Point Sampling (FPS)** under **hyperspherical geometry**, selecting points that are most directionally distinct on the unit hypersphere. <br>
 Internally, all rows are **L2-normalized** for selection, but the returned subset is drawn from the **original-scale** `X`. <br>
 It supports both NumPy and PyTorch inputs, automatically leveraging CUDA when available, and keeps Torch tensors on their original device/dtype. <br>
-This method is particularly useful for **reducing redundancy** in NIR/HSI datasets while preserving **angular diversity**, making it ideal for self-supervised spectral learning pipelines.
+This method is particularly useful for **reducing redundancy** in NIR-HSI datasets while preserving **angular diversity**, making it ideal for self-supervised spectral learning pipelines.
 
 ```python
 # === Basic usage (NumPy) ===
@@ -406,13 +405,6 @@ X_down = cosine_fps_downsample(X_snv, ratio=0.1)
 
 * **Internal normalization:** always performed; ensures scale invariance (selection depends only on direction).
 * **Output:** taken from the *original* `X` (not normalized).
-* **Complexity:** (O(N·k)) inner-product operations, memory (O(N)).
-* **Determinism:** fixed by `seed` or explicit `init_index`.
-* **Edge cases:**
-
-  * Empty input → empty output.
-  * `ratio <= 0` raises `ValueError`; `ratio >= 1` returns all samples.
-  * GPU memory reuse avoids “reserved memory creep.”
 
 **When to Use**
 
@@ -431,7 +423,9 @@ X_down = cosine_fps_downsample(X_snv, ratio=0.1)
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/models/chemo_mae.md)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/models/chemo_mae.py)
 
-`ChemoMAE` is a **Masked Autoencoder for 1D spectra** (NIR/HSI bands). It applies **block-wise masking** along the spectral axis, encodes only the **visible tokens + [CLS]**, and reconstructs the full sequence with a lightweight **MLP decoder**. The encoder’s CLS output is projected to `latent_dim` and **L2-normalized**, yielding embeddings that live on the **unit hypersphere**—a natural fit for cosine-based clustering and metrics.  
+ `ChemoMAE` is a **Masked Autoencoder for 1D spectra**. 
+ It applies **block-wise masking** along the spectral axis, encodes only the **visible tokens + [CLS]**, and reconstructs the full sequence with a lightweight **MLP decoder**. 
+ The encoder incorporates **positional embeddings** to capture local spectral order, while the CLS output is projected to `latent_dim` and **L2-normalized**, yielding embeddings that reside on the **unit hypersphere** — **naturally suited for cosine-based clustering and metrics**. 
 
 ```python
 # === Basic training usage ===
@@ -465,16 +459,16 @@ x_rec2 = mae.reconstruct(x, n_mask=16)
 * **Encoder (`ChemoEncoder`):** transforms only visible tokens + CLS; outputs **L2-normalized** latent `(B, latent_dim)`. 
 * **Decoder (`ChemoDecoderMLP`):** small MLP that reconstructs `(B, L)`; **loss computed externally**, typically on masked regions. 
 * **Positional encoding:** choose **learnable** or **fixed sinusoidal** embeddings. 
-* **APIs:** `forward(x, visible_mask=None, *, n_mask=None) → (x_rec, z, visible_mask)`;
-  `encode(x, visible_mask) → z`; `reconstruct(x, visible_mask=None, *, n_mask=None) → x_rec`;
-  `make_visible(batch_size, *, n_mask=None) → visible_mask`. 
+* **APIs:** 
+  * `forward(x, visible_mask=None, *, n_mask=None) → (x_rec, z, visible_mask)`
+  * `encode(x, visible_mask) → z`
+  * `reconstruct(x, visible_mask=None, *, n_mask=None) → x_rec`
+  * `make_visible(batch_size, *, n_mask=None) → visible_mask`
 * **Cosine-friendly latents:** unit-sphere embeddings pair well with **CosineKMeans / vMF Mixture** and UMAP/t-SNE (`metric="cosine"`). 
-* **Training-agnostic:** no loss inside the module; works with MSE/Huber etc.; AMP (bf16/fp16) via external `autocast`. 
 
 **When to Use**
 
 * Learning **geometry-aware spectral embeddings** from SNV/L2-normalized spectra for clustering, retrieval, or downstream supervised tasks.
-* Replacing image-patch MAE with a **1D block-masking** variant tailored to spectroscopy workflows. 
 </details>
 
 
@@ -489,7 +483,7 @@ x_rec2 = mae.reconstruct(x, n_mask=16)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/training/optim.py)
 
 `build_optimizer` and `build_scheduler` are utility functions designed to construct a **standardized optimization pipeline** for Transformer-style models such as **ChemoMAE**. <br>
-They provide a clean interface for creating a parameter-grouped **AdamW optimizer** (with weight-decay exclusions) and a **linear-warmup → cosine-decay learning-rate scheduler**, ensuring stable and smooth training dynamics for spectral MAE models.
+They provide a simple and consistent API for creating a parameter-grouped **AdamW optimizer** (with weight-decay exclusions) and a **linear-warmup → cosine-decay learning-rate scheduler**, ensuring stable and smooth training dynamics for spectral MAE models.
 
 ```python
 # === Basic usage (ChemoMAE training) ===
@@ -542,16 +536,10 @@ for epoch in range(100):
 * **Linear warmup:**
   Gradually ramps up LR during `warmup_epochs` to avoid instability in early training.
 
-* **Framework-agnostic design:**
-  Integrates seamlessly with AMP/bf16/fp16 workflows; compatible with `Trainer` utilities in ChemoMAE.
-
-* **Clean API:**
-  `build_optimizer(model, **kwargs) → torch.optim.AdamW`
-  `build_scheduler(optimizer, steps_per_epoch, epochs, **kwargs) → torch.optim.lr_scheduler.LambdaLR`
 
 **When to Use**
 
-* Training spectral Transformer models (e.g., ChemoMAE, DeepCluster) requiring **cosine annealing** and **warmup scheduling**.
+* Training spectral Transformer models (e.g., ChemoMAE) requiring **cosine annealing** and **warmup scheduling**.
 * Any experiment needing **stable early convergence** and **smooth LR decay** under weight-decay-aware optimization.
 
 ---
@@ -562,7 +550,7 @@ for epoch in range(100):
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/training/trainer.py)
 
 `TrainerConfig` and `Trainer` together form the **core training engine** of ChemoMAE. <br>
-They provide a unified and resilient loop for **masked reconstruction training**, with full support for **AMP (bf16/fp16)**, **TF32 acceleration**, **EMA parameter tracking**, **gradient clipping**, and **checkpointing / resume**. <br>
+They provide a training loop for **masked reconstruction training**, with full support for **AMP (bf16/fp16)**, **TF32 acceleration**, **EMA parameter tracking**, **gradient clipping**, and **checkpointing / resume**. <br>
 Training and validation history are stored automatically as JSON, enabling reproducible and resumable experiments.
 
 
@@ -575,11 +563,20 @@ from chemomae.training.trainer import Trainer, TrainerConfig
 # 1) Model and configuration
 model = ChemoMAE(seq_len=256, latent_dim=64, n_blocks=32, n_mask=24)
 cfg = TrainerConfig(
-    out_dir="runs/chemo_mae",
-    amp=True, amp_dtype="bf16",
-    use_ema=True, ema_decay=0.999,
-    loss_type="mse", reduction="mean",
-    early_stop_patience=20, resume_from="auto"
+    out_dir = "runs",
+    device = "cuda",
+    amp = True,
+    amp_dtype = "bf16",  # "bf16" | "fp16"
+    enable_tf32 = False,
+    grad_clip = 1.0,
+    use_ema = True,
+    ema_decay = 0.999,
+    loss_type = "mse",   # "sse" | "mse"
+    reduction = "mean",  # for sse/mse
+    early_stop_patience = 20,
+    early_stop_start_ratio = 0.5,
+    early_stop_min_delta = 0.0,
+    resume_from = "auto"
 )
 
 # 2) Optimizer and scheduler
@@ -630,7 +627,7 @@ print("Best validation:", history["best"])
 
 * For **masked reconstruction** training of 1D spectral MAE models (e.g., ChemoMAE).
 * When requiring **precision control**, **EMA stabilization**, or **reproducible checkpoints**.
-* Suitable for self-supervised pretraining and downstream fine-tuning of spectral encoders.
+* Suitable for self-supervised pretraining.
 
 ---
 
@@ -721,13 +718,11 @@ Z_torch = Extractor(model, cfg)(loader)   # -> torch.Tensor; also writes "latent
 * **All-visible encoding (deterministic):** builds an all-ones mask `(B, L)` and calls `model.encode(x, visible)`; no randomness from masking. 
 * **AMP inference:** optional `bf16`/`fp16` autocast on CUDA (`torch.amp.autocast`). 
 * **Flexible I/O:** return **Torch** or **NumPy** (`return_numpy`), and **save** to `.npy` (via `np.save`) or others via `torch.save`. Saving and return formats are **independent**. 
-* **CPU collation:** batches are encoded on device, then moved to **CPU** and concatenated safely. 
 * **Simple config:** `device`, `amp`, `amp_dtype`, `save_path`, `return_numpy`. 
 
 **When to Use**
 
 * To obtain **unit-sphere latents** (from ChemoMAE’s encoder) for **clustering** (CosineKMeans, vMF mixture) or **visualization** (UMAP/t-SNE with `metric="cosine"`). 
-* For **reproducible downstream experiments** where random masking would confound features; all-visible extraction ensures **consistent embeddings** across runs. 
 
 </details>
 
@@ -742,8 +737,9 @@ Z_torch = Extractor(model, cfg)(loader)   # -> torch.Tensor; also writes "latent
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/clustering/cosine_kmeans.md)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/clustering/cosine_kmeans.py)
 
-`CosineKMeans` implements **hyperspherical k-means** with cosine similarity: E-step assigns by maximum cosine; M-step updates centroids as **L2-normalized means**. It supports **k-means++ initialization**, **streaming CPU→GPU** for large datasets, and keeps centroids on the **unit sphere**. <br>
-The objective reported as `inertia_` is the mean cosine dissimilarity ( $`\mathrm{mean}(1-\cos)`$ ). `elbow_ckmeans` sweeps ($`K=1..k_{\max}`$) and selects an elbow via **curvature**.  
+`CosineKMeans` implements **hyperspherical k-means** with cosine similarity: E-step assigns by maximum cosine; M-step updates centroids as **L2-normalized means**. <br>
+It supports **k-means++ initialization**, **streaming CPU→GPU** for large datasets, and keeps centroids on the **unit sphere**. <br>
+The objective reported as `inertia_` is the mean cosine dissimilarity ($`\mathrm{mean}(1-\cos)`$). `elbow_ckmeans` sweeps ($`K=1..k_{\max}`$) and selects an elbow via **curvature**.  
 
 ```python
 # === Basic usage (fit → predict) ===
@@ -780,13 +776,13 @@ print("Elbow K:", optimal_k)
 * **k-means++ init:** with optional squared-distance variant; deterministic via `random_state`. 
 * **Streaming (CPU→GPU):** `chunk>0` enables large-N clustering with bounded VRAM; also supported in `predict` and elbow sweep. 
 * **Precision policy:** computations run in **fp32** internally (even with half/bf16 inputs). 
-* **Empty clusters:** reinitialize by stealing **farthest samples** to keep (K) active. 
+* **Empty clusters:** reinitialize by stealing **farthest samples** to keep K active. 
 * **Elbow selection:** `elbow_ckmeans` returns `(k_list, inertias, optimal_k, elbow_idx, kappa)` using a **curvature-based** rule.  
 
 **When to Use**
 
 * Clustering **unit-sphere embeddings** (e.g., SNV-processed spectra or **ChemoMAE** latents) where **cosine geometry** is appropriate. 
-* **Model selection** of (K) with an automatic, curvature-based elbow on large datasets (optionally with streaming).  
+* **Model selection** of K with an automatic, curvature-based elbow on large datasets (optionally with streaming).  
 
 ---
 
@@ -795,7 +791,8 @@ print("Elbow K:", optimal_k)
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/clustering/vmf_mixture.md)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/clustering/vmf_mixture.py)
 
-`VMFMixture` fits a **von Mises–Fisher mixture** on the **unit hypersphere** ($`S^{d-1}`$) using **EM**. Inputs are internally **L2-normalized**, mean directions are kept **unit-norm**, and concentrations ($`\kappa`$) are updated from the **resultant length**. The implementation includes **torch-only** stable approximations for Bessel terms ( $`\log I_\nu(\kappa)`$, $`\frac{I_{\nu+1}(\kappa)}{I_\nu(\kappa)}`$ ) and supports **chunked E-steps** for CPU→GPU streaming at large $`N`$. <br>
+`VMFMixture` fits a von Mises–Fisher mixture model on the unit hypersphere using EM. <br>
+Automatically normalizes inputs, enforces unit-norm means, estimates $\kappa$ from resultant lengths, and provides stable torch-only Bessel approximations with chunked E-steps. <br>
 `elbow_vmf` sweeps $`K=1..k_{max}`$ and selects an elbow via **curvature**, using **BIC** or **mean NLL** as the score.  
 
 ```python
@@ -876,15 +873,14 @@ s_big = silhouette_samples_cosine_gpu(X_t, y_t, device="cuda", chunk=1_000_000)
 **Key Features**
 
 * **Cosine distance** only: internally computes $`1-\cos`$ after row-wise L2 normalization (zero vectors handled safely). 
-* **GPU-vectorized O(NK)** evaluation with optional **chunking** for $`b_i`$ to reduce peak VRAM. 
+* **GPU-vectorized** evaluation with optional **chunking** for $`b_i`$ to reduce peak VRAM. 
 * **API parity** with `sklearn.metrics`: `silhouette_samples` & `silhouette_score` drop-in, specialized for cosine. 
-* **Robust edge cases**: singleton clusters → 0; non-consecutive labels are remapped; zero rows yield distance 1. 
 * **Precision control**: supports `float16`/`bfloat16`/`float32` on GPU; final mean computed in `float32`. 
 
 **When to Use**
 
-* Validating clusters from **CosineKMeans** / **vMFMixture** on **unit-sphere** or SNV/L2-normalized embeddings. 
-* **Model selection**: compare mean silhouette across candidate (K) or algorithms under cosine geometry. 
+* Validating clusters from **CosineKMeans** / **vMFMixture** on **unit-sphere**. 
+* **Model selection**: compare mean silhouette across candidate K or algorithms under cosine geometry. 
 </details>
 
 

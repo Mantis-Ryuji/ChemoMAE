@@ -1,12 +1,5 @@
 ## To do
 
-* **README.md 充実**
-
-  * プロジェクト概要、使用方法、API 例、研究背景を追記。
-    👉 PyPI ページは README.md がそのまま表示されるので、最小限の「インストール」「import 確認」「簡単なコード例」を必ず入れる。
-  * PyPI 向けに最小限のインストール方法・サンプルコードを入れる。
-  * バッジ（PyPI version / Python versions / License）を追加。
-
 * **Secrets 登録（GitHub → Settings → Secrets → Actions）**
 
   * `TEST_PYPI_API_TOKEN`（TestPyPI の project-scoped token）
