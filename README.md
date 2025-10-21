@@ -434,9 +434,14 @@ import torch
 from chemomae.models import ChemoMAE
 
 mae = ChemoMAE(
-    seq_len=256, latent_dim=64,
-    d_model=256, nhead=4, num_layers=4, dim_feedforward=1024,
-    n_blocks=32, n_mask=24,  # high mask ratio encourages contextual learning
+    seq_len=256, 
+    latent_dim=64,
+    d_model=256, 
+    nhead=4, 
+    num_layers=4, 
+    dim_feedforward=1024,
+    n_blocks=32, 
+    n_mask=16
 )
 
 x = torch.randn(8, 256)              # (B, L)
@@ -643,7 +648,8 @@ from chemomae.training.tester import Tester, TesterConfig
 cfg = TesterConfig(
     out_dir="runs",
     device="cuda",
-    amp=True, amp_dtype="bf16",
+    amp=True, 
+    amp_dtype="bf16",
     loss_type="mse",          # or "sse"
     reduction="mean",         # "sum" | "mean" | "batch_mean"
 )
@@ -693,7 +699,8 @@ from chemomae.training.extractor import Extractor, ExtractorConfig
 
 cfg = ExtractorConfig(
     device="cuda",   # "cuda" or "cpu"
-    amp=True, amp_dtype="bf16",
+    amp=True, 
+    amp_dtype="bf16",
     return_numpy=True,   # return np.ndarray instead of torch.Tensor
     save_path=None       # don't save to disk
 )
