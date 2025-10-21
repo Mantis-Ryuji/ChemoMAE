@@ -91,7 +91,6 @@ mae = ChemoMAE(
 **Methods**
 
 * `forward(x, visible_mask=None, *, n_mask=None)` → `(x_recon, z, visible_mask)`
-* `encode(x, visible_mask)` → `z`
 * `reconstruct(x, visible_mask=None, *, n_mask=None)` → `x_recon`
 * `make_visible(batch_size, *, n_mask=None, device=None)` → `visible_mask`
 
@@ -114,14 +113,6 @@ x_recon, z, visible = mae(x)
 # Loss: reconstruction error only on masked positions
 loss = ((x_recon - x) ** 2)[~visible].sum() / x.size(0)
 loss.backward()
-```
-
-### Feature extraction (all visible)
-
-```python
-visible = torch.ones(8, 256, dtype=torch.bool)
-z = mae.encode(x, visible)
-# z is L2‑normalized and ready for cosine clustering
 ```
 
 ### Downstream tasks

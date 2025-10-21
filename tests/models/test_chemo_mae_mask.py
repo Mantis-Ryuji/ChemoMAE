@@ -31,7 +31,7 @@ def test_encoder_accepts_visible_mask_from_make_block_mask():
 
     x = torch.randn(B, L)
     visible_mask = model.make_visible(B)
-    z = model.encode(x, visible_mask)
+    z = model.encoder(x, visible_mask)
 
     assert z.shape == (B, 10)
     norms = z.norm(dim=1)

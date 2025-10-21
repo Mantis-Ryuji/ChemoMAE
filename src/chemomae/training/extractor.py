@@ -38,7 +38,7 @@ class ExtractorConfig:
 
     Notes
     -----
-    - `Extractor` は常に **全可視** で `model.encode(x, visible)` を呼び出すため、
+    - `Extractor` は常に **全可視** で `model.encoder(x, visible)` を呼び出すため、
       乱数マスクに依存しない **決定的な特徴抽出** を行う。
     - 保存と返却形式は独立：`save_path=".npy"` かつ `return_numpy=False` のような組み合わせも可。
     """
@@ -55,7 +55,7 @@ class Extractor:
 
     概要
     ----
-    - `ChemoMAE.encode` を **全可視マスク (visible_mask=True)** で呼び出し、
+    - `ChemoMAE.encoder` を **全可視マスク (visible_mask=True)** で呼び出し、
       潜在表現 Z を一括で抽出する。
     - 推論時は AMP (bf16/fp16) に対応し、結果は CPU に集約される。
     - `ExtractorConfig.save_path` が指定されていれば自動保存される。
@@ -106,7 +106,7 @@ class Extractor:
                 visible_mask = torch.ones(B, L, dtype=torch.bool, device=self.device)
 
                 with self._autocast():
-                    z = self.model.encode(x, visible_mask)  # (B, D)
+                    z = self.model.encoder(x, visible_mask)  # (B, D)
 
                 feats.append(z.detach().cpu())
 

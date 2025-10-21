@@ -448,7 +448,7 @@ loss.backward()
 
 # === Feature extraction (all visible) ===
 visible_all = torch.ones_like(visible, dtype=torch.bool)
-z_all = mae.encode(x, visible_all)   # L2-normalized latent, ready for cosine metrics
+z_all = mae.encoder(x, visible_all)   # L2-normalized latent, ready for cosine metrics
 
 # === Reconstruction-only API ===
 x_rec2 = mae.reconstruct(x, n_mask=16)
@@ -460,11 +460,6 @@ x_rec2 = mae.reconstruct(x, n_mask=16)
 * **Encoder (`ChemoEncoder`):** transforms only visible tokens + CLS; outputs **L2-normalized** latent `(B, latent_dim)`. 
 * **Decoder (`ChemoDecoderMLP`):** small MLP that reconstructs `(B, L)`; **loss computed externally**, typically on masked regions. 
 * **Positional encoding:** choose **learnable** or **fixed sinusoidal** embeddings. 
-* **APIs:** 
-  * `forward(x, visible_mask=None, *, n_mask=None) → (x_rec, z, visible_mask)`
-  * `encode(x, visible_mask) → z`
-  * `reconstruct(x, visible_mask=None, *, n_mask=None) → x_rec`
-  * `make_visible(batch_size, *, n_mask=None) → visible_mask`
 * **Cosine-friendly latents:** unit-sphere embeddings pair well with **CosineKMeans / vMF Mixture** and UMAP/t-SNE (`metric="cosine"`). 
 
 **When to Use**
@@ -710,13 +705,13 @@ cfg = ExtractorConfig(device="cuda", save_path="latent.npy", return_numpy=False)
 Z_torch = Extractor(model, cfg)(loader)   # -> torch.Tensor; also writes "latent.npy"
 
 # === Notes ===
-# * The extractor builds an all-ones visible mask and calls model.encode(x, visible).
+# * The extractor builds an all-ones visible mask and calls model.encoder(x, visible).
 # * Results are concatenated on CPU; AMP reduces VRAM/time on CUDA.
 ```
 
 **Key Features**
 
-* **All-visible encoding (deterministic):** builds an all-ones mask `(B, L)` and calls `model.encode(x, visible)`; no randomness from masking. 
+* **All-visible encoding (deterministic):** builds an all-ones mask `(B, L)` and calls `model.encoder(x, visible)`; no randomness from masking. 
 * **AMP inference:** optional `bf16`/`fp16` autocast on CUDA (`torch.amp.autocast`). 
 * **Flexible I/O:** return **Torch** or **NumPy** (`return_numpy`), and **save** to `.npy` (via `np.save`) or others via `torch.save`. Saving and return formats are **independent**. 
 * **Simple config:** `device`, `amp`, `amp_dtype`, `save_path`, `return_numpy`. 

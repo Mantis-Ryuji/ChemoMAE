@@ -180,7 +180,7 @@ class ChemoEncoder(nn.Module):
       Transformer には padding mask (src_key_padding_mask) を与えて整合性を確保。
     - 出力 z は L2 正規化済みなので、コサイン類似度に直ちに利用可能。
     - `ChemoMAE` の `forward` からは visible_mask を自動生成するため、
-      通常の利用者は `encode` を直接呼び出す場合のみ visible_mask を指定すればよい。
+      通常の利用者は `encoder` を直接呼び出す場合のみ visible_mask を指定すればよい。
 
     例
     --
@@ -344,8 +344,6 @@ class ChemoMAE(nn.Module):
     --------
     - **forward(x, visible_mask=None, *, n_mask=None)**  
       再構成と潜在表現を返す。visible_mask が None の場合、n_mask に基づき内部で可視マスクを生成。
-    - **encode(x, visible_mask)**  
-      可視マスクを与えて潜在表現 z を返す。
     - **reconstruct(x, visible_mask=None, *, n_mask=None)**  
       可視マスクを与えて再構成を返す。visible_mask=None の場合は自動生成。
     - **make_visible(batch_size, *, n_mask=None)**  
@@ -372,7 +370,7 @@ class ChemoMAE(nn.Module):
 
     特徴抽出（全可視）:
     >>> visible_mask = torch.ones(8, 256, dtype=torch.bool)
-    >>> z_all = mae.encode(x, visible_mask)
+    >>> z_all = mae.encoder(x, visible_mask)
 
     下流タスク:
     - CosineKMeans, vMF Mixture などコサイン距離ベースのクラスタリング
@@ -485,11 +483,6 @@ class ChemoMAE(nn.Module):
             device=device,
         )
         return ~masked
-
-    def encode(self, x: torch.Tensor, visible_mask: torch.Tensor) -> torch.Tensor:
-        """可視マスク (True=使う) を与えて潜在表現 z を返す。"""
-        self._check_shapes(x, visible_mask)
-        return self.encoder(x, visible_mask)
 
     def reconstruct(
         self,

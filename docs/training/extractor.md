@@ -64,7 +64,7 @@ Z = extractor(loader)
 
   * Moves inputs to device.
   * Builds an all-ones visible mask `(B, L)`.
-  * Calls `model.encode(x, visible_mask)` to compute latent features.
+  * Calls `model.encoder(x, visible_mask)` to compute latent features.
   * Collects and concatenates results across batches.
 * Returns either a Torch tensor `(N, D)` or NumPy array, depending on `return_numpy`.
 
