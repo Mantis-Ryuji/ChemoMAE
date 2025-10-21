@@ -54,7 +54,8 @@ pip install chemomae
 
 Import the SNVscaler. <br>
 SNV standardizes each spectrum to have zero mean and unit variance. This removes baseline and scaling effects while preserving the spectral shape (direction).
-After SNV, all spectra have an identical L2 norm of sqrt(L - 1) (e.g., for 256-dimensional spectra, ||x_snv||₂ = √255 ≈ 15.97) <br>
+After SNV, all spectra have an identical L2 norm of $`sqrt{L - 1}`$ <br>
+(e.g., for 256-dimensional spectra, ||x_snv||₂ = √255 ≈ 15.97) <br>
 Hence, SNV maps spectra onto a constant-radius hypersphere.
 
 ```python
@@ -322,7 +323,7 @@ labels = vmf.predict(latent_test, chunk=5000000)
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/preprocessing/snv.md)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/preprocessing/snv.py)
 
-`SNVScaler` performs **row-wise mean subtraction and variance scaling** — each spectrum is centered and divided by its **unbiased standard deviation** (`ddof=1`). <br>
+`SNVScaler` performs **row-wise mean subtraction and variance scaling** — each spectrum is centered and divided by its **unbiased standard deviation** (`ddof=1`). 
 It is a **stateless** transformer supporting both **NumPy** and **PyTorch**, automatically preserving the original **framework, device, and dtype**. <br>
 When `transform_stats=True`, it returns `(Y, mu, sd)`, where `sd` already includes `eps` and can be directly used for reconstruction. <br>
 After SNV, all rows have **zero mean** and **unit variance**, producing a constant L2 norm of $`\sqrt{L-1}`$ and thus mapping spectra onto a constant-radius **hypersphere** — ideal for cosine-based clustering (e.g., **CosineKMeans**, **vMFMixture**).
@@ -737,9 +738,10 @@ Z_torch = Extractor(model, cfg)(loader)   # -> torch.Tensor; also writes "latent
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/clustering/cosine_kmeans.md)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/clustering/cosine_kmeans.py)
 
-`CosineKMeans` implements **hyperspherical k-means** with cosine similarity: E-step assigns by maximum cosine; M-step updates centroids as **L2-normalized means**. <br>
+`CosineKMeans` implements **hyperspherical k-means** with cosine similarity: E-step assigns by maximum cosine; M-step updates centroids as **L2-normalized means**. 
 It supports **k-means++ initialization**, **streaming CPU→GPU** for large datasets, and keeps centroids on the **unit sphere**. <br>
-The objective reported as `inertia_` is the mean cosine dissimilarity ($`\mathrm{mean}(1-\cos)`$). `elbow_ckmeans` sweeps ($`K=1..k_{\max}`$) and selects an elbow via **curvature**.  
+The objective reported as `inertia_` is the mean cosine dissimilarity ($`\mathrm{mean}(1-\cos)`$). <br>
+`elbow_ckmeans` sweeps ($`K=1..k_{\max}`$) and selects an elbow via **curvature**.  
 
 ```python
 # === Basic usage (fit → predict) ===
