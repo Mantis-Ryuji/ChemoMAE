@@ -54,7 +54,7 @@ pip install chemomae
 
 Import the SNVscaler. <br>
 SNV standardizes each spectrum to have zero mean and unit variance. This removes baseline and scaling effects while preserving the spectral shape (direction).
-After SNV, all spectra have an identical L2 norm of $`sqrt{L - 1}`$ <br>
+After SNV, all spectra have an identical L2 norm of $`\sqrt{L - 1}`$ <br>
 (e.g., for 256-dimensional spectra, ||x_snv||₂ = √255 ≈ 15.97) <br>
 Hence, SNV maps spectra onto a constant-radius hypersphere.
 
