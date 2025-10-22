@@ -125,7 +125,6 @@ loss.backward()
 
 ## Design Notes
 
-* **High mask ratio (≈75%)**: Following MAE practice, most blocks are masked to force contextual learning.
 * **L2‑normalized latent:** All embeddings lie on a hypersphere, directly usable for cosine metrics.
 * **Separation of concerns:** Loss and training logic are external. This keeps ChemoMAE flexible for different objectives.
 * **Compatibility:** AMP (bf16/fp16) supported via external `torch.autocast`. EMA and checkpointing handled in training utilities.

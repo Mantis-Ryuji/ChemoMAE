@@ -16,9 +16,8 @@
 
 Traditional chemometrics has long relied on **linear methods** such as PCA and PLS.
 These remain foundational, but they often struggle to capture **nonlinear structure** and **high-dimensional variability** in modern spectral datasets.<br>
-**ChemoMAE** is designed to respect the **hyperspherical geometry** induced by the Standard Normal Variate (SNV) transformation —
-a fundamental preprocessing step in chemometrics that normalizes each spectrum to zero mean and unit variance,
-placing all samples on a **hypersphere of constant norm**. <br>
+**ChemoMAE** is designed to respect the **hyperspherical geometry** induced by the Standard Normal Variate transformation. 
+This fundamental chemometric preprocessing step normalizes each spectrum to zero mean and unit variance, thereby placing all samples on a **hypersphere of constant norm**. <br>
 ChemoMAE learns representations consistent with this geometry and preserves it across downstream tasks.
 
 ### 1. Extending Chemometrics with Deep Learning
@@ -31,7 +30,7 @@ This design aligns naturally with the hyperspherical geometry induced by SNV, yi
 
 ### 2. Hyperspherical Geometry Toolkit (for downstream use)
 
-The embeddings, being L2-normalized, reside on a **unit hypersphere**. Built-in clustering modules— **Cosine-KMeans** and **vMFMixture** — leverage this geometry natively, producing clusters that faithfully capture **spectral-shape** variation after SNV preprocessing.
+The embeddings, being L2-normalized, reside on a **unit hypersphere**. Built in clustering modules — **Cosine-KMeans** and **vMFMixture** — leverage this geometry natively, producing clusters that faithfully capture **spectral-shape** variation.
 
 ---
 

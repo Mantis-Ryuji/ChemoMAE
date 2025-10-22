@@ -244,10 +244,17 @@ class Trainer:
         }
 
     def save_checkpoint(self, epoch: int, *, is_best: bool):
+        state = self._checkpoint_state(epoch)
         last = self.ckpt_dir / "last.pt"
-        torch.save(self._checkpoint_state(epoch), last.as_posix())
+        tmp_last = last.with_suffix(".pt.tmp")
+        torch.save(state, tmp_last.as_posix())
+        tmp_last.replace(last)
+
         if is_best:
-            torch.save(self._checkpoint_state(epoch), (self.ckpt_dir / "best.pt").as_posix())
+            best = self.ckpt_dir / "best.pt"
+            tmp_best = best.with_suffix(".pt.tmp")
+            torch.save(state, tmp_best.as_posix())
+            tmp_best.replace(best)
 
     def save_weights_only(self, filename: str = "best_model.pt"):
         torch.save(self.model.state_dict(), (self.out_dir / filename).as_posix())
