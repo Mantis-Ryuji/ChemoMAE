@@ -11,7 +11,7 @@ def _tiny_model(L=16):
     return ChemoMAE(
         seq_len=L, d_model=16, nhead=4, num_layers=1, dim_feedforward=32,
         dropout=0.0, use_learnable_pos=True, latent_dim=8,
-        dec_hidden=16, dec_dropout=0.0, n_blocks=4, n_mask=1
+        n_blocks=4, n_mask=1
     )
 
 

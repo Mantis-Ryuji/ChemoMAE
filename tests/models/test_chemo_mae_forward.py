@@ -15,8 +15,6 @@ def test_mae_forward_shapes_and_types():
         dropout=0.1,
         use_learnable_pos=True,
         latent_dim=16,
-        dec_hidden=64,
-        dec_dropout=0.0,
         n_blocks=8,
         n_mask=3,
     )

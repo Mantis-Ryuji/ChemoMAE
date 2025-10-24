@@ -117,7 +117,7 @@ def plot_elbow_ckm(k_list, inertias, optimal_k, elbow_idx):
     plt.figure(figsize=(6, 4))
     plt.plot(k_list, inertias, "o-", label="Mean Cosine Inertia")
     plt.scatter(k_list[elbow_idx], inertias[elbow_idx], s=120,
-                label=f"Elbow: k={optimal_k}, inertia={inertias[elbow_idx]:.5f}")
+                label=f"Elbow: k={optimal_k}, inertia={inertias[elbow_idx]:.4f}")
     plt.axvline(optimal_k, linestyle="--", linewidth=1.5, alpha=0.7)
     plt.xlabel("Number of Clusters (k)")
     plt.ylabel("Mean Cosine Inertia")

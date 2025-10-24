@@ -208,7 +208,7 @@ class ChemoEncoder(nn.Module):
         super().__init__()
         self.seq_len = int(seq_len)
 
-        self.token_proj = nn.Linear(1, d_model)
+        self.token_proj = nn.Linear(1, d_model, bias=False)
         enc_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
@@ -234,7 +234,7 @@ class ChemoEncoder(nn.Module):
                 persistent=False,
             )
 
-        self.to_latent = nn.Linear(d_model, latent_dim)
+        self.to_latent = nn.Linear(d_model, latent_dim, bias=False)
 
     def forward(self, x: torch.Tensor, visible_mask: torch.Tensor) -> torch.Tensor:
         assert x.dim() == 2, "x must be (B, L)"
@@ -278,29 +278,24 @@ class ChemoEncoder(nn.Module):
 
 class ChemoDecoderMLP(nn.Module):
     r"""
-    ChemoDecoderMLP: 潜在表現 z から 1D 系列 x を再構成する MLP デコーダ。
+    ChemoDecoderMLP: 潜在表現 z から 1D 系列 x を再構成する **線形デコーダ**。
 
     概要
     ----
-    - 入力: 潜在表現 z (B, D)  ※ D = latent_dim
-    - 出力: 再構成系列 x_recon (B, L)  ※ L = seq_len
-    - 構成: Linear → GELU → Dropout → Linear
+    - 入力: 潜在表現 z (B, D) ※ D = latent_dim
+    - 出力: 再構成系列 x_recon (B, L) ※ L = seq_len
+    - 構成: Linear（単層線形写像）
 
-    使いどころ
-    ----------
-    - MAE のエンコーダが出した潜在表現 `z` を、元の系列長 `seq_len` に写像。
-    - 前処理（例: SNV）をしている場合、**同じ前処理空間**での再構成となる点に注意。
-
+    特徴
+    ----
+    - デコーダは非線形変換を行わず、元の前処理空間（例: SNV空間）へ射影する。
+    
     Parameters
     ----------
     seq_len : int
         出力系列長 L（波長チャンネル数など）。
     latent_dim : int, default=64
         潜在表現の次元 D。エンコーダ出力と一致させること。
-    hidden_dim : int, default=256
-        中間層の幅。大きいほど表現力↑・計算/VRAM↑。
-    dropout : float, default=0.1
-        中間層に挟む Dropout 率。
 
     Shapes
     ------
@@ -311,20 +306,14 @@ class ChemoDecoderMLP(nn.Module):
 
     例
     --
-    >>> dec = ChemoDecoderMLP(seq_len=256, latent_dim=64, hidden_dim=256, dropout=0.1)
+    >>> dec = ChemoDecoderMLP(seq_len=256, latent_dim=64)
     >>> z = torch.randn(8, 64)
-    >>> x_rec = dec(z)                # 形状は (8, 256)
+    >>> x_rec = dec(z)   # 出力形状: (8, 256)
     """
 
-    def __init__(self, *, seq_len: int, latent_dim: int = 64, hidden_dim: int = 256, dropout: float = 0.1) -> None:
+    def __init__(self, *, seq_len: int, latent_dim: int = 64) -> None:
         super().__init__()
-        self.seq_len = int(seq_len)
-        self.net = nn.Sequential(
-            nn.Linear(latent_dim, hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, self.seq_len),
-        )
+        self.net = nn.Linear(latent_dim, seq_len, bias=False)
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         """潜在表現 z から再構成系列 x_recon を返す。"""
@@ -420,9 +409,6 @@ class ChemoMAE(nn.Module):
         dropout: float = 0.1,
         use_learnable_pos: bool = True,
         latent_dim: int = 64,
-        # decoder
-        dec_hidden: int = 256,
-        dec_dropout: float = 0.1,
         # masking
         n_blocks: int = 32,
         n_mask: int = 16,
@@ -443,7 +429,7 @@ class ChemoMAE(nn.Module):
             use_learnable_pos=use_learnable_pos,
         )
         self.decoder = ChemoDecoderMLP(
-            seq_len=self.seq_len, latent_dim=latent_dim, hidden_dim=dec_hidden, dropout=dec_dropout
+            seq_len=self.seq_len, latent_dim=latent_dim
         )
 
     def make_visible(

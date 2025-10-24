@@ -110,8 +110,6 @@ model = ChemoMAE(
     dropout=0.1,
     use_learnable_pos=True,  # learnable positional encoding
     latent_dim=64,           # latent vector dimension
-    dec_hidden=256,          # decoder hidden size
-    dec_dropout=0.1,
     n_blocks=32,             # number of total blocks
     n_mask=16                # number of masked blocks per sample
 )
@@ -424,7 +422,7 @@ X_down = cosine_fps_downsample(X_snv, ratio=0.1)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/models/chemo_mae.py)
 
  `ChemoMAE` is a **Masked Autoencoder for 1D spectra**. 
- It applies **block-wise masking** along the spectral axis, encodes only the **visible tokens + [CLS]**, and reconstructs the full sequence with a lightweight **MLP decoder**. 
+ It applies **block-wise masking** along the spectral axis, encodes only the **visible tokens + [CLS]**, and reconstructs the full sequence with a linear projection decoder. 
  The encoder incorporates **positional embeddings** to capture local spectral order, while the CLS output is projected to `latent_dim` and **L2-normalized**, yielding embeddings that reside on the **unit hypersphere** — **naturally suited for cosine-based clustering and metrics**. 
 
 ```python
@@ -462,7 +460,7 @@ x_rec2 = mae.reconstruct(x, n_mask=16)
 
 * **Block-wise masking:** split length-`L` spectra into `n_blocks`; hide `n_mask` blocks per sample. 
 * **Encoder (`ChemoEncoder`):** transforms only visible tokens + CLS; outputs **L2-normalized** latent `(B, latent_dim)`. 
-* **Decoder (`ChemoDecoderMLP`):** small MLP that reconstructs `(B, L)`; **loss computed externally**, typically on masked regions. 
+* **Decoder (`ChemoDecoderMLP`):** linear projection decoder that reconstructs `(B, L)`; **loss computed externally**, typically on masked regions. 
 * **Positional encoding:** choose **learnable** or **fixed sinusoidal** embeddings. 
 * **Cosine-friendly latents:** unit-sphere embeddings pair well with **CosineKMeans / vMF Mixture** and UMAP/t-SNE (`metric="cosine"`). 
 

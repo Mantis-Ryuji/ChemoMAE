@@ -18,7 +18,7 @@ ChemoMAE adapts the **Masked Autoencoder (MAE)** framework (He et al., 2022) to 
 
 * **Block‑wise masking:** The sequence of length $L$ is split into `n_blocks`; `n_mask` of them are hidden per sample. This encourages learning robust, context‑aware latent representations.
 * **Encoder:** Transformer encoder operating only on visible tokens plus a prepended [CLS] token. The CLS output is projected to latent_dim and L2-normalized, yielding an embedding constrained to the unit hypersphere. This makes the representation naturally compatible with hyperspherical geometry and cosine-similarity–based clustering.
-* **Decoder:** A lightweight MLP that reconstructs the full spectral sequence of length $`L`$ from the latent embedding. The decoder is used only during training, and the loss is computed on the masked regions.
+* **Decoder:** A linear projection decoder that reconstructs the full spectral sequence of length $`L`$ from the latent embedding. The decoder is used only during training, and the loss is computed on the masked regions.
 
 ---
 
@@ -46,7 +46,7 @@ ChemoMAE adapts the **Masked Autoencoder (MAE)** framework (He et al., 2022) to 
 ### Decoder — `ChemoDecoderMLP`
 
 * Input: latent `(B, latent_dim)`.
-* 2‑layer MLP with GELU + Dropout.
+* Linear Projection Decoder
 * Output: reconstruction `(B, L)`.
 * Lightweight by design: the learning burden is shifted to the encoder.
 
