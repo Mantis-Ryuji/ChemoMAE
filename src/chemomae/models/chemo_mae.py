@@ -284,7 +284,7 @@ class ChemoDecoderMLP(nn.Module):
     ----
     - 入力: 潜在表現 z (B, D)  ※ D = latent_dim
     - 出力: 再構成系列 x_recon (B, L)  ※ L = seq_len
-    - 構成: Linear → GELU → Dropout → Linear → GELU → Dropout → Linear
+    - 構成: Linear → GELU → Dropout → Linear
 
     使いどころ
     ----------
@@ -321,9 +321,6 @@ class ChemoDecoderMLP(nn.Module):
         self.seq_len = int(seq_len)
         self.net = nn.Sequential(
             nn.Linear(latent_dim, hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, self.seq_len),

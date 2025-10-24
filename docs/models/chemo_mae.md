@@ -46,7 +46,7 @@ ChemoMAE adapts the **Masked Autoencoder (MAE)** framework (He et al., 2022) to 
 ### Decoder — `ChemoDecoderMLP`
 
 * Input: latent `(B, latent_dim)`.
-* 3‑layer MLP with GELU + Dropout.
+* 2‑layer MLP with GELU + Dropout.
 * Output: reconstruction `(B, L)`.
 * Lightweight by design: the learning burden is shifted to the encoder.
 
