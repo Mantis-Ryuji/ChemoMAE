@@ -42,28 +42,69 @@ Cosine dissimilarity (1 - similarity).
 
 ---
 
-### `find_elbow_curvature(k_list: List[int], inertia_list: List[float]) -> Tuple[int,int,np.ndarray]`
+### `find_elbow_curvature(k_list: List[int], inertia_list: List[float], *, smooth: bool = True, window_length: int = 5, polyorder: int = 2) -> Tuple[int, int, np.ndarray]`
 
-Estimate optimal cluster count via curvature.
+Estimate optimal cluster count via curvature **with Savitzky–Golay–based derivatives**.
 
 **Steps**
 
-1. Enforce monotone non-increasing inertia: `y = np.minimum.accumulate(y)`.
-2. Normalize $`x`$ and $`y`$ to [0,1].
-3. Compute gradients $`y'`$, $`y''`$.
-4. Curvature:
+1. **Monotonicity**: Enforce non-increasing inertia
 
 ```math
-\kappa = \frac{|y''|}{(1 + (y')^2)^{3/2}}
+y \leftarrow \mathrm{cummin}(y) = \min_{i\le j} y_i
 ```
-5. Ignore endpoints (set to -inf).
-6. Choose `optimal_k = k_list[argmax(κ)]`.
+
+2. **Normalization**: Scale (x,y) to ([0,1]).
+
+```math
+x_n=\dfrac{x-x_{\min}}{x_{\max}-x_{\min}+\varepsilon},\quad
+y_n=\dfrac{y-y_{\min}}{y_{\max}-y_{\min}+\varepsilon}
+```
+
+3. **Savitzky–Golay (S-G)**: If `smooth=True` and $`n\ge 5`$, compute **analytic derivatives** on $`y_n`$.
+   Let $`\Delta x`$ be the median grid spacing of $`x_n`$:
+
+```math
+\Delta x \;=\; \mathrm{median}\!\left(\,\mathrm{diff}(x_n)\,\right)
+```
+
+Then obtain
+
+```math
+\tilde{y}=\mathrm{SG}(y_n;\ \texttt{window\_length},\ \texttt{polyorder},\,\texttt{deriv}=0),\quad
+y'=\mathrm{SG}(y_n;\ \cdots,\,\texttt{deriv}=1,\,\Delta x),\quad
+y''=\mathrm{SG}(y_n;\ \cdots,\,\texttt{deriv}=2,\,\Delta x)
+```
+
+*Small-n safety*: $`\texttt{window\_length}`$ is clipped to the largest odd $`\le \lfloor n/2\rfloor\times2+1`$, and $`\texttt{polyorder} < \texttt{window\_length}`$.
+
+4. **Curvature**:
+
+```math
+\kappa = \frac{|y''|}{\left(1 + (y')^{2}\right)^{3/2}}
+```
+
+5. **Endpoint handling**: Set $`\kappa_0=\kappa_{n-1}=-\infty`$.
+
+6. **Selection**:  $`\texttt{optimal\_k} = k_{\argmax \kappa}`$ , and `elbow_idx = argmax κ`.
+
+**Arguments**
+
+* `k_list`: evaluated cluster counts.
+* `inertia_list`: inertia per K (e.g., mean ($`1-\cos`$)).
+* `smooth` (default True): enable S-G–based derivative computation.
+* `window_length`, `polyorder`: S-G parameters; auto-adjusted for short series.
 
 **Returns**
 
-* `optimal_k`: Chosen cluster count.
-* `elbow_idx`: Index in `k_list`.
-* `kappa`: Array of curvature values.
+* `optimal_k`: chosen cluster count.
+* `elbow_idx`: index in `k_list` where curvature peaks.
+* `kappa`: curvature array (endpoints are $`-\infty`$).
+
+**Notes**
+
+* Using S-G with `deriv=1,2` yields **analytic derivatives of the local polynomial fit**, stabilizing curvature against small wiggles while preserving the elbow shape.
+* If `smooth=False` or $`n<5`$, you may fallback to finite differences for $`y'`$, $`y''`$ on $`(x_n,y_n)`$.
 
 ---
 

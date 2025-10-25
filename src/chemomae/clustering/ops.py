@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+from scipy.signal import savgol_filter
 
 __all__ = [
     "find_elbow_curvature",
@@ -26,56 +27,59 @@ def cosine_dissimilarity(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     return 1.0 - (A @ B.T)
 
 
-def find_elbow_curvature(k_list: List[int], inertia_list: List[float]) -> Tuple[int, int, np.ndarray]:
-    r"""
+def find_elbow_curvature(
+    k_list: List[int],
+    inertia_list: List[float],
+    smooth: bool = True,
+    window_length: int = 5,
+    polyorder: int = 2,
+) -> Tuple[int, int, np.ndarray]:
+    """
     Detect elbow point by curvature on a normalized curve.
-
-    概要
-    ----
-    - k-means の `k_list` と対応する `inertia_list` を入力とし、  
-      正規化曲線の曲率を計算して「折れ曲がり点 (elbow)」を推定する。
-    - 曲率 κ を最大化する点をエルボーとする。
-
-    Parameters
-    ----------
-    k_list : list of int
-        評価したクラスタ数 K のリスト。
-    inertia_list : list of float
-        各 K における inertia 値（例: `mean(1 - cos)`）。
-
-    Returns
-    -------
-    optimal_k : int
-        曲率が最大となるクラスタ数（推奨値）。
-    elbow_idx : int
-        `k_list[elbow_idx] == optimal_k` を満たすインデックス。
-    kappa : np.ndarray, shape (len(k_list),)
-        各点の曲率値（両端は -inf に設定）。
-
-    Notes
-    -----
-    - 前処理として `y = np.minimum.accumulate(y)` により非増加性を強制。
-    - 正規化は x, y を [0, 1] にスケーリング。
-    - 曲率 κ は以下で定義される：
-
-        κ = |y''| / (1 + (y')^2)^(3/2)
-
-    - 先頭と末尾の点は κ を -inf にして無視する。
+    Savitzky–Golay の微分出力（deriv=1,2）を直接用いて κ を計算する。
     """
     x = np.asarray(k_list, dtype=float)
     y = np.asarray(inertia_list, dtype=float)
-    if len(x) < 3:
+    n = len(x)
+    if n < 3:
         raise ValueError("k_list must have length >= 3")
-    # enforce monotone non-increasing
+
+    # 1) 非増加性の強制
     y = np.minimum.accumulate(y)
-    # normalize axes
+
+    # 2) 正規化
     x_n = (x - x.min()) / (x.max() - x.min() + 1e-12)
     y_n = (y - y.min()) / (y.max() - y.min() + 1e-12)
-    dy = np.gradient(y_n, x_n)
-    d2y = np.gradient(dy, x_n)
+
+    # 3) S-G 用のパラメータ調整（小標本セーフティ）
+    #    - 窓長は最大でも n に依存、かつ奇数
+    #    - polyorder < window_length を保証
+    if smooth and n >= 5:
+        wl = min(window_length, (n // 2) * 2 + 1)  # 最大の奇数（≲ n）
+        wl = max(5, wl | 1)                        # 下限5、奇数化
+        po = min(polyorder, wl - 1)
+        po = max(2, po)                            # 下限2（曲率に十分）
+        # 4) サンプリング間隔（正規化 x 上）
+        dx = float(np.median(np.diff(x_n)))
+        if not np.isfinite(dx) or dx <= 0:
+            dx = 1.0
+
+        # 5) S-G で解析的に y', y'' を直接計算（端点は補間モード）
+        #    y_smooth は出力用途がなければ省略可だが、安定のために 0次も一度通す
+        _ = savgol_filter(y_n, window_length=wl, polyorder=po, deriv=0, mode="interp")
+        dy  = savgol_filter(y_n, window_length=wl, polyorder=po, deriv=1, delta=dx, mode="interp")
+        d2y = savgol_filter(y_n, window_length=wl, polyorder=po, deriv=2, delta=dx, mode="interp")
+    else:
+        # フォールバック（S-Gを使わない場合）
+        dy  = np.gradient(y_n, x_n)
+        d2y = np.gradient(dy,  x_n)
+
+    # 6) 曲率 κ = |y''| / (1 + (y')^2)^(3/2)
     kappa = np.abs(d2y) / np.power(1.0 + dy * dy, 1.5)
-    kappa[0] = -np.inf
-    kappa[-1] = -np.inf
+
+    # 7) 端点は無視
+    kappa[0] = kappa[-1] = -np.inf
+
     idx = int(np.argmax(kappa))
     return int(k_list[idx]), idx, kappa
 
