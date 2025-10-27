@@ -460,7 +460,7 @@ x_rec2 = mae.reconstruct(x, n_mask=16)
 
 * **Block-wise masking:** split length-`L` spectra into `n_blocks`; hide `n_mask` blocks per sample. 
 * **Encoder (`ChemoEncoder`):** transforms only visible tokens + CLS; outputs **L2-normalized** latent `(B, latent_dim)`. 
-* **Decoder (`ChemoDecoderMLP`):** linear projection decoder that reconstructs `(B, L)`; **loss computed externally**, typically on masked regions. 
+* **Decoder (`ChemoDecoderLP`):** linear projection decoder that reconstructs `(B, L)`; **loss computed externally**, typically on masked regions. 
 * **Positional encoding:** choose **learnable** or **fixed sinusoidal** embeddings. 
 * **Cosine-friendly latents:** unit-sphere embeddings pair well with **CosineKMeans / vMF Mixture** and UMAP/t-SNE (`metric="cosine"`). 
 

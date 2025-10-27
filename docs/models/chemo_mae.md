@@ -43,7 +43,7 @@ ChemoMAE adapts the **Masked Autoencoder (MAE)** framework (He et al., 2022) to 
 * Processes with a Transformer encoder (`num_layers`, `nhead`, `dim_feedforward`, `dropout`).
 * Output: L2‑normalized latent `(B, latent_dim)`, suitable for cosine‑based metrics.
 
-### Decoder — `ChemoDecoderMLP`
+### Decoder — `ChemoDecoderLP`
 
 * Input: latent `(B, latent_dim)`.
 * Linear Projection Decoder

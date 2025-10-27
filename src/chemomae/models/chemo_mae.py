@@ -8,7 +8,7 @@ import torch.nn.functional as F
 __all__ = [
     "ChemoMAE",
     "ChemoEncoder",
-    "ChemoDecoderMLP",
+    "ChemoDecoderLP",
     "make_block_mask",
     "sinusoidal_positional_encoding",
 ]
@@ -276,9 +276,9 @@ class ChemoEncoder(nn.Module):
         return z
 
 
-class ChemoDecoderMLP(nn.Module):
+class ChemoDecoderLP(nn.Module):
     r"""
-    ChemoDecoderMLP: 潜在表現 z から 1D 系列 x を再構成する **線形デコーダ**。
+    ChemoDecoderLP: 潜在表現 z から 1D 系列 x を再構成する **線形デコーダ**。
 
     概要
     ----
@@ -306,7 +306,7 @@ class ChemoDecoderMLP(nn.Module):
 
     例
     --
-    >>> dec = ChemoDecoderMLP(seq_len=256, latent_dim=64)
+    >>> dec = ChemoDecoderLP(seq_len=256, latent_dim=64)
     >>> z = torch.randn(8, 64)
     >>> x_rec = dec(z)   # 出力形状: (8, 256)
     """
@@ -428,7 +428,7 @@ class ChemoMAE(nn.Module):
             dropout=dropout,
             use_learnable_pos=use_learnable_pos,
         )
-        self.decoder = ChemoDecoderMLP(
+        self.decoder = ChemoDecoderLP(
             seq_len=self.seq_len, latent_dim=latent_dim
         )
 
