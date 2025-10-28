@@ -15,22 +15,22 @@
 ## Why ChemoMAE?
 
 Traditional chemometrics has long relied on **linear methods** such as PCA and PLS.
-These remain foundational, but they often struggle to capture **nonlinear structure** and **high-dimensional variability** in modern spectral datasets.<br>
-**ChemoMAE** is designed to respect the **hyperspherical geometry** induced by the Standard Normal Variate transformation. 
-This fundamental chemometric preprocessing step normalizes each spectrum to zero mean and unit variance, thereby placing all samples on a **hypersphere of constant norm**. <br>
-ChemoMAE learns representations consistent with this geometry and preserves it across downstream tasks.
+While these methods remain foundational, they often struggle to capture the **nonlinear structures** and **high-dimensional variability** present in modern spectral datasets.<br>
+ChemoMAE is designed to respect the **hyperspherical geometry** induced by the Standard Normal Variate (SNV) transformation.
+This core chemometric preprocessing step standardizes each spectrum to zero mean and unit variance, thereby placing all samples on a hypersphere of constant norm.<br>
+ChemoMAE learns representations that are consistent with this geometry and preserves it across downstream tasks.
 
 ### 1. Extending Chemometrics with Deep Learning
 
-A **Transformer-based Masked Autoencoder (MAE)** specialized for **1D spectra** enables flexible, data-driven representation learning.
-We apply **block-wise masking** to SNV-preprocessed spectra, optimizing the **MSE loss** only over the hidden spectral regions.
-The encoder produces **unit-norm embeddings** `z` that capture **directional spectral information**.
-This design aligns naturally with the hyperspherical geometry induced by SNV, yielding representations that are inherently suitable for **cosine similarity** and **hyperspherical clustering**.
-
+A **Transformer-based Masked Autoencoder (MAE)** specialized for **1D spectra** enables flexible, data-driven representation learning.<br>
+We apply block-wise masking to SNV-preprocessed spectra and optimize the **mean squared error (MSE)** only over the masked spectral regions.
+The encoder produces **unit-norm embeddings** `z` that capture **directional spectral features**.
+This architecture naturally aligns with the **hyperspherical geometry** induced by SNV, resulting in representations inherently suited for **cosine similarity** and **hyperspherical clustering**.
 
 ### 2. Hyperspherical Geometry Toolkit (for downstream use)
 
-The embeddings, being L2-normalized, reside on a **unit hypersphere**. Built in clustering modules — **Cosine-KMeans** and **vMFMixture** — leverage this geometry natively, producing clusters that faithfully capture **spectral-shape** variation.
+The embeddings, being L2-normalized, reside on a **unit hypersphere**.
+Built-in clustering modules — **Cosine K-Means** and **vMF Mixture** — leverage this geometry natively, yielding clusters that faithfully capture **spectral shape variations**.
 
 ---
 
@@ -51,8 +51,8 @@ pip install chemomae
 
 #### 1. SNV Preprocessing 
 
-Import the SNVscaler. <br>
-SNV standardizes each spectrum to have zero mean and unit variance. This removes baseline and scaling effects while preserving the spectral shape (direction).
+Import the `SNVscaler`. <br>
+SNV standardizes each spectrum to have zero mean and unit variance. This removes baseline and scaling effects while preserving the spectral shape.
 After SNV, all spectra have an identical L2 norm of $`\sqrt{L - 1}`$ <br>
 (e.g., for 256-dimensional spectra, ||x_snv||₂ = √255 ≈ 15.97) <br>
 Hence, SNV maps spectra onto a constant-radius hypersphere.
@@ -74,7 +74,7 @@ X_train_snv, X_val_snv, X_test_snv = preprocessed
 #### 2. Dataset and DataLoader Preparation
 
 Convert preprocessed numpy arrays to PyTorch tensors. <br>
-Build a PyTorch DataLoader from preprocessed NumPy arrays to handle batching, shuffling, and GPU loading.
+Build a PyTorch DataLoader from preprocessed NumPy arrays to handle batching and shuffling.
 
 ```python
 from chemomae.utils import set_global_seed
@@ -94,7 +94,7 @@ test_loader  = DataLoader(test_ds,  batch_size=1024, shuffle=False, drop_last=Fa
 ```
 #### 3. Model, Optimizer, and Scheduler Setup
 
-Define ChemoMAE (Masked AutoEncoder for spectral data).
+Define ChemoMAE (Masked AutoEncoder for 1D spectra).
 This model learns to reconstruct masked spectral blocks while learning representations constrained on the unit hypersphere.
 
 ```python
@@ -238,7 +238,7 @@ extractor = Extractor(model, extractor_cfg)
 
 latent_test = extractor(test_loader)
 ```
-#### 7. Clustering with CosineKMeans
+#### 7. Clustering with Cosine K-Means
 
 Cluster the latent vectors based on cosine similarity. <br>
 The elbow method automatically determines an optimal K by analyzing inertia.
@@ -323,7 +323,7 @@ labels = vmf.predict(latent_test, chunk=5000000)
 `SNVScaler` performs **row-wise mean subtraction and variance scaling** — each spectrum is centered and divided by its **unbiased standard deviation** (`ddof=1`). 
 It is a **stateless** transformer supporting both **NumPy** and **PyTorch**, automatically preserving the original **framework, device, and dtype**. <br>
 When `transform_stats=True`, it returns `(Y, mu, sd)`, where `sd` already includes `eps` and can be directly used for reconstruction. <br>
-After SNV, all rows have **zero mean** and **unit variance**, producing a constant L2 norm of $`\sqrt{L-1}`$ and thus mapping spectra onto a constant-radius **hypersphere** — ideal for cosine-based clustering (e.g., **CosineKMeans**, **vMFMixture**).
+After SNV, all rows have **zero mean** and **unit variance**, producing a constant L2 norm of $`\sqrt{L-1}`$ and thus mapping spectra onto a constant-radius **hypersphere** — ideal for cosine-based clustering (e.g., `CosineKMeans`, `vMFMixture`).
 
 ```python
 # === Basic usage (NumPy) ===
@@ -421,9 +421,9 @@ X_down = cosine_fps_downsample(X_snv, ratio=0.1)
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/models/chemo_mae.md)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/models/chemo_mae.py)
 
- `ChemoMAE` is a **Masked Autoencoder for 1D spectra**. 
- It applies **block-wise masking** along the spectral axis, encodes only the **visible tokens + [CLS]**, and reconstructs the full sequence with a linear projection decoder. 
- The encoder incorporates **positional embeddings** to capture local spectral order, while the CLS output is projected to `latent_dim` and **L2-normalized**, yielding embeddings that reside on the **unit hypersphere** — **naturally suited for cosine-based clustering and metrics**. 
+**ChemoMAE** is a **Masked Autoencoder for 1D spectra**.<br>
+It performs **block-wise masking** along the spectral axis, encoding only the **visible tokens** and the **[CLS] token**, and reconstructs the full sequence through a **linear projection decoder**.<br>
+The encoder incorporates **positional embeddings** to capture local spectral order, while the **[CLS]** output is projected to a `latent_dim` vector and **L2-normalized**, yielding embeddings that lie on the **unit hypersphere** — **naturally suited for cosine-based clustering and similarity metrics**.
 
 ```python
 # === Basic training usage ===

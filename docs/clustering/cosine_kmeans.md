@@ -5,7 +5,7 @@
 This document describes **CosineKMeans**, an implementation of hyperspherical k-means with cosine similarity, and **elbow_ckmeans** for model selection.
 
 <p align="center">
-<img src="../../images/Cosine-KMeans.svg">
+<img src="../../images/CosineKMeans.svg">
 </p>
 
 ---
