@@ -1,7 +1,10 @@
 # VMFMixture — von Mises–Fisher Mixture on the Unit Hypersphere
 
 > Module: `chemomae.clustering.vmf_mixture`
-> Purpose: Probabilistic clustering of L2-normalized features on ($`S^{d-1}`$) via an EM algorithm; model selection with `elbow_vmf`; visualization via `plot_elbow_vmf`.
+> Purpose: Probabilistic clustering of L2-normalized features on ($`S^{d-1}`$) via an EM algorithm.
+
+This document describes **VMFMixture**, an implementation of the **von Mises–Fisher mixture model** for clustering unit-norm features on the hypersphere.
+It provides EM-based parameter estimation, model selection through `elbow_vmf`, and visualization utilities via `plot_elbow_vmf`.
 
 ---
 

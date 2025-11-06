@@ -2,16 +2,17 @@
 
 > Module: `chemomae.utils.seed`
 
-This document describes utility functions for controlling random seeds and deterministic behavior across Python, NumPy, and PyTorch.
+This document describes utility functions for global seeding and deterministic control across Python, NumPy, and PyTorch, ensuring reproducible experiments in ChemoMAE.
 
 ---
 
 ## Overview
 
-Experiments involving stochastic training (e.g., ChemoMAE with random masking) often require reproducibility. This module provides:
+Experiments involving stochastic operations — such as **random masking** in ChemoMAE — require reproducible results for debugging and benchmarking.
+This module provides unified helpers for:
 
-* **Global seeding** across Python, NumPy, and PyTorch (if available).
-* **Deterministic flags** for CuDNN backends.
+* **Global seeding** across Python, NumPy, and PyTorch.
+* **Deterministic CuDNN settings** to ensure identical GPU results.
 
 ---
 
@@ -19,26 +20,30 @@ Experiments involving stochastic training (e.g., ChemoMAE with random masking) o
 
 ### `set_global_seed(seed: int = 42, *, fix_cudnn: bool = True) -> None`
 
-Sets the seed globally for multiple libraries.
+Set the same seed across all major random number generators.
 
 **Parameters**
 
-* `seed` (`int`, default=42): Seed value applied across libraries.
-* `fix_cudnn` (`bool`, default=True): If `True`, forces CuDNN deterministic mode.
-
-  * `torch.backends.cudnn.deterministic = True`
-  * `torch.backends.cudnn.benchmark = False`
+| Name        | Type   | Default | Description                                                        |
+| ----------- | ------ | ------- | ------------------------------------------------------------------ |
+| `seed`      | `int`  | `42`    | Global seed value applied to Python, NumPy, and PyTorch.           |
+| `fix_cudnn` | `bool` | `True`  | If `True`, enables deterministic CuDNN mode (disables autotuning). |
 
 **Behavior**
 
-* Python `random.seed(seed)`
-* NumPy `np.random.seed(seed)`
-* `os.environ["PYTHONHASHSEED"] = str(seed)`
-* PyTorch (if installed):
+* Python: `random.seed(seed)`
+* NumPy: `np.random.seed(seed)`
+* OS: `os.environ["PYTHONHASHSEED"] = str(seed)`
+* PyTorch (if available):
 
   * `torch.manual_seed(seed)`
   * `torch.cuda.manual_seed_all(seed)`
-  * CuDNN flags set if `fix_cudnn=True`
+  * If `fix_cudnn=True`:
+
+    ```python
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    ```
 
 **Usage**
 
@@ -52,19 +57,23 @@ set_global_seed(1234)
 
 ### `enable_deterministic(enable: bool = True) -> None`
 
-Toggles CuDNN deterministic mode **without resetting seeds**.
+Toggle CuDNN deterministic mode **without resetting seeds**.
 
 **Parameters**
 
-* `enable` (`bool`, default=True): Whether to enforce deterministic behavior.
+| Name     | Type   | Default | Description                                |
+| -------- | ------ | ------- | ------------------------------------------ |
+| `enable` | `bool` | `True`  | Whether to enforce deterministic behavior. |
 
 **Behavior**
 
-* If PyTorch is unavailable, no-op.
+* If PyTorch is unavailable, the function is a no-op.
 * Otherwise:
 
-  * `torch.backends.cudnn.deterministic = enable`
-  * `torch.backends.cudnn.benchmark = not enable`
+  ```python
+  torch.backends.cudnn.deterministic = enable
+  torch.backends.cudnn.benchmark = not enable
+  ```
 
 **Usage**
 
@@ -72,16 +81,16 @@ Toggles CuDNN deterministic mode **without resetting seeds**.
 from chemomae.utils.seed import enable_deterministic
 
 enable_deterministic(True)   # enforce reproducibility
-enable_deterministic(False)  # allow autotuned kernels
+enable_deterministic(False)  # allow kernel autotuning for speed
 ```
 
 ---
 
 ## Design Notes
 
-* `set_global_seed` is the main entry point to unify random states across libraries.
-* `enable_deterministic` is lighter-weight and can be used after seeding to toggle performance/reproducibility tradeoffs.
-* If PyTorch is not installed, both functions silently degrade (no effect on Torch).
+* `set_global_seed()` ensures reproducibility across Python, NumPy, and PyTorch.
+* `enable_deterministic()` is a lightweight control to toggle performance–reproducibility trade-offs after seeding.
+* Both functions **silently degrade** if PyTorch is not installed (no errors raised).
 
 ---
 
@@ -99,4 +108,4 @@ enable_deterministic(True)
 
 ## Version
 
-* Introduced in `chemomae.utils.seed` — initial public draft.
+* Introduced in `chemomae.utils.seed` — — initial public draft.

@@ -60,28 +60,28 @@ Estimate the optimal cluster count via **curvature-based elbow detection** using
 1. **Monotonicity Enforcement**
    Enforce non-increasing inertia:
 
-   ```math
+```math
    y \leftarrow \mathrm{cummin}(y) = \min_{i \le j} y_i
-   ```
+```
 
 2. **Normalization**
    Scale $(x, y)$ to $[0, 1]$ for numerical stability:
 
-   ```math
+```math
    x_n = \frac{x - x_{\min}}{x_{\max} - x_{\min} + \varepsilon}, \quad
    y_n = \frac{y - y_{\min}}{y_{\max} - y_{\min} + \varepsilon}
-   ```
+```
 
 3. **Savitzky–Golay Derivatives**
    If `smooth=True` and $n \ge 5$, compute analytic derivatives on $y_n$. <br>
 
    Let $`\Delta x = \mathrm{median}(\mathrm{diff}(x_n))`$, then:
 
-   ```math
+```math
    \tilde{y} = \mathrm{SG}(y_n;\ 0), \quad
    y' = \mathrm{SG}(y_n;\ 1,\ \Delta x), \quad
    y'' = \mathrm{SG}(y_n;\ 2,\ \Delta x)
-   ```
+```
 
    *Safety adjustment:*
    `window_length` is clipped to the largest odd number ≤ `n`,
@@ -89,20 +89,20 @@ Estimate the optimal cluster count via **curvature-based elbow detection** using
 
 4. **Curvature Calculation**
 
-   ```math
+```math
    \kappa = \frac{|y''|}{(1 + (y')^2)^{3/2}}
-   ```
+```
 
 5. **Endpoint Handling**
-   ```math
+```math
    \text{Set} \quad \kappa_0 = \kappa_{n-1} = -\infty
-   ```
+```
 6. **Elbow Selection**
 
-   ```math
+```math
    \text{optimal\_k} = k_{\arg\max \kappa}, \quad
    \text{elbow\_idx} = \arg\max \kappa
-   ```
+```
 
 #### Parameters
 
