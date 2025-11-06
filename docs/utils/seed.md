@@ -108,4 +108,4 @@ enable_deterministic(True)
 
 ## Version
 
-* Introduced in `chemomae.utils.seed` — — initial public draft.
+* Introduced in `chemomae.utils.seed` — initial public draft.
