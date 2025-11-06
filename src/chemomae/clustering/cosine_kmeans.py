@@ -35,8 +35,6 @@ class CosineKMeans(nn.Module):
         学習・推論に用いるデバイス。
     random_state : int | None, default=42
         初期化・多項分布サンプリングの乱数シード（決定的動作に使用）。
-    use_squared_init : bool, default=False
-        k-means++ で距離に `D(x)^2` を使うか（通常は False 推奨）。
 
     Attributes
     ----------
@@ -63,8 +61,7 @@ class CosineKMeans(nn.Module):
         tol: float = 1e-4,
         max_iter: int = 500,
         device: Union[str, torch.device] = "cuda",
-        random_state: Optional[int] = 42,
-        use_squared_init: bool = False,
+        random_state: Optional[int] = 42
     ) -> None:
         super().__init__()
         if n_components <= 0:
@@ -75,7 +72,6 @@ class CosineKMeans(nn.Module):
         self.max_iter = int(max_iter)
         self.device = torch.device(device)
         self.random_state = random_state
-        self.use_squared_init = bool(use_squared_init)
 
         # 次元未確定のため空バッファで登録（state_dict に載せるため register_buffer を使用）
         self.register_buffer("centroids", torch.empty(0, 0, device=self.device))
@@ -105,8 +101,7 @@ class CosineKMeans(nn.Module):
 
         # 2点目以降
         dmin = cosine_dissimilarity(Xn, C[0:1]).squeeze(1).clamp_min_(1e-12)
-        w = dmin.square() if self.use_squared_init else dmin
-        probs = (w / (w.sum() + 1e-12)).clamp_min_(0)
+        probs = (dmin / (dmin.sum() + 1e-12)).clamp_min_(0)
 
         for k in range(1, K):
             idx_cpu = torch.multinomial(probs.detach().cpu(), num_samples=1, generator=self._generator)
@@ -114,8 +109,7 @@ class CosineKMeans(nn.Module):
             C[k] = Xn[idx]
             dk = cosine_dissimilarity(Xn, C[k:k + 1]).squeeze(1)
             dmin = torch.minimum(dmin, dk).clamp_min_(1e-12)
-            w = dmin.square() if self.use_squared_init else dmin
-            probs = (w / (w.sum() + 1e-12)).clamp_min_(0)
+            probs = (dmin / (dmin.sum() + 1e-12)).clamp_min_(0)
 
         return l2_normalize_rows(C)
 
@@ -141,8 +135,6 @@ class CosineKMeans(nn.Module):
 
         for k in range(1, K):
             w = dmin.clamp_min_(1e-12)
-            if self.use_squared_init:
-                w = w * w
             probs = w / (w.sum() + 1e-12)
             idx_cpu = torch.multinomial(probs, num_samples=1, generator=self._generator)
             C[k] = l2_normalize_rows(X_cpu[idx_cpu].to(self.device, dtype=torch.float32))[0]
@@ -286,7 +278,7 @@ class CosineKMeans(nn.Module):
             # 収束判定（相対/絶対）
             if prev is not None:
                 rel = abs(prev - mean_J) / (abs(prev) + 1e-12)
-                if (rel < self.tol) or (abs(prev - mean_J) < 1e-7):
+                if (rel < self.tol) or (abs(prev - mean_J) < self.tol * 1e-3):
                     C = C_new
                     prev = mean_J
                     last = mean_J
@@ -297,17 +289,15 @@ class CosineKMeans(nn.Module):
 
         # centroids を L2 正規化してバッファに反映（register_buffer を保持）
         C = l2_normalize_rows(C).to(self.device, dtype=torch.float32)
-        if self.centroids.numel() == 0:
-            self.register_buffer("centroids", C)
-        else:
+        if self.centroids.shape != C.shape:
             self.centroids.resize_(C.shape)
-            self.centroids.copy_(C)
+        self.centroids.copy_(C)
 
         self._fitted = True
         self.inertia_ = float(last if last is not None else prev)
 
         gc.collect()
-        if torch.cuda.is_available():
+        if stream and torch.cuda.is_available():
             torch.cuda.empty_cache()
         return self
 
@@ -480,12 +470,10 @@ class CosineKMeans(nn.Module):
         if strict_k and (K != self.n_components):
             raise ValueError(f"n_components mismatch: expected {self.n_components}, file has {K}")
 
-        C = l2_normalize_rows(C)
-        if self.centroids.numel() == 0:
-            self.register_buffer("centroids", C)
-        else:
+        C = l2_normalize_rows(C).to(self.device, dtype=torch.float32)
+        if self.centroids.shape != C.shape:
             self.centroids.resize_(C.shape)
-            self.centroids.copy_(C)
+        self.centroids.copy_(C)
 
         self.latent_dim = d
         self.inertia_ = float(payload.get("inertia_", float("inf")))

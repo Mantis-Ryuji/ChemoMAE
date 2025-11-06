@@ -1,14 +1,12 @@
 [build-system]
-# PEP 517/518: ビルドに使うバックエンドと要件
 requires = ["setuptools>=70", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-# ---- 基本メタデータ（PEP 621） ----
 name = "chemomae"
-version = "0.1.0"                             # _version.py と整合させること
+version = "0.1.0"
 description = "ChemoMAE: 1D Spectral Masked Autoencoder + Hyperspherical Clustering Toolkit"
-readme = "README.md"                          # PyPIにそのまま表示
+readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
 authors = [{ name = "Ryuji Yamaguchi" }]
@@ -42,24 +40,22 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Image Recognition",
 ]
 
-# ---- ランタイム依存（CUDA 都合により torch は含めない）----
 dependencies = [
   "numpy>=1.24",
   "scipy>=1.10",
   "tqdm>=4.66",
   "matplotlib>=3.8",
-  "pyyaml>=6.0",      # 設定ファイル読み書き用
+  "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
-# `pip install chemomae[dev]` で入る開発用ツール（CIテスト用の scikit-learn を含む）
 dev = [
   "pytest>=7,<9",
   "ruff>=0.4",
   "mypy>=1.7",
   "build>=1.2",
   "twine>=5",
-  "scikit-learn>=1.2,<1.6",   # テストで sklearn.metrics.silhouette_samples を使用
+  "scikit-learn>=1.2,<1.6",
 ]
 
 [project.urls]
@@ -67,16 +63,14 @@ Homepage = "https://github.com/Mantis-Ryuji/ChemoMAE"
 Documentation = "https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/README.md"
 Issues = "https://github.com/Mantis-Ryuji/ChemoMAE/issues"
 
-# ---- setuptools のパッケージ検出とデータ同梱設定 ----
 [tool.setuptools]
-package-dir = {"" = "src"}                    # src レイアウト
-include-package-data = true                   # sdist で MANIFEST.in を尊重
+package-dir = {"" = "src"}
+include-package-data = true
 license-files = ["LICENSE", "NOTICE"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["chemomae*"]                        # サブパッケージも含める
+include = ["chemomae*"]
 
-# wheel に同梱させたい静的ファイル（py.typed）
 [tool.setuptools.package-data]
 chemomae = ["py.typed"]

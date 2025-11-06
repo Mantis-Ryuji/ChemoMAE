@@ -1,5 +1,5 @@
 """
-ChemoMAE: 1D spectral Masked Autoencoder + Cosine-KMeans toolkit
+ChemoMAE: 1D Spectral Masked Autoencoder + Hyperspherical Clustering Toolkit
 """
 
 from ._version import __version__

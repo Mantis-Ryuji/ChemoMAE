@@ -1,8 +1,9 @@
-# FPS Downsampling — Farthest-Point Sampling on the unit hypersphere
+# FPS Downsampling — Farthest-Point Sampling on the Unit Hypersphere
 
 > Module: `chemomae.preprocessing.downsampling`
 
-This document describes **`cosine_fps_downsample`**, a diversity-first subsampling method that selects spectra that are maximally spread in direction under cosine geometry. The implementation auto-uses **CUDA** when available and returns data in the **original scale** (normalization is internal to selection only).
+This document describes **`cosine_fps_downsample`**, a diversity-first subsampling method that selects spectra maximally spread in *direction* under cosine geometry.
+The implementation automatically utilizes **CUDA** when available and returns data in the **original scale** (normalization is internal to the selection phase only).
 
 <p align="center">
 <img src="../../images/cosine_fps_sampling_3d.gif" width="500">
@@ -12,20 +13,20 @@ This document describes **`cosine_fps_downsample`**, a diversity-first subsampli
 
 ## Overview
 
-We start from a collection of spectra
+Consider a collection of spectra:
 
 ```math
-X = \{\mathbf{x}_1, \dots, \mathbf{x}_N\} \subset \mathbb{R}^C
+X = \{\mathbf{x}_1, \dots, \mathbf{x}_N\} \subset \mathbb{R}^L
 ```
 
-Each spectrum is **internally** projected onto the unit hypersphere by L2 normalization (selection only):
+Each spectrum is **internally** projected onto the unit hypersphere via L2 normalization (for selection only):
 
 ```math
 \tilde{\mathbf{x}}_i = \frac{\mathbf{x}_i}{\lVert \mathbf{x}_i \rVert_2 + \varepsilon},
 \quad \lVert \tilde{\mathbf{x}}_i \rVert_2 \approx 1
 ```
 
-As the dissimilarity measure we use the **cosine distance**:
+The dissimilarity measure used is the **cosine distance**:
 
 ```math
 d(\tilde{\mathbf{x}}_i,\tilde{\mathbf{x}}_j)
@@ -33,65 +34,70 @@ d(\tilde{\mathbf{x}}_i,\tilde{\mathbf{x}}_j)
 \in [0,2]
 ```
 
-This quantity grows as the angle between vectors increases:
+Interpretation:
 
-* $`d \approx 0`$ means the two spectra are very similar (same direction).
-* $`d \approx 2`$ means they point in opposite directions (maximally dissimilar).
+* $`d \approx 0`$ — spectra point in nearly the same direction (high similarity)
+* $`d \approx 2`$ — spectra point in opposite directions (maximally dissimilar)
+
+---
 
 ### Farthest Point Sampling (FPS)
 
-The goal of FPS is to select a diverse subset of size
+The objective of FPS is to select a diverse subset of size
 
 ```math
-k = \min\!\bigl( N,\ \max(1,\ \mathrm{round}(\rho N)) \bigr)
+k = \min\!\bigl(N,\ \max(1,\ \mathrm{round}(\rho N))\bigr)
 ```
 
-Let the chosen indices be
+Let the selected indices be
 
 ```math
 \mathcal{S}_k = \{s_1, \dots, s_k\}
 ```
 
-The algorithm proceeds greedily:
+The greedy selection proceeds as follows:
 
 ```math
-s_1 \ \text{is chosen at random (or fixed)}, \qquad
-s_t = \arg\max_{i \notin \mathcal{S}_{t-1}} \ 
-        \min_{j \in \mathcal{S}_{t-1}} 
+s_1 \text{ chosen randomly (or fixed)}, \qquad
+s_{k+1} = \arg\max_{i \notin \mathcal{S}_k} \
+        \min_{j \in \mathcal{S}_k} 
         d(\tilde{\mathbf{x}}_i, \tilde{\mathbf{x}}_j)
 ```
 
-In words:
+Intuitively:
 
-* For each candidate $i$ outside the set, compute its distance to every point already in the set.
-* Record the **closest distance** (how near $i$ is to the current subset).
-* Select the candidate whose closest distance is the **largest** overall.
+* For each candidate $i$, compute its distance to every already selected point.
+* Record the **minimum** distance (its nearest neighbor in the subset).
+* Add the candidate whose nearest distance is **largest overall**.
 
-Thus FPS repeatedly adds the point that is *as far as possible from its nearest neighbor in the subset*, ensuring the selected points are spread out with a large margin.
+Thus, FPS iteratively adds the sample **farthest from all selected points**, ensuring the chosen subset covers the hypersphere as uniformly as possible.
+
+---
 
 ### Vectorized Implementation
 
-For efficiency, FPS maintains a vector of the current nearest distances
+For efficiency, the algorithm maintains a vector of current nearest distances
 
 ```math
 \mathbf{d}_{\min} \in \mathbb{R}^N,
 ```
 
-where $`\mathbf{d}_{\min}[i]`$ is the distance from candidate $`i`$ to its nearest selected neighbor.
-When a new point $`\tilde{\mathbf{x}}_s`$ is chosen, the update is:
+where $d_{\min}[i]$ is the distance between candidate $i$ and its closest selected point.
+
+When a new point $\tilde{\mathbf{x}}_s$ is selected, the update rule is:
 
 ```math
 \mathbf{d}_{\min} \leftarrow
-\min \Bigl( \mathbf{d}_{\min}, \ \mathbf{1} - X_{\text{unit}} \tilde{\mathbf{x}}_{s} \Bigr),
+\min \Bigl( \mathbf{d}_{\min},\ \mathbf{1} - X_{\text{unit}} \tilde{\mathbf{x}}_{s} \Bigr),
 ```
 
-where $`X_{\text{unit}}`$ is the row-normalized data matrix **computed internally** from `X` (selection only).
-This update rule means:
+where $X_{\text{unit}}$ is the row-normalized version of `X` (computed internally).
+This update involves:
 
-* Compute cosine distances between all points and the newly selected one ($`1 - X_{\text{unit}} \tilde{\mathbf{x}}_{s}`$).
-* Update each entry of $`\mathbf{d}_{\min}`$ by taking the smaller value with the new distances.
+* Computing cosine distances (`1 - X_unit @ x_s`) between all points and the new sample
+* Updating $d_{\min}$ in-place using an elementwise minimum
 
-Each iteration therefore requires only **one matrix–vector multiplication** followed by an elementwise `min`, which can be implemented very efficiently with `torch.matmul` and in-place updates.
+Each iteration thus requires only **one matrix–vector multiplication** and a `min` operation, efficiently implemented with `torch.matmul` and in-place updates.
 
 ---
 
@@ -108,25 +114,30 @@ cosine_fps_downsample(
     return_numpy: bool = True,
     return_indices: bool = False,
     eps: float = 1e-12,
-) -> (np.ndarray | torch.Tensor)  # shape: (k, C), k = min(N, max(1, round(N*ratio)))
+) -> (np.ndarray | torch.Tensor)
 ```
 
-**Parameters**
+#### Parameters
 
-* `X`: `(N, C)` spectra. NumPy or Torch.
-* `ratio`: target fraction $\rho$; selects $k=\min(N,\max(1,\mathrm{round}(\rho N)))$.
-* `seed`: RNG seed for the initial point (used if `init_index` is `None`).
-* `init_index`: fix the initial index deterministically.
-* `return_numpy`: `True` → return NumPy; `False` → return Torch tensor.
-* `return_indices`: if `True`, also returns the selected indices.
-* `eps`: numerical stability term for normalization.
+| Name             | Type                  | Description                                                                      |
+| ---------------- | --------------------- | -------------------------------------------------------------------------------- |
+| `X`              | `(N, L)` array/tensor | Input spectra (NumPy or Torch).                                                  |
+| `ratio`          | `float`               | Target fraction $\rho$ → selects $k = \min(N, \max(1, \mathrm{round}(\rho N)))$. |
+| `seed`           | `int`, optional       | RNG seed for reproducible initialization (ignored if `init_index` is provided).  |
+| `init_index`     | `int`, optional       | Deterministically fix the first selected index.                                  |
+| `return_numpy`   | `bool`                | If `True`, returns NumPy array; otherwise keeps Torch tensor type.               |
+| `return_indices` | `bool`                | If `True`, also returns the selected indices.                                    |
+| `eps`            | `float`               | Small constant for L2 normalization stability.                                   |
 
-**Behavior & Types**
+#### Behavior & Types
 
-* **Device:** runs on CUDA automatically when available; falls back to CPU.
-* **Return type:** NumPy in → NumPy out by default; Torch in → stays Torch if `return_numpy=False` (device preserved).
-* **Internal normalization:** rows are **always** L2-normalized internally for selection; the returned subset is taken from the **original-scale** `X`.
-* **Complexity:** $O(Nk)$ inner products; memory $O(N)$. Implementation reuses temporaries to reduce GPU churn.
+* **Device:** Automatically runs on CUDA if available; otherwise CPU.
+* **Return type:**
+
+  * NumPy in → NumPy out (default)
+  * Torch in → Torch out if `return_numpy=False` (device preserved)
+* **Normalization:** Always performed internally (selection only). The output spectra remain in the **original scale**.
+* **Complexity:** $O(Nk)$ inner products; memory $O(N)$. Intermediate buffers are reused for GPU efficiency.
 
 ---
 
@@ -138,62 +149,65 @@ cosine_fps_downsample(
 import numpy as np
 from chemomae.preprocessing import cosine_fps_downsample
 
-# X: (N, C) NumPy array (e.g., after SNV)
-X_sub = cosine_fps_downsample(X, ratio=0.10, seed=42)
-# -> NumPy array, shape (ceil(0.1*N), C)
+X = np.random.randn(5000, 128).astype(np.float32)
+X_sub = cosine_fps_downsample(X, ratio=0.1, seed=42)
+# -> NumPy array, shape (ceil(0.1*N), 128)
 ```
 
-### Torch — return tensor, same device
+### Torch — return tensor (same device)
 
 ```python
 import torch
 from chemomae.preprocessing import cosine_fps_downsample
 
 Xt = torch.randn(5000, 128, device="cuda", dtype=torch.float32)
-Xt_sub = cosine_fps_downsample(Xt, ratio=0.1, return_numpy=False)  # -> torch.Tensor on CUDA
+Xt_sub = cosine_fps_downsample(Xt, ratio=0.1, return_numpy=False)
+# -> torch.Tensor on CUDA
 ```
 
-### With SNV (recommended before cosine geometry)
+### Combined with SNV (recommended before cosine geometry)
 
 ```python
 from chemomae.preprocessing import SNVScaler, cosine_fps_downsample
 
-X_snv = SNVScaler().transform(X)                  # per-spectrum standardization
-X_sub = cosine_fps_downsample(X_snv, ratio=0.1)   # diversity-first subset
+X_snv = SNVScaler().transform(X)
+X_sub = cosine_fps_downsample(X_snv, ratio=0.1)
 ```
 
-(Per-row L2 normalization is applied **internally** during selection.)
+(*Per-row L2 normalization is applied internally during selection.*)
 
 ---
 
-## Design Notes & Edge Cases
+## Design Notes
 
-* **Internal normalization:** The function **always** performs per-row L2 normalization internally (cosine geometry). The returned subset comes from the **original-scale** `X`.
-* **CUDA auto-selection:** uses `torch.cuda.is_available()` to decide device; tensors are moved once and kept there.
-* **In-place / buffer reuse:** distance updates avoid new allocations (`addmv_`, `minimum(..., out=...)`), reducing “reserved memory creep”.
-* **Empty input:** if `N=0`, returns an empty array/tensor with shape `(0, C)`.
-* **Seed & determinism:** set `seed` or provide `init_index` for reproducible starts. Subsequent choices are deterministic given the start.
+* **Internal normalization:** Always L2-normalized internally (cosine geometry); returned subset uses the original scale.
+* **CUDA handling:** Uses `torch.cuda.is_available()`; moves data once and reuses on device.
+* **Memory efficiency:** In-place updates (`addmv_`, `minimum(out=...)`) reduce memory churn and CUDA “reserved memory” inflation.
+* **Empty input:** For `N=0`, returns `(0, L)` array/tensor.
+* **Reproducibility:** Specify `seed` or `init_index` for deterministic runs.
 
 ---
 
 ## When to Use `cosine_fps_downsample` in ChemoMAE Pipelines
 
-* **Goal = Diversity over density** <br>
-  In datasets like NIR-HSI with high redundancy (many nearly identical vectors in local neighborhoods), FPS maximizes **directional coverage** and reduces **duplicate samples**, making self-supervised training more efficient.
-  Conversely, if your goal is to **preserve density** (reflect frequent patterns proportionally in the learner), FPS is not suitable.
+* **Goal = maximize diversity, not density**
+  FPS excels in *directional diversity*. It avoids redundancy in datasets like NIR-HSI, where many spectra are nearly identical. This makes it ideal for **efficient self-supervised training**.
+  However, it is *not* suited for preserving sample *density* distributions.
 
-* **Preprocessing with FPS (HSI/NIR)** <br>
-  After **SNV** or **L2 normalization** (i.e., scaling that constrains data onto the unit sphere), apply **`cosine_fps_downsample`** to create a compact training subset that emphasizes **diversity**.
+* **Typical placement in preprocessing:**
+  Apply **after SNV or L2 normalization**, i.e., once spectra are mapped onto the hypersphere.
+  FPS then produces a compact, diversity-balanced subset for training or visualization.
 
-* **Unit of application:** <br>
-  Recommended at the **per-sample or per-tile level** (e.g., within each image or lot spectrum set). This removes local redundancy and stabilizes batch-wise directional coverage.
+* **Granularity:**
+  Recommended at the **per-sample or per-tile level** (e.g., within each image or batch).
+  This ensures consistent angular coverage and prevents overrepresentation of similar spectra.
 
 ---
 
 ## Common Pitfalls
 
-* **Expecting density weighting:** FPS is diversity-first; it won’t oversample dense regions by design.
-* **Reading GPU memory graphs:** PyTorch **reserves** CUDA memory; “reserved” can grow and plateau even when “allocated” goes up/down—this is normal, not a leak.
+* **Assuming density preservation:** FPS intentionally ignores local density—it seeks maximal spread.
+* **GPU memory readings:** PyTorch may show large “reserved” memory even with stable “allocated” usage; this is expected behavior, not a leak.
 
 ---
 
@@ -205,21 +219,21 @@ from chemomae.preprocessing import cosine_fps_downsample
 
 # Shapes and types
 X = np.random.randn(123, 7).astype(np.float32)
-Y = cosine_fps_downsample(X, ratio=0.1)                    # -> (max(1, round(12)), 7)
+Y = cosine_fps_downsample(X, ratio=0.1)
 assert Y.shape[1] == X.shape[1]
 
-# Reproducibility with seed
+# Reproducibility
 A = cosine_fps_downsample(X, ratio=0.2, seed=111)
 B = cosine_fps_downsample(X, ratio=0.2, seed=111)
 np.testing.assert_allclose(A, B)
 
-# Invariance to row scaling (always normalized internally)
+# Invariance to row scaling
 scales = np.exp(np.random.randn(X.shape[0], 1).astype(np.float32))
 X2 = X * scales
-U  = cosine_fps_downsample(X,  ratio=0.1)
+U1 = cosine_fps_downsample(X,  ratio=0.1)
 U2 = cosine_fps_downsample(X2, ratio=0.1)
 def unit(Z): return Z / (np.linalg.norm(Z, axis=1, keepdims=True) + 1e-12)
-np.testing.assert_allclose(unit(U), unit(U2), atol=1e-5)
+np.testing.assert_allclose(unit(U1), unit(U2), atol=1e-5)
 ```
 
 ---

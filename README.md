@@ -8,7 +8,7 @@
 
 > **ChemoMAE**: A Research-Oriented PyTorch Toolkit and Models for **1D Spectral Representation Learning and Hyperspherical Clustering**.
 
-[**Research Repository**](https://github.com/Mantis-Ryuji/WoodDegradationSeg-NIRHSI): **Unsupervised Segmentation of Wood Degradation Patterns with NIR-HSI** **(preparing)**
+[**Research Repository**](https://github.com/Mantis-Ryuji/WoodDegradationSeg-NIRHSI): **Unsupervised Segmentation of Wood Degradation Patterns with NIR-HSI**
 
 ---
 
@@ -36,7 +36,7 @@ Built-in clustering modules — **Cosine K-Means** and **vMF Mixture** — lever
 
 ## Quick Start
 
-Install ChemoMAE **(preparing)**
+Install ChemoMAE
 
 ```bash
 pip install chemomae
@@ -774,7 +774,7 @@ print("Elbow K:", optimal_k)
 
 * **Objective & updates:** minimizes $`\mathrm{mean}(1-\cos(x,c))`$ ; E-step by argmax cosine, M-step by **normalized cluster means**. 
 * **Internal normalization:** rows are L2-normalized internally; centroids are stored **unit-norm**. 
-* **k-means++ init:** with optional squared-distance variant; deterministic via `random_state`. 
+* **k-means++ init:** Uses cosine dissimilarity for sampling (not squared), ensuring reproducible seeding with `random_state`. 
 * **Streaming (CPU→GPU):** `chunk>0` enables large-N clustering with bounded VRAM; also supported in `predict` and elbow sweep. 
 * **Precision policy:** computations run in **fp32** internally (even with half/bf16 inputs). 
 * **Empty clusters:** reinitialize by stealing **farthest samples** to keep K active. 
@@ -931,7 +931,7 @@ set_global_seed(42, fix_cudnn=False)
 
 ---
 
-## [License](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/LICENSE)
+## License
 
 ChemoMAE is released under the **Apache License 2.0**,
 a permissive open-source license that allows both academic and commercial use with minimal restrictions.

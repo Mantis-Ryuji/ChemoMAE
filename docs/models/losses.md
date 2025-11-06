@@ -1,21 +1,25 @@
-# Masked Loss Functions for ChemoMAE
+# Masked Loss Functions — Reconstruction Losses for ChemoMAE
 
 > Module: `chemomae.models.losses`
 
-This document describes the masked reconstruction losses provided in `losses.py`. These functions compute squared error **only on the masked (hidden) positions**, consistent with the MAE training principle.
+This document describes **masked reconstruction losses** implemented in `losses.py`.
+These functions compute squared errors **only on masked (hidden) positions**, consistent with the **Masked Autoencoder (MAE)** training principle.
 
 ---
 
 ## Overview
 
-During training, ChemoMAE masks a large fraction of the spectral sequence. The loss should therefore be restricted to **masked positions only**, so the model is penalized for reconstructing what it did not see. Visible tokens are excluded from the loss.
+During MAE training, a large portion of each spectral sequence is randomly masked.
+The model should be penalized **only for reconstructing the hidden (masked) regions**, not for simply copying visible inputs.<br>
 
-Two functions are provided:
+Two loss functions are provided:
 
-* **`masked_sse`**: Sum of squared errors.
-* **`masked_mse`**: Mean squared error.
+| Function     | Description                                        |
+| ------------ | -------------------------------------------------- |
+| `masked_sse` | Sum of squared errors (SSE) over masked positions. |
+| `masked_mse` | Mean squared error (MSE) over masked positions.    |
 
-Both functions accept a reduction mode that determines how losses are aggregated across the batch.
+Both functions support multiple reduction modes to control how losses are aggregated across the batch.
 
 ---
 
@@ -23,87 +27,90 @@ Both functions accept a reduction mode that determines how losses are aggregated
 
 ### `masked_sse(x_recon, x, mask, *, reduction="batch_mean")`
 
-**Masked Sum of Squared Errors.**
+**Masked Sum of Squared Errors**
 
-* `x_recon` (`torch.Tensor`, shape `(B, L)`): Reconstructed sequence.
-* `x` (`torch.Tensor`, shape `(B, L)`): Ground truth input sequence.
-* `mask` (`torch.Tensor`, shape `(B, L)`, bool): `True` = masked positions (loss applied), `False` = visible positions (ignored).
-* `reduction` (`{"sum", "mean", "batch_mean"}`):
+| Parameter   | Type                                 | Description                                                                                                                                                                                                                    |
+| ----------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `x_recon`   | `torch.Tensor`, shape `(B, L)`       | Reconstructed sequence.                                                                                                                                                                                                        |
+| `x`         | `torch.Tensor`, shape `(B, L)`       | Ground-truth input sequence.                                                                                                                                                                                                   |
+| `mask`      | `torch.Tensor`, shape `(B, L)`, bool | `True` = masked positions (loss applied); `False` = visible positions (ignored).                                                                                                                                               |
+| `reduction` | `{"sum", "mean", "batch_mean"}`      | Aggregation mode:<br>• `"sum"` — total sum of masked errors.<br>• `"mean"` — average over all masked elements.<br>• `"batch_mean"` — sum over masked elements divided by batch size `B` (independent of mask count). |
 
-  * `"sum"`: Total sum over all masked positions.
-  * `"mean"`: Average over number of masked elements.
-  * `"batch_mean"` (default): Sum over masked elements divided by batch size `B`. This ensures scaling is independent of the number of masked tokens.
+**Returns:**
+Scalar tensor (loss value).
 
-**Returns:** Scalar tensor (loss).
-
-**Edge cases:**
-
-* If `mask.sum() == 0`, returns `0.0` for all reductions (avoids NaN).
+**Edge Cases:**
+If `mask.sum() == 0`, returns `0.0` to avoid NaN.
 
 ---
 
 ### `masked_mse(x_recon, x, mask, *, reduction="mean")`
 
-**Masked Mean Squared Error.**
+**Masked Mean Squared Error**
 
-* `x_recon` (`torch.Tensor`, shape `(B, L)`): Reconstructed sequence.
-* `x` (`torch.Tensor`, shape `(B, L)`): Ground truth input sequence.
-* `mask` (`torch.Tensor`, shape `(B, L)`, bool): `True` = masked positions.
-* `reduction` (`{"mean", "sum", "batch_mean"}`):
+| Parameter   | Type                                 | Description                                                                                                                                                                       |
+| ----------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `x_recon`   | `torch.Tensor`, shape `(B, L)`       | Reconstructed sequence.                                                                                                                                                           |
+| `x`         | `torch.Tensor`, shape `(B, L)`       | Ground-truth input sequence.                                                                                                                                                      |
+| `mask`      | `torch.Tensor`, shape `(B, L)`, bool | `True` = masked positions (loss applied).                                                                                                                                         |
+| `reduction` | `{"mean", "sum", "batch_mean"}`      | Aggregation mode:<br>• `"mean"` — average over all masked elements.<br>• `"sum"` — total SSE over masked elements.<br>• `"batch_mean"` — sum divided by batch size `B`. |
 
-  * `"mean"` (default): Average over number of masked elements.
-  * `"sum"`: Total sum over masked elements (equivalent to SSE).
-  * `"batch_mean"`: Sum over masked elements divided by batch size `B`.
+**Returns:**
+Scalar tensor (loss value).
 
-**Returns:** Scalar tensor (loss).
-
-**Edge cases:**
-
-* If `mask.sum() == 0`, returns `0.0` for all reductions.
+**Edge Cases:**
+If `mask.sum() == 0`, returns `0.0` for all reductions.
 
 ---
 
 ## Usage Examples
 
-### With visible mask from ChemoMAE
+### Basic usage with ChemoMAE visible mask
 
 ```python
+import torch
 from chemomae.models.losses import masked_sse, masked_mse
 
 x = torch.randn(2, 4)
 x_recon = torch.randn(2, 4)
 
-# Suppose visible tokens are marked True
-visible = torch.tensor([[1,1,0,0],[1,0,1,0]], dtype=torch.bool)
-mask = ~visible   # masked positions = False → invert
+# visible=True → seen tokens
+visible = torch.tensor([[1,1,0,0],
+                        [1,0,1,0]], dtype=torch.bool)
+mask = ~visible   # masked = unseen tokens
 
-# Compute losses
 loss_sse = masked_sse(x_recon, x, mask, reduction="batch_mean")
 loss_mse = masked_mse(x_recon, x, mask, reduction="mean")
 ```
-
-### Choice of reduction
-
-* Use **`batch_mean`** for stability across varying mask counts.
-* Use **`mean`** if you want strict MSE scaling by number of masked tokens.
-* Use **`sum`** if you need raw SSE accumulation.
 
 ---
 
 ## Design Notes
 
-* **Masked-only error:** Aligns with MAE principle; avoids trivial copying of visible inputs.
-* **No gradient issues:** Gradients propagate through both `x_recon` and `x` (if `requires_grad=True`). Typically, `x` does not require gradients.
-* **Numerical safety:** All reductions return finite values even if no masked elements exist.
+* **Masked-only error:**
+  Enforces MAE behavior — model learns to infer missing content, not to replicate visible regions.
+
+* **Safe gradients:**
+  Gradients propagate correctly through `x_recon`; typically `x` is treated as constant (`requires_grad=False`).
+
+* **Numerical safety:**
+  All reductions return finite results even when `mask.sum() == 0`.
+
+* **Consistency:**
+  Compatible with ChemoMAE’s `visible` mask convention (`True=visible`, `False=masked` → invert before use).
 
 ---
 
 ## Minimal Tests
 
 ```python
+import torch
+from chemomae.models.losses import masked_sse, masked_mse
+
 x = torch.randn(2, 4)
 x_recon = x + 0.1
-visible = torch.tensor([[1,1,0,0],[1,0,1,0]], dtype=torch.bool)
+visible = torch.tensor([[1,1,0,0],
+                        [1,0,1,0]], dtype=torch.bool)
 mask = ~visible
 
 assert masked_sse(x_recon, x, mask, reduction="sum").item() >= 0

@@ -5,5 +5,3 @@ dist/
 build/
 *.whl
 .venv/
-.ipynb_checkpoints/
-local_tests/

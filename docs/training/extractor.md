@@ -2,18 +2,21 @@
 
 > Module: `chemomae.training.extractor`
 
-This document describes the **Extractor** and its **ExtractorConfig**, which enable latent feature extraction from trained ChemoMAE models.
+This document describes the `Extractor` and its configuration (`ExtractorConfig`), which provide an efficient way to extract latent embeddings (`Z`) from trained **ChemoMAE** models under **all-visible mode**.
 
 ---
 
 ## Overview
 
-The `Extractor` provides a utility to obtain **latent embeddings (Z)** from a trained ChemoMAE in **all-visible mode**:
+The `Extractor` obtains **latent representations** from a trained ChemoMAE encoder without masking.
+These embeddings can be used for downstream analysis such as **clustering** (CosineKMeans, vMF Mixture) or **dimensionality reduction** (UMAP, t-SNE).
 
-* **AMP support:** Compatible with bf16/fp16 inference.
-* **Output control:** Can return `torch.Tensor` or `numpy.ndarray`, and optionally save results to disk.
+### Key features
 
-This is particularly useful for downstream tasks such as clustering (e.g., CosineKMeans, vMF mixture) or visualization (e.g., UMAP, t-SNE).
+* **All-visible encoding:** No masking; produces deterministic latent vectors.
+* **AMP support:** Accelerated inference with `bf16` or `fp16`.
+* **Flexible output:** Returns `torch.Tensor` or `numpy.ndarray`.
+* **Optional saving:** Results can be automatically written to disk (`.npy` or `.pt`).
 
 ---
 
@@ -29,16 +32,15 @@ class ExtractorConfig:
     return_numpy: bool = False
 ```
 
-**Fields**
+#### Parameters
 
-* `device`: Inference device (e.g., `"cuda"`, `"cpu"`).
-* `amp`: Enable automatic mixed precision.
-* `amp_dtype`: AMP precision (`bf16` recommended).
-* `save_path`: Optional file path to save extracted features.
-
-  * `.npy` → saved with `numpy.save`
-  * otherwise → saved with `torch.save`
-* `return_numpy`: If `True`, return a NumPy array; otherwise, return a Torch tensor.
+| Name           | Type                      | Default  | Description                                                                            |
+| -------------- | ------------------------- | -------- | -------------------------------------------------------------------------------------- |
+| `device`       | `str` or `torch.device`   | `"cuda"` | Device used for feature extraction.                                                    |
+| `amp`          | `bool`                    | `True`   | Enable automatic mixed precision during inference.                                     |
+| `amp_dtype`    | `"bf16"` or `"fp16"`      | `"bf16"` | Precision type for autocast (`bf16` recommended).                                      |
+| `save_path`    | `str` or `Path` or `None` | `None`   | Optional output file path. If given, results are automatically saved after extraction. |
+| `return_numpy` | `bool`                    | `False`  | Whether to return results as `np.ndarray` instead of `torch.Tensor`.                   |
 
 ---
 
@@ -50,31 +52,43 @@ class ExtractorConfig:
 extractor = Extractor(model, cfg=ExtractorConfig())
 ```
 
-* `model`: Trained ChemoMAE.
-* `cfg`: Extraction configuration.
+| Argument | Description                                                                      |
+| -------- | -------------------------------------------------------------------------------- |
+| `model`  | Trained ChemoMAE model (must implement `encoder(x, visible_mask)` → latent `z`). |
+| `cfg`    | Optional configuration controlling device, AMP, and output options.              |
 
-### Call
+The model is moved to `cfg.device` and set to `eval()`.
+
+---
+
+### Call Interface
 
 ```python
 Z = extractor(loader)
 ```
 
-* Iterates over batches from `loader`.
-* For each batch:
+* Iterates through batches from `loader`.
+* Each batch:
 
-  * Moves inputs to device.
-  * Builds an all-ones visible mask `(B, L)`.
-  * Calls `model.encoder(x, visible_mask)` to compute latent features.
-  * Collects and concatenates results across batches.
-* Returns either a Torch tensor `(N, D)` or NumPy array, depending on `return_numpy`.
+  * Transfers input to device.
+  * Constructs an **all-ones visible mask** `(B, L)` (i.e., fully visible sequence).
+  * Calls `model.encoder(x, visible_mask)` to obtain latent `z`.
+* Collects and concatenates all `z` across batches.
+* Returns either a `torch.Tensor` or `numpy.ndarray` depending on `return_numpy`.
 
-### Saving
+---
 
-If `save_path` is provided:
+## Saving Behavior
 
-* Automatically saves after extraction.
-* Parent directories are created if missing.
-* Format inferred from file suffix.
+If `cfg.save_path` is specified:
+
+| File extension | Behavior                               |
+| -------------- | -------------------------------------- |
+| `.npy`         | Saved using `numpy.save(save_path, Z)` |
+| otherwise      | Saved using `torch.save(Z, save_path)` |
+
+* Parent directories are created automatically.
+* The return value (`torch.Tensor` or `np.ndarray`) is unaffected by saving format.
 
 ---
 
@@ -93,29 +107,36 @@ Z = extractor(loader)  # np.ndarray, shape (N, D)
 ### Save features to disk
 
 ```python
-cfg = ExtractorConfig(device="cuda", save_path="latent.npy", return_numpy=False)
+cfg = ExtractorConfig(device="cuda", save_path="latent.npy")
 extractor = Extractor(model, cfg)
 Z = extractor(loader)  # torch.Tensor
-# latent.npy written to disk as np.ndarray
+# latent.npy written to disk
 ```
 
-### Torch save format
+### Save as Torch tensor
 
 ```python
 cfg = ExtractorConfig(device="cuda", save_path="latent.pt")
 extractor = Extractor(model, cfg)
 Z = extractor(loader)
-# latent.pt contains torch.Tensor
+# latent.pt contains a torch.Tensor
 ```
 
 ---
 
 ## Design Notes
 
-* **All-visible encoding:** Guarantees determinism and avoids dependency on random masking.
-* **AMP:** Reduces VRAM usage and speeds up inference.
-* **Separation of save/return formats:** You can save `.npy` but still return a Torch tensor, and vice versa.
-* **Output device:** Final results are always moved to CPU before concatenation.
+* **Deterministic encoding:**
+  Uses an all-visible mask to ensure consistent embeddings across runs.
+
+* **AMP efficiency:**
+  Reduces memory footprint and speeds up forward passes.
+
+* **Device safety:**
+  All outputs are transferred to CPU before concatenation and saving.
+
+* **Format flexibility:**
+  Saving format and return type are independent — for example, you can save `.npy` but return a Tensor.
 
 ---
 
@@ -126,6 +147,7 @@ cfg = ExtractorConfig(device="cpu", return_numpy=True, save_path=None)
 extractor = Extractor(model, cfg)
 Z = extractor(loader)
 assert isinstance(Z, np.ndarray)
+assert Z.ndim == 2
 ```
 
 ---
