@@ -74,7 +74,7 @@ mae = ChemoMAE(
     dim_feedforward=1024,
     dropout=0.1,
     use_learnable_pos=True,
-    latent_dim=64,
+    latent_dim=16,
     dec_hidden=256,
     dec_dropout=0.1,
     n_blocks=32,
@@ -93,9 +93,7 @@ mae = ChemoMAE(
 | `dim_feedforward`   | `int`   | 1024    | Hidden dimension in the FFN (≈ 4 × `d_model`).                            |
 | `dropout`           | `float` | 0.1     | Dropout rate in encoder layers.                                           |
 | `use_learnable_pos` | `bool`  | `True`  | If `False`, uses fixed sinusoidal positional embeddings.                  |
-| `latent_dim`        | `int`   | 64      | Latent embedding dimension ([CLS] projection).                            |
-| `dec_hidden`        | `int`   | 256     | Decoder hidden dimension.                                                 |
-| `dec_dropout`       | `float` | 0.1     | Dropout rate in decoder layers.                                           |
+| `latent_dim`        | `int`   | 16      | Latent embedding dimension ([CLS] projection).                            |
 | `n_blocks`          | `int`   | 32      | Number of contiguous blocks dividing the sequence. Must divide `seq_len`. |
 | `n_mask`            | `int`   | 16      | Number of blocks to mask (clamped to `[0, n_blocks − 1]`).                |
 
@@ -115,7 +113,7 @@ mae = ChemoMAE(
 import torch
 from chemomae.models import ChemoMAE
 
-mae = ChemoMAE(seq_len=256, latent_dim=64, n_blocks=16, n_mask=4)
+mae = ChemoMAE(seq_len=256, latent_dim=16, n_blocks=16, n_mask=4)
 x = torch.randn(8, 256)
 
 # Forward pass with automatic masking
@@ -157,13 +155,13 @@ loss.backward()
 import torch
 from chemomae.models import ChemoMAE
 
-mae = ChemoMAE(seq_len=128, latent_dim=32, n_blocks=8, n_mask=6)
+mae = ChemoMAE(seq_len=128, latent_dim=8, n_blocks=8, n_mask=6)
 x = torch.randn(4, 128)
 
 x_rec, z, visible = mae(x)
 
 assert x_rec.shape == x.shape
-assert z.shape == (4, 32)
+assert z.shape == (4, 8)
 assert visible.shape == (4, 128)
 assert torch.allclose(z.norm(dim=1), torch.ones(4), atol=1e-5)
 

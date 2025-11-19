@@ -147,7 +147,7 @@ class ChemoEncoder(nn.Module):
     ----------
     seq_len : int
         入力系列長 L（スペクトルの波長チャンネル数など）。
-    latent_dim : int, default=64
+    latent_dim : int, default=16
         出力潜在表現の次元 D。
     d_model : int, default=256
         Transformer モデル幅。
@@ -184,12 +184,12 @@ class ChemoEncoder(nn.Module):
 
     例
     --
-    >>> enc = ChemoEncoder(seq_len=128, latent_dim=32, d_model=64, nhead=4, num_layers=2)
+    >>> enc = ChemoEncoder(seq_len=128, latent_dim=8, d_model=64, nhead=4, num_layers=2)
     >>> x = torch.randn(8, 128)
     >>> visible = torch.ones(8, 128, dtype=torch.bool)   # 全可視
     >>> z = enc(x, visible)
     >>> z.shape
-    torch.Size([8, 32])
+    torch.Size([8, 8])
     >>> z.norm(dim=1).mean().item()   # ≈ 1.0 （L2 正規化済み）
     """
 
@@ -197,7 +197,7 @@ class ChemoEncoder(nn.Module):
         self,
         *,
         seq_len: int,
-        latent_dim: int = 64,
+        latent_dim: int = 16,
         d_model: int = 256,
         nhead: int = 4,
         num_layers: int = 4,
@@ -294,7 +294,7 @@ class ChemoDecoderLP(nn.Module):
     ----------
     seq_len : int
         出力系列長 L（波長チャンネル数など）。
-    latent_dim : int, default=64
+    latent_dim : int, default=16
         潜在表現の次元 D。エンコーダ出力と一致させること。
 
     Shapes
@@ -306,12 +306,12 @@ class ChemoDecoderLP(nn.Module):
 
     例
     --
-    >>> dec = ChemoDecoderLP(seq_len=256, latent_dim=64)
-    >>> z = torch.randn(8, 64)
+    >>> dec = ChemoDecoderLP(seq_len=256, latent_dim=16)
+    >>> z = torch.randn(8, 16)
     >>> x_rec = dec(z)   # 出力形状: (8, 256)
     """
 
-    def __init__(self, *, seq_len: int, latent_dim: int = 64) -> None:
+    def __init__(self, *, seq_len: int, latent_dim: int = 16) -> None:
         super().__init__()
         self.net = nn.Linear(latent_dim, seq_len, bias=False)
 
@@ -348,7 +348,7 @@ class ChemoMAE(nn.Module):
     Typical Usage
     -------------
     学習時:
-    >>> mae = ChemoMAE(seq_len=256, latent_dim=64, n_blocks=16, n_mask=4)
+    >>> mae = ChemoMAE(seq_len=256, latent_dim=16, n_blocks=16, n_mask=4)
     >>> x = torch.randn(8, 256)
     >>> x_rec, z, visible_mask = mae(x)   # visible_mask=None なので内部で生成
     >>> loss = ((x_rec - x)**2)[~visible_mask].sum() / x.size(0)
@@ -378,12 +378,8 @@ class ChemoMAE(nn.Module):
         Encoder 内のドロップアウト率。
     use_learnable_pos : bool, default=True
         True=学習可能な位置埋め込み, False=サイン波埋め込み。
-    latent_dim : int, default=64
+    latent_dim : int, default=16
         潜在表現の次元 D。
-    dec_hidden : int, default=256
-        Decoder(MLP) の隠れ次元。
-    dec_dropout : float, default=0.1
-        Decoder 内のドロップアウト率。
     n_blocks : int, default=32
         系列を等分するブロック数。
     n_mask : int, default=16
@@ -408,7 +404,7 @@ class ChemoMAE(nn.Module):
         dim_feedforward: int = 1024,
         dropout: float = 0.1,
         use_learnable_pos: bool = True,
-        latent_dim: int = 64,
+        latent_dim: int = 16,
         # masking
         n_blocks: int = 32,
         n_mask: int = 16,

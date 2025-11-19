@@ -110,7 +110,7 @@ model = ChemoMAE(
     dim_feedforward=1024,    # MLP dimension
     dropout=0.1,
     use_learnable_pos=True,  # learnable positional encoding
-    latent_dim=64,           # latent vector dimension
+    latent_dim=16,           # latent vector dimension
     n_blocks=32,             # number of total blocks
     n_mask=16                # number of masked blocks per sample
 )
@@ -433,7 +433,7 @@ from chemomae.models import ChemoMAE
 
 mae = ChemoMAE(
     seq_len=256, 
-    latent_dim=64,
+    latent_dim=16,
     d_model=256, 
     nhead=4, 
     num_layers=4, 
@@ -560,7 +560,7 @@ from chemomae.training.optim import build_optimizer, build_scheduler
 from chemomae.training.trainer import Trainer, TrainerConfig
 
 # 1) Model and configuration
-model = ChemoMAE(seq_len=256, latent_dim=64, n_blocks=32, n_mask=24)
+model = ChemoMAE(seq_len=256, latent_dim=16, n_blocks=32, n_mask=24)
 cfg = TrainerConfig(
     out_dir = "runs",
     device = "cuda",
