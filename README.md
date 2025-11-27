@@ -9,7 +9,7 @@
 
 > **ChemoMAE**: A Research-Oriented PyTorch Toolkit and Models for **1D Spectral Representation Learning and Hyperspherical Clustering**.
 
-[**Research Repository**](https://github.com/Mantis-Ryuji/WoodDegradationSeg-NIRHSI): **Unsupervised Segmentation of Wood Degradation Patterns with NIR-HSI**
+[**Research Repository**](https://github.com/Mantis-Ryuji/UnsupervisedSegmentation_NIR-HSI): **Unsupervised Segmentation of Wood Condition Patterns with NIR-HSI**
 
 ---
 
