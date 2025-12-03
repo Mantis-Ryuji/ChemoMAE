@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+import os
 import gc
 from typing import Optional, Tuple, Union, Callable, List
 
@@ -551,8 +553,12 @@ def elbow_ckmeans(
     if X.ndim != 2:
         raise ValueError("X must be 2D")
 
-    # 入力を実行デバイスへ（すでに同一ならコピーは発生しない）
-    X = X.to(device, non_blocking=True)
+    # 修正: ストリーミング時は全データをGPUに送らない
+    if chunk is None:
+        X_input = X.to(device, non_blocking=True)
+    else:
+        # chunk利用時はCPUのまま扱う（fit内部で適切に処理されることを期待）
+        X_input = X
 
     inertias: List[float] = []
     k_list = list(range(1, k_max + 1))
@@ -565,7 +571,7 @@ def elbow_ckmeans(
             device=device,
             random_state=random_state,
         )
-        ckm.fit(X, chunk=chunk)
+        ckm.fit(X_input, chunk=chunk)
         inertias.append(float(ckm.inertia_))
         if verbose:
             print(f"k={k}, mean_inertia={ckm.inertia_:.6f}")

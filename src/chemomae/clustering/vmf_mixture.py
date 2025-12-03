@@ -586,7 +586,12 @@ def elbow_vmf(
     if X.ndim != 2:
         raise ValueError("X must be 2D")
 
-    X = X.to(device, non_blocking=True)
+    # 修正: ストリーミング時は全データをGPUに送らない
+    if chunk is None:
+        X_input = X.to(device, non_blocking=True)
+    else:
+        # chunk利用時はCPUのまま扱う（fit内部で適切に処理されることを期待）
+        X_input = X
 
     if criterion not in ("bic", "nll"):
         raise ValueError("criterion must be 'bic' or 'nll'")
@@ -603,7 +608,7 @@ def elbow_vmf(
             tol=1e-4,
             max_iter=200,
         )
-        vmf.fit(X, chunk=chunk)
+        vmf.fit(X_input, chunk=chunk)
 
         if criterion == "bic":
             val = float(vmf.bic(X, chunk=chunk))
