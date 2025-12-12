@@ -72,15 +72,6 @@ class Tester:
     -----
     - AMP (bf16/fp16) に対応。速度とメモリ効率を改善できる。
     - 評価履歴は JSON ファイルとして保存され、追記される。
-
-    Examples
-    --------
-    >>> tester_cfg = TesterConfig(device="cuda", amp=True, amp_dtype="bf16")
-    >>> tester = Tester(model, tester_cfg)
-    >>> import torch
-    >>> avg_loss = tester(test_loader)
-    >>> print(avg_loss)
-    0.1342
     """
     __test__ = False
 

@@ -23,36 +23,52 @@ def make_patch_mask(
     device: Optional[torch.device] = None,
 ) -> torch.Tensor:
     r"""
-    **パッチ単位のランダムマスク**を生成する（MAE 用）。
+    Make a random **patch-aligned boolean mask** for 1D MAE.
 
-    出力マスクの仕様
-    -----------------
-    - True  = **隠す（masked）**
-    - False = 可視（visible）
-    - 形状は (B, L)
-
-    注意
+    概要
     ----
-    - seq_len は n_patches で割り切れる必要がある。
-    - n_mask は [0, n_patches] の範囲にあるべき。
+    1D スペクトル系列（長さ `seq_len=L`）を `n_patches=P` 個の等長パッチに分割し、
+    **パッチ単位**で `n_mask` 個をランダムに「隠す」マスクを生成する。
+
+    本関数が返す `mask` は **トークン（スカラー）単位**の長さ L を持つが、
+    実際には「パッチ内は全て同じ値」になるように構成される（patch-aligned）。
+
+    マスク仕様
+    ---------
+    - `mask[b, t] = True`  : masked（隠す / 入力に見せない領域）
+    - `mask[b, t] = False` : visible（可視 / 入力に見せる領域）
+    - 形状は `(B, L)`、dtype は `torch.bool`
+
+    制約
+    ----
+    - `seq_len % n_patches == 0`（等長パッチ）
+    - `0 <= n_mask <= n_patches`
 
     Parameters
     ----------
     batch_size : int
-        バッチサイズ B
+        バッチサイズ `B`。
     seq_len : int
-        系列長 L
+        系列長 `L`。
     n_patches : int
-        パッチ数 P
+        パッチ数 `P`（`patch_size = L // P`）。
     n_mask : int
-        マスクするパッチ数
+        マスクするパッチ数（`0..P`）。
     device : torch.device, optional
-        出力テンソル device
+        出力テンソルのデバイス。None の場合は CPU。
 
     Returns
     -------
-    mask : torch.Tensor, shape (B, seq_len), dtype=bool
-        True=mask（隠す）, False=visible
+    mask : torch.Tensor, shape (B, L), dtype=bool
+        パッチ整合マスク。True=masked, False=visible。
+
+    Notes
+    -----
+    - 現行実装では **バッチ内の全サンプルで同じマスクパッチ集合**が選ばれる
+      （`torch.randperm(P)` を一度だけ生成して `patch_mask[:, idx]=True` としているため）。
+      サンプルごとに独立マスクにしたい場合は、サンプルごとに randperm を生成する実装へ変更する。
+    - MAE の “情報リーク” を避けるには、**パッチ内で True/False が混在しない**ことが重要であり、
+      本関数はそれを満たす。
     """
     if seq_len % n_patches != 0:
         raise ValueError("seq_len must be divisible by n_patches")
@@ -76,24 +92,88 @@ def make_patch_mask(
 
 class ChemoEncoder(nn.Module):
     r"""
-    ChemoEncoder: **1D スペクトル用 Transformer Encoder（Patch Mask 対応）**
+    Transformer encoder for 1D spectra with **patch-aligned visible masking**.
 
     概要
     ----
-    1D スペクトル x (B, L) を patch 化し、可視パッチのみを Transformer Encoder に入力して
-    潜在表現 z (B, latent_dim) を得る。
+    入力スペクトル `x ∈ R^{B×L}` を `P` 個のパッチ（長さ `S=L/P`）へ分割し、
+    **可視パッチのみ**を Transformer Encoder に投入して潜在表現
+    `z ∈ R^{B×latent_dim}` を得る。
 
-    重要: visible_mask の制約
-    -------------------------
-    visible_mask は **パッチ整合マスクのみ許容**：
-    各パッチ内で True/False が混在するマスクは、MAE 目的（隠した情報を見せない）を破壊し得るため
-    forward 内で検出して例外を投げる。
+    本 Encoder は MAE の encoder 側に相当し、
+    「隠した領域が入力へ漏れない」ために `visible_mask` に強い制約を課す。
 
-    入出力
-    ------
-    - x:            (B, L)           SNV 済みスペクトル
-    - visible_mask: (B, L) bool      True=可視, False=隠す（パッチ整合のみ）
-    - z:            (B, latent_dim)  L2 正規化済み潜在
+    入出力（テンソル形状）
+    --------------------
+    - Input:
+      - `x` : `(B, L)` 連続値スペクトル
+      - `visible_mask` : `(B, L)` bool, **True=可視 / False=隠す**
+    - Output:
+      - `z` : `(B, latent_dim)` **L2 正規化済み**潜在
+
+    マスク制約（重要）
+    ----------------
+    `visible_mask` は **パッチ整合 (patch-aligned) のみ許容**：
+    各パッチ内で True/False が混在するマスクは MAE の前提（隠した情報を見せない）を破壊し得るため、
+    forward 内で
+    `vm.all(dim=2)` と `vm.any(dim=2)` の一致性チェックにより検出し、例外を投げる。
+
+    アーキテクチャ
+    --------------
+    1. Patchify: `x -> x_patches` shape `(B,P,S)`
+    2. Patch projection: `Linear(S -> d_model)`（bias=False）
+    3. `CLS` token + learned positional embedding（長さ `1+P`）
+    4. Visible compaction:
+       - 可視パッチを前に詰め、最大可視数 `max_vis` に揃えて PAD
+       - `src_key_padding_mask` で PAD を無効化
+    5. TransformerEncoder（`norm_first=True`, activation="gelu"）
+    6. `to_latent: Linear(d_model -> latent_dim)` → `F.normalize`
+
+    Parameters
+    ----------
+    seq_len : int, default=256
+        系列長 `L`。
+    n_patches : int, default=16
+        パッチ数 `P`。`L % P == 0` が必要。
+    d_model : int, default=256
+        Transformer の埋め込み次元。
+    nhead : int, default=4
+        Multi-head attention のヘッド数。
+    num_layers : int, default=2
+        Transformer Encoder 層数。
+    dim_feedforward : int | None, default=None
+        FFN 隠れ次元。None の場合 `4*d_model`。
+    dropout : float, default=0.0
+        Transformer 内部 dropout。
+    latent_dim : int, default=16
+        出力潜在次元（最後に L2 正規化）。
+
+    Attributes
+    ----------
+    seq_len : int
+        `L`。
+    n_patches : int
+        `P`。
+    patch_size : int
+        `S = L // P`。
+    patch_proj : nn.Linear
+        `(S -> d_model)` のパッチ埋め込み。
+    cls_token : nn.Parameter, shape (1,1,d_model)
+        CLS トークン。
+    pos_embed : nn.Parameter, shape (1,1+P,d_model)
+        学習可能な位置埋め込み。
+    encoder : nn.TransformerEncoder
+        Encoder 本体。
+    to_latent : nn.Linear
+        `(d_model -> latent_dim)`。
+
+    Notes
+    -----
+    - `max_vis == 0`（全パッチ不可視）は通常起こらないが、数値崩壊回避のため
+      「先頭パッチのみ可視」に置き換える安全ガードが入っている。
+    - 出力 `z` は球面上（L2 正規化）であり、後段の CosineKMeans / vMF mixture と整合する設計。
+    - `visible_mask` の True/False の意味は **ChemoMAE 側と一致（True=可視）**させること。
+      逆の意味で渡すと学習が破綻する（本実装は dtype/shape のみをチェックする）。
     """
 
     def __init__(
@@ -214,12 +294,37 @@ class ChemoEncoder(nn.Module):
 
 class ChemoDecoder(nn.Module):
     r"""
-    ChemoDecoder: **2 層 MLP デコーダ（軽量な復元ヘッド）**
+    Lightweight 2-layer MLP decoder for 1D spectral reconstruction.
 
-    潜在 z (B, latent_dim) を元の 1D スペクトル長 seq_len に復元する。
+    概要
+    ----
+    潜在表現 `z ∈ R^{B×latent_dim}` から元系列 `x̂ ∈ R^{B×L}` を復元する
+    **低パラメータ復元ヘッド**。
 
-    - Linear(latent_dim -> seq_len) -> GELU -> Linear(seq_len -> seq_len)
-    - パッチ単位の ViT-MAE デコーダではなく、**全系列へ直接写像**する設計。
+    本デコーダは ViT-MAE のように「マスクトークン + Transformer デコーダ」で
+    パッチ系列を復元する方式ではなく、`z` から **全系列へ直接写像**する。
+
+    復元写像
+    --------
+    `z -> Linear(latent_dim, L) -> GELU -> Linear(L, L) -> x_recon`
+
+    Parameters
+    ----------
+    seq_len : int
+        出力系列長 `L`。
+    latent_dim : int
+        入力潜在次元。
+
+    Returns (forward)
+    -----------------
+    x_recon : torch.Tensor, shape (B, L)
+        再構成系列。
+
+    Notes
+    -----
+    - “MAE事前学習を最大化する高容量デコーダ” ではなく、
+      **潜在表現の質（クラスタリング等）を崩しにくい**軽量デコーダを志向した設計。
+    - 入力 `z` は `(B, latent_dim)` を厳密に要求し、形状不一致は例外とする。
     """
 
     def __init__(self, *, seq_len: int, latent_dim: int) -> None:
@@ -240,21 +345,68 @@ class ChemoDecoder(nn.Module):
 
 class ChemoMAE(nn.Module):
     r"""
-    ChemoMAE: **1D スペクトル用 Masked AutoEncoder + 球面潜在**
+    Masked Autoencoder for 1D spectra with **spherical latent**.
 
-    返り値の設計
-    ------------
-    forward は **(x_recon, z, visible_mask)** を返す（返り値は変更しない）。
+    概要
+    ----
+    `ChemoEncoder` と `ChemoDecoder` を組み合わせた 1D スペクトル向け MAE。
+    学習では「パッチ単位のマスク」を用いて一部のスペクトル情報を隠し、
+    そこから潜在表現 `z` を学習しつつ系列全体を再構成する。
 
-    - x_recon: (B,L) 再構成
-    - z:       (B,latent_dim) L2 正規化潜在
-    - visible_mask: (B,L) True=可視 / False=隠す（パッチ整合）
+    本クラスは **潜在 `z` の L2 正規化**を前提にしており、
+    そのまま CosineKMeans / vMF mixture 等の球面クラスタリングへ接続できる。
 
-    visible_mask が None の場合
-    ---------------------------
-    forward 内で make_visible(...) を用いて **パッチ単位の可視マスク**を生成する。
+    返り値の契約（重要）
+    ------------------
+    `forward()` は常に **(x_recon, z, visible_mask)** を返す。
+
+    - `x_recon` : `(B, L)` 再構成
+    - `z` : `(B, latent_dim)` L2 正規化潜在
+    - `visible_mask` : `(B, L)` bool, **True=可視 / False=隠す**（パッチ整合）
+
+    マスク生成
+    ---------
+    `visible_mask=None` の場合、内部で `make_visible()` により
+    **パッチ単位の可視マスク**を生成する。
+
+    Parameters
+    ----------
+    seq_len : int, default=256
+        系列長 `L`。
+    n_patches : int, default=16
+        パッチ数 `P`。`L % P == 0` が必要。
+    d_model : int, default=256
+        Encoder の埋め込み次元。
+    nhead : int, default=4
+        Encoder attention のヘッド数。
+    num_layers : int, default=2
+        Encoder 層数。
+    dim_feedforward : int | None, default=None
+        Encoder FFN 隠れ次元（None は `4*d_model`）。
+    dropout : float, default=0.0
+        Encoder dropout。
+    latent_dim : int, default=16
+        潜在次元。
+    n_mask : int, default=4
+        デフォルトで隠すパッチ数（`make_visible()`/`forward()` の `n_mask` 未指定時に使用）。
+
+    Attributes
+    ----------
+    encoder : ChemoEncoder
+        可視パッチのみで潜在 `z` を出力する Encoder。
+    decoder : ChemoDecoder
+        `z -> x_recon` の復元ヘッド。
+    seq_len, n_patches, n_mask : int
+        入力仕様と既定マスク設定。
+
+    Notes
+    -----
+    - `visible_mask` の意味は **True=可視**で統一。
+      `make_patch_mask()` は True=masked を返すため、`make_visible()` はその反転を返す。
+    - `reconstruct()` は `forward()` の「x_recon だけ欲しい」用途の薄いラッパ。
+    - shape/dtype の整合性は `_check_shapes()` が保証し、異常入力は例外とする。
     """
-
+    
     def __init__(
         self,
         *,
@@ -292,13 +444,36 @@ class ChemoMAE(nn.Module):
         n_mask: Optional[int] = None,
         device: Optional[torch.device] = None,
     ) -> torch.Tensor:
-        """
-        可視マスク (True=使う) を生成する。
+        r"""
+        Generate a **patch-aligned visible mask** for MAE.
+
+        概要
+        ----
+        `n_patches=P` のうち `n_mask` 個を masked として選び、可視マスク
+        `visible_mask = ~masked_mask` を返す。
+
+        マスク仕様
+        ---------
+        - `visible_mask[b, t] = True`  : visible（Encoder へ入力されるパッチ）
+        - `visible_mask[b, t] = False` : masked（隠すパッチ）
+
+        Parameters
+        ----------
+        batch_size : int
+            バッチサイズ `B`。
+        n_mask : int | None, default=None
+            隠すパッチ数。None の場合は `self.n_mask`。
+        device : torch.device | None, default=None
+            出力デバイス。None の場合は CPU。
 
         Returns
         -------
         visible_mask : torch.Tensor, shape (B, L), dtype=bool
-            True=使う / False=隠す
+            True=visible / False=masked（パッチ整合）。
+
+        Notes
+        -----
+        - 内部では `make_patch_mask(...)->masked` を作り、`~masked` を返す。
         """
         if n_mask is None:
             n_mask = self.n_mask
@@ -320,7 +495,42 @@ class ChemoMAE(nn.Module):
         *,
         n_mask: Optional[int] = None,
     ) -> torch.Tensor:
-        """可視マスクから再構成を返す。visible_mask=None の場合は make_visible(...) で生成。"""
+        r"""
+        Reconstruct the input spectrum from (optionally generated) visible mask.
+
+        概要
+        ----
+        `visible_mask` を与えて `z = encoder(x, visible_mask)` を計算し、
+        `decoder(z)` により `x_recon` を返す。
+
+        `visible_mask=None` の場合は `make_visible()` でマスクを生成する
+        （再現性やマスク制御が必要な場合は明示的に `visible_mask` を渡す）。
+
+        Parameters
+        ----------
+        x : torch.Tensor, shape (B, L)
+            入力スペクトル。
+        visible_mask : torch.Tensor | None, shape (B, L), dtype=bool, default=None
+            True=visible / False=masked の可視マスク。
+        n_mask : int | None, default=None
+            `visible_mask=None` のときにのみ使用する「隠すパッチ数」。
+            None の場合は `self.n_mask`。
+
+        Returns
+        -------
+        x_recon : torch.Tensor, shape (B, L)
+            再構成系列。
+
+        Raises
+        ------
+        ValueError
+            `x` / `visible_mask` の shape/dtype が不正な場合。
+
+        Notes
+        -----
+        - `reconstruct()` は **x_recon のみ**返す（潜在 `z` が不要な推論用途向け）。
+        潜在も欲しい場合は `forward()` を使用する。
+        """
         if visible_mask is None:
             visible_mask = self.make_visible(x.size(0), n_mask=n_mask, device=x.device)
         self._check_shapes(x, visible_mask)
@@ -334,7 +544,38 @@ class ChemoMAE(nn.Module):
         *,
         n_mask: Optional[int] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Return (x_recon, z, visible_mask)。"""
+        r"""
+        Forward pass returning reconstruction, spherical latent, and mask.
+
+        概要
+        ----
+        MAE の標準計算を実行し、学習・評価で必要になる 3 つ組
+        `(x_recon, z, visible_mask)` を返す。
+
+        Parameters
+        ----------
+        x : torch.Tensor, shape (B, L)
+            入力スペクトル。
+        visible_mask : torch.Tensor | None, shape (B, L), dtype=bool, default=None
+            True=visible / False=masked の可視マスク。
+            None の場合は `make_visible()` により生成する。
+        n_mask : int | None, default=None
+            `visible_mask=None` のときに使用する「隠すパッチ数」。
+
+        Returns
+        -------
+        x_recon : torch.Tensor, shape (B, L)
+            再構成系列。
+        z : torch.Tensor, shape (B, latent_dim)
+            L2 正規化済み潜在（球面潜在）。
+        visible_mask : torch.Tensor, shape (B, L), dtype=bool
+            True=visible / False=masked（パッチ整合）。
+
+        Raises
+        ------
+        ValueError
+            入力 shape/dtype が不正な場合。
+        """
         if visible_mask is None:
             visible_mask = self.make_visible(x.size(0), n_mask=n_mask, device=x.device)
         self._check_shapes(x, visible_mask)

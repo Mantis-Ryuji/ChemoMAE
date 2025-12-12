@@ -67,13 +67,6 @@ class Extractor:
     cfg : ExtractorConfig, default=ExtractorConfig()
         抽出処理の設定（デバイス、AMP、保存先、返却形式など）。
 
-    Usage
-    -----
-    >>> model = ChemoMAE(...)
-    >>> cfg = ExtractorConfig(device="cuda", save_path="latent.npy", return_numpy=True)
-    >>> extractor = Extractor(model, cfg)
-    >>> Z = extractor(loader)   # -> np.ndarray shape (N, D)
-
     Notes
     -----
     - **マスクは一切使わない** ため、乱数に依存しない決定的な潜在表現が得られる。

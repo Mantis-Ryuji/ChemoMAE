@@ -109,12 +109,6 @@ def plot_elbow_ckm(k_list, inertias, optimal_k, elbow_idx):
     - Y 軸ラベルは "Mean Cosine Inertia" として描画される。
     - エルボー点にはラベル付き散布図マーカーが追加される。
     - `plt.show()` は呼び出さないため、呼び出し側で表示や保存を行う。
-
-    Examples
-    --------
-    >>> ks, inertias, K, idx, kappa = elbow_ckmeans(CosineKMeans, X)
-    >>> plot_elbow(ks, inertias, K, idx)
-    >>> plt.show()
     """
     k_list = np.asarray(k_list)
     inertias = np.asarray(inertias, dtype=float)
@@ -156,12 +150,6 @@ def plot_elbow_vmf(k_list, scores, optimal_k, elbow_idx, criterion: str = "bic")
     -----
     - BIC は「小さいほど良い」、平均NLL も「小さいほど良い」指標です。
     - `plt.show()` は呼び出さないため、呼び出し側で表示や保存を行ってください。
-
-    Examples
-    --------
-    >>> ks, scores, K, idx, kappa = elbow_vmf(VMFMixture, X, k_max=30, criterion="bic")
-    >>> plot_elbow_vmf(ks, scores, K, idx, criterion="bic")
-    >>> plt.show()
     """
     k_list = np.asarray(k_list)
     scores = np.asarray(scores, dtype=float)

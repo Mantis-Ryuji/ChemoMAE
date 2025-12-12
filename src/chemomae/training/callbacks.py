@@ -47,16 +47,6 @@ class EarlyStopping:
         現在の val_loss を与えて early stop 判定を更新。
         - 改善があれば内部状態をリセット。
         - 停止条件を満たせば True を返す。
-
-    使用例
-    ------
-    >>> es = EarlyStopping(patience=10, start_epoch_ratio=0.5)
-    >>> es.setup(total_epochs=100)
-    >>> for epoch in range(1, 101):
-    ...     val_loss = validate(...)
-    ...     if es.step(epoch, val_loss):
-    ...         print(f"Stopped at epoch {epoch}, best={es.best:.4f} @ {es.best_epoch}")
-    ...         break
     """
     patience: int = 20
     min_delta: float = 0.0
@@ -128,15 +118,6 @@ class EMACallback:
         EMA の状態（decay, shadow）を返す。checkpoint 保存用。
     load_state_dict(state: dict)
         保存済み状態から EMA を復元。
-
-    使用例
-    ------
-    >>> ema = EMACallback(model, decay=0.999)
-    >>> for x, y in loader:
-    ...     loss = train_step(model, x, y)
-    ...     ema.update(model)
-    >>> ema.apply_to(model)   # 検証前に EMA 重みを適用
-    >>> val_loss = validate(model)
     """
 
     def __init__(self, model: nn.Module, decay: float = 0.999):

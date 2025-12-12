@@ -82,64 +82,84 @@ class TrainerConfig:
 
 class Trainer:
     r"""
-    Generic trainer for ChemoMAE reconstruction tasks.
+    Trainer for ChemoMAE-style masked reconstruction with AMP/EMA/checkpointing.
 
     概要
     ----
-    - ChemoMAE 系モデルの学習ループを管理するクラス。
-    - AMP (bf16/fp16), TF32, EMA, 勾配クリッピング, スケジューラに対応。
-    - チェックポイントや履歴ログの保存機構を備え、resume/early stopping も可能。
+    ChemoMAE 系の reconstruction 学習を、次の機能込みで「1つの学習ループ」として提供する。
 
-    主な機能
-    --------
-    - **train_one_epoch**: 1エポック分の学習。AMP/grad_clip/EMA を適用。
-    - **validate**: 検証ループ。EMA を一時適用して val_loss を測定。
-    - **fit**: 学習全体の制御。履歴保存、checkpointing、early stopping を実行。
-    - **save_checkpoint** / **load_checkpoint**:
-      モデル・optimizer・scheduler・scaler・EMA・履歴を含む完全な状態を保存/復元。
-    - **save_weights_only**:
-      モデルの重みのみ保存（推論用の `best_model.pt` など）。
+    - AMP（bf16/fp16）+ fp16 の場合のみ GradScaler
+    - optional TF32（CUDA）
+    - optional EMA（検証時に EMA を一時適用）
+    - gradient clipping
+    - scheduler.step()（**バッチごと**に呼ぶ実装）
+    - checkpoint（last/best）と履歴保存（JSON）
+    - resume（"auto" で last.pt を検出）
+    - early stopping
 
-    ログと保存
-    ----------
-    - out_dir/training_history.json : エポックごとの train/val loss と学習率を追記保存。
-    - out_dir/checkpoints/last.pt   : 最新の完全 checkpoint。
-    - out_dir/checkpoints/best.pt   : 検証損失が改善した時点での完全 checkpoint。
-    - out_dir/best_model.pt         : 検証損失最良時のモデル重みのみ。
+    モデルの入出力契約（最重要）
+    --------------------------
+    学習対象 `model` は `model(x)` が **(x_recon, z, visible_mask)** を返すこと。
 
-    損失の扱い
-    ----------
-    - モデルは `(x_recon, z, visible_mask)` を返す前提。
-    - 内部で `loss = masked_sse/mse(x_recon, x, ~visible_mask)` を計算。
+    - `x_recon`: shape (B, L)
+    - `z`      : 任意（本 Trainer では損失計算に使用しない）
+    - `visible_mask`: bool, shape (B, L), **True=visible**
+    - masked 領域は `~visible_mask` として損失計算に渡される。
+
+    保存物（out_dir）
+    ---------------
+    - `out_dir/training_history.json`
+      各 epoch の記録（train_loss / val_loss / lr）を append して保存（atomic write）。
+    - `out_dir/checkpoints/last.pt`
+      最新の完全 checkpoint。
+    - `out_dir/checkpoints/best.pt`
+      best（val 改善）時の完全 checkpoint。
+    - `out_dir/best_model.pt`
+      best 時の **model.state_dict() のみ**。
+
+    checkpoint の内容
+    -----------------
+    `save_checkpoint()` は次を含む dict を保存する：
+    - epoch, model, optimizer
+    - scheduler（あれば）, scaler（有効なら）
+    - ema（あれば）と ema_decay
+    - amp 設定, best 情報, history, device
 
     Parameters
     ----------
     model : nn.Module
-        学習対象の ChemoMAE モデル。
+        学習対象モデル。`to(device)` される。
     optimizer : torch.optim.Optimizer
         最適化手法。
     train_loader : Iterable
-        学習データローダー。
+        学習データローダ。`batch` は `x` あるいは `(x, ...)` 形式を許容し、
+        `Trainer._to_x()` が `x` を抽出して device に転送する。
     val_loader : Iterable, optional
-        検証データローダー。
+        検証データローダ。None の場合 `validate()` は NaN を返す。
     scheduler : torch.optim.lr_scheduler.LambdaLR, optional
-        学習率スケジューラ。
-    cfg : TrainerConfig, default=TrainerConfig()
-        学習設定（デバイス、AMP, EMA, early stop, 出力先など）。
+        学習率スケジューラ。**バッチごとに step()** される点に注意。
+    cfg : TrainerConfig
+        設定。
 
-    戻り値
-    ------
-    fit() : dict
-        - "best": {"epoch": int, "val_loss": float}
-        - "epochs": int （実際に走ったエポック数）
+    Attributes
+    ----------
+    device : torch.device
+        実行デバイス。
+    out_dir : pathlib.Path
+        出力ディレクトリ。
+    ckpt_dir : pathlib.Path
+        checkpoint 保存先（`out_dir/checkpoints`）。
+    history : list[dict]
+        学習履歴。`_save_history()` により JSON へ追記保存される。
+    best : dict
+        {"epoch": int, "val_loss": float} を保持。
 
-    使用例
-    ------
-    >>> cfg = TrainerConfig(device=None)  # None → 自動判定（cuda/mps/cpu）
-    >>> trainer = Trainer(model, optimizer, train_loader, val_loader, scheduler=scheduler, cfg=cfg)
-    >>> history = trainer.fit(epochs=100)
-    >>> print(history["best"])
-    {'epoch': 42, 'val_loss': 0.0123}
+    Notes
+    -----
+    - EMA は `validate()` の間だけ一時適用し、終了後にモデル重みを復元する。
+    - scheduler を epoch 単位で step したい場合は、この Trainer の実装（バッチ step）に合わせて
+      スケジューラ側を設計すること（例: 総 step 数ベースの LambdaLR）。
+    - `save_weights_only("best_model.pt")` は best 改善時に自動で呼ばれる。
     """
     def __init__(
         self,
@@ -244,6 +264,21 @@ class Trainer:
         }
 
     def save_checkpoint(self, epoch: int, *, is_best: bool):
+        """
+        Save a full training checkpoint.
+
+        Parameters
+        ----------
+        epoch : int
+            保存対象 epoch。
+        is_best : bool
+            True の場合 `best.pt` も更新する。常に `last.pt` は更新される。
+
+        Notes
+        -----
+        - 保存は `*.tmp` に `torch.save` してから `replace` する（atomic）。
+        - 内容は `_checkpoint_state()` 参照（model/optimizer/scheduler/scaler/ema/history/best など）。
+        """
         state = self._checkpoint_state(epoch)
         last = self.ckpt_dir / "last.pt"
         tmp_last = last.with_suffix(".pt.tmp")
@@ -257,9 +292,41 @@ class Trainer:
             tmp_best.replace(best)
 
     def save_weights_only(self, filename: str = "best_model.pt"):
+        """
+        Save model weights only (inference-friendly).
+
+        Parameters
+        ----------
+        filename : str, default="best_model.pt"
+            `out_dir` 配下に保存されるファイル名。
+
+        Notes
+        -----
+        - `torch.save(self.model.state_dict(), out_dir/filename)` を行う。
+        optimizer/scheduler/scaler/history は含まない。
+        """
         torch.save(self.model.state_dict(), (self.out_dir / filename).as_posix())
 
     def load_checkpoint(self, path: str | Path) -> int:
+        """
+        Load a full training checkpoint and restore trainer state.
+
+        Parameters
+        ----------
+        path : str | Path
+            `save_checkpoint()` が生成した checkpoint ファイル。
+
+        Returns
+        -------
+        start_epoch : int
+            次に回すべき epoch（checkpoint の epoch + 1）。
+
+        Notes
+        -----
+        - `map_location=self.device` でロードするため、異なる GPU/CPU 環境でも復元しやすい。
+        - scaler は fp16 + cuda のときのみ有効で、それ以外では state があっても無視され得る。
+        - EMA state が存在し、Trainer 側で EMA が未生成なら、decay を復元して生成する。
+        """
         state = torch.load(Path(path).as_posix(), map_location=self.device, weights_only=False)
         self.model.load_state_dict(state["model"], strict=True)
         self.optimizer.load_state_dict(state["optimizer"])
@@ -286,6 +353,27 @@ class Trainer:
 
     # ------------------------------ loops ------------------------------
     def train_one_epoch(self) -> float:
+        r"""
+        Run one training epoch.
+
+        概要
+        ----
+        `train_loader` を 1 周し、各バッチで
+        forward → loss（masked）→ backward → optimizer.step を行う。
+        有効なら AMP / grad clipping / EMA / scheduler を適用する。
+
+        Returns
+        -------
+        train_loss : float
+            その epoch のサンプル平均損失。
+            実装では `Σ loss_i / N`（バッチ損失×バッチサイズの総和を N で割る）。
+
+        Notes
+        -----
+        - scheduler がある場合、**各バッチで `scheduler.step()`** が呼ばれる。
+        - EMA が有効な場合、**各バッチ更新後**に `ema.update(model)` が呼ばれる。
+        - 損失は `masked_sse/mse(x_recon, x, ~visible_mask)` で計算する。
+        """
         self.model.train()
         meter_sum, meter_cnt = 0.0, 0
         
@@ -322,6 +410,26 @@ class Trainer:
         return meter_sum / max(1, meter_cnt)
 
     def validate(self) -> float:
+        """
+        Run validation loop.
+
+        概要
+        ----
+        `val_loader` を 1 周し、masked reconstruction loss を評価する。
+        EMA が有効な場合、評価中のみ EMA 重みをモデルへ適用し、評価後に元へ戻す。
+
+        Returns
+        -------
+        val_loss : float
+            検証データのサンプル平均損失。
+            `val_loader is None` の場合は `nan` を返す。
+
+        Notes
+        -----
+        - 評価は `torch.inference_mode()` で実行され、勾配は保持しない。
+        - EMA 適用時は、評価前に model.state_dict() を clone して backup し、
+        評価後に strict load で復元する（メモリは増える）。
+        """
         if self.val_loader is None:
             return float("nan")
         self.model.eval()
@@ -348,6 +456,39 @@ class Trainer:
 
     # ------------------------------ fit -------------------------------
     def fit(self, epochs: int) -> Dict:
+        """
+        Fit the model for a given number of epochs (with resume / checkpoint / early stop).
+
+        概要
+        ----
+        1. 必要なら resume（"auto" で last.pt を検出）
+        2. epoch ループ:
+        - train_one_epoch()
+        - validate()
+        - 履歴を JSON に追記保存
+        - best 更新（val 改善）なら best_model.pt を保存
+        - checkpoint 保存（last と必要なら best）
+        - early stop 判定
+
+        Parameters
+        ----------
+        epochs : int
+            総 epoch 数（最大反復）。early stop により途中終了することがある。
+
+        Returns
+        -------
+        result : dict
+            次を含む:
+            - "best": {"epoch": int, "val_loss": float}
+            - "epochs": int
+            実際に走った最終 epoch（途中停止時はその値）。
+
+        Notes
+        -----
+        - best 更新条件は `(best_val - current_val) > early_stop_min_delta`。したがって min_delta を増やすと best 更新が起きにくくなる。
+        - early stop も同じ `min_delta` と `start_epoch_ratio` を用いる。
+        - `training_history.json` は atomic write（tmp 書いて replace）で破損耐性を高めている。
+        """
         es = EarlyStopping(
             patience=self.cfg.early_stop_patience if self.cfg.early_stop_patience is not None else 10**9,
             min_delta=self.cfg.early_stop_min_delta,

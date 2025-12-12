@@ -64,13 +64,6 @@ def build_optimizer(
     - `decay` group: 通常の重みパラメータ（weight_decay を適用）
     - `no_decay` group: bias, LayerNorm, cls_token, pos_embed（weight_decay=0.0）
     - これは BERT/ViT 系の学習レシピに基づく慣習で、汎用的に有効。
-
-    使用例
-    ------
-    >>> model = ChemoMAE(seq_len=256)
-    >>> optimizer = build_optimizer(model, lr=1e-4, weight_decay=1e-4)
-    >>> for p in optimizer.param_groups:
-    ...     print(len(p["params"]), p["weight_decay"])
     """
     decay, no_decay = [], []
     for name, p in model.named_parameters():
@@ -154,14 +147,6 @@ def build_scheduler(
     - 総ステップ数 = `steps_per_epoch * epochs`
     - ウォームアップステップ数 = `steps_per_epoch * warmup_epochs`
     - コサイン減衰はウォームアップ後の残りステップに適用される。
-
-    使用例
-    ------
-    >>> optimizer = build_optimizer(model, lr=1e-3)
-    >>> scheduler = build_scheduler(optimizer, steps_per_epoch=100, epochs=50, warmup_epochs=2)
-    >>> for step in range(200):  # 学習ループ内で scheduler.step() を呼び出す
-    ...     optimizer.step()
-    ...     scheduler.step()
     """
     total_steps = steps_per_epoch * epochs
     warmup_steps = steps_per_epoch * warmup_epochs

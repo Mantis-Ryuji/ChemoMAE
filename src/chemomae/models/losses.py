@@ -44,13 +44,6 @@ def masked_sse(
       - "sum" と "batch_mean" は 0 を返す
       - "mean" は 0 を返す（ゼロ割りを避けて 0 にフォールバック）
     - 勾配は `x_recon` と `x` の双方に流れます（必要に応じて `x` の `requires_grad` を切る）。
-
-    Examples
-    --------
-    >>> x = torch.randn(2, 4)
-    >>> x_rec = x + 0.1
-    >>> visible = torch.tensor([[1,1,0,0],[1,0,1,0]], dtype=torch.bool)
-    >>> loss = masked_sse(x_rec, x, ~visible, reduction="batch_mean")
     """
     diff2 = (x_recon - x).pow(2)[mask]
     if reduction == "sum":
@@ -103,13 +96,6 @@ def masked_mse(
       - "mean" は 0 を返す
       - "sum" / "batch_mean" も 0 を返す
     - 可視マスクを使う場合は `masked_mse(x_rec, x, ~visible)` のように反転して渡してください。
-
-    Examples
-    --------
-    >>> x = torch.randn(2, 4)
-    >>> x_rec = torch.randn(2, 4)
-    >>> visible = torch.tensor([[1,1,0,0],[1,0,1,0]], dtype=torch.bool)
-    >>> mse = masked_mse(x_rec, x, ~visible, reduction="mean")
     """
     diff2 = (x_recon - x).pow(2)[mask]
     if reduction == "sum":

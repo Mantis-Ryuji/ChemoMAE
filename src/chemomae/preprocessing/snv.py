@@ -103,14 +103,6 @@ class SNVScaler:
           mu, sd は NumPy float32 配列で返る。
     inverse_transform(Y, mu, sd)
         `transform_stats=True` で得た mu, sd を使って逆変換する。
-
-    Examples
-    --------
-    >>> scaler = SNVScaler(transform_stats=True)
-    >>> X = np.array([[1.0, 2.0, 3.0],
-    ...               [4.0, 5.0, 6.0]], dtype=np.float32)
-    >>> Y, mu, sd = scaler.transform(X)
-    >>> X_rec = scaler.inverse_transform(Y, mu=mu, sd=sd)
     """
     eps: float = 1e-12
     copy: bool = True

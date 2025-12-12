@@ -428,6 +428,10 @@ class CosineKMeans(nn.Module):
         ------
         RuntimeError
             未学習で中心が存在しない場合。
+        
+        Notes
+        -----
+        - すべて CPU tensor として保存されるため、環境依存（GPU 有無）の影響を受けにくい。
         """
         if not self._fitted or self.centroids.numel() == 0:
             raise RuntimeError("Model is not fitted; no centroids to save.")
