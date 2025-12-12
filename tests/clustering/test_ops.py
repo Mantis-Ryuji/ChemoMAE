@@ -35,7 +35,7 @@ def test_find_elbow_curvature_and_plot_elbow(tmp_path):
     inertias = [0.9, 0.7, 0.75, 0.6, 0.59, 0.58]
     K, idx, kappa = find_elbow_curvature(k_list, inertias)
     assert 1 <= K <= 6 and 0 <= idx < len(k_list)
-    assert isinstance(kappa, np.ndarray) and kappa.shape[0] == len(k_list)
+    assert isinstance(kappa, float)
 
     # 描画ヘルパのスモーク（保存まで）
     plot_elbow_ckm(k_list, inertias, K, idx)

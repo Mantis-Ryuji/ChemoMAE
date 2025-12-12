@@ -16,6 +16,8 @@ def silhouette_samples_cosine_gpu(
     eps: float = 1e-12,
 ) -> np.ndarray | torch.Tensor:
     r"""
+    概要
+    ----------
     sklearn.metrics.silhouette_samples と同等の出力を返す
     「コサイン距離」版の GPU 実装（厳密・O(NK)）。
 
