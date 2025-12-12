@@ -13,7 +13,6 @@ def test_mae_forward_shapes_and_types():
         num_layers=2,
         dim_feedforward=128,
         dropout=0.1,
-        use_learnable_pos=True,
         latent_dim=16,
         n_patches=8,
         n_mask=3,

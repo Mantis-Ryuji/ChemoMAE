@@ -117,7 +117,6 @@ mae = ChemoMAE(
     num_layers=4,
     dim_feedforward=1024,
     dropout=0.1,
-    use_learnable_pos=True,
     latent_dim=16,
     n_patches=32,
     n_mask=16,
@@ -134,7 +133,6 @@ mae = ChemoMAE(
 | `num_layers`        | int   | 4       | Transformer encoder layers.                        |
 | `dim_feedforward`   | int   | 1024    | FFN hidden dimension.                              |
 | `dropout`           | float | 0.1     | Dropout in encoder layers.                         |
-| `use_learnable_pos` | bool  | True    | Learnable positional embeddings for patch indices. |
 | `latent_dim`        | int   | 16      | Dimension of L2-normalized latent embedding.       |
 | `n_patches`         | int   | 32      | Number of patches; must divide `seq_len`.          |
 | `n_mask`            | int   | 16      | Number of patches to mask.                         |

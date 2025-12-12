@@ -109,9 +109,8 @@ model = ChemoMAE(
     num_layers=4,            # encoder depth
     dim_feedforward=1024,    # MLP dimension
     dropout=0.1,
-    use_learnable_pos=True,  # learnable positional encoding
     latent_dim=16,           # latent vector dimension
-    n_patches=32,             # number of total patches
+    n_patches=32,            # number of total patches
     n_mask=16                # number of masked patches per sample
 )
 
