@@ -15,7 +15,7 @@ def test_mae_forward_shapes_and_types():
         dropout=0.1,
         use_learnable_pos=True,
         latent_dim=16,
-        n_blocks=8,
+        n_patches=8,
         n_mask=3,
     )
 
@@ -26,16 +26,16 @@ def test_mae_forward_shapes_and_types():
     assert z.shape == (B, 16)
     assert visible.shape == (B, L) and visible.dtype == torch.bool
 
-    # マスク総数は n_mask * block_size のはず（masked = ~visible）
-    block_size = L // model.n_blocks
+    # マスク総数は n_mask * patche_size のはず（masked = ~visible）
+    patch_size = L // model.n_patches
     masked = ~visible
-    assert int(masked[0].sum().item()) == model.n_mask * block_size
+    assert int(masked[0].sum().item()) == model.n_mask * patch_size
 
 
 def test_mae_encoder_and_reconstruct_api():
     B, L = 2, 24
     model = ChemoMAE(seq_len=L, d_model=32, nhead=4, num_layers=1, dim_feedforward=64,
-                    latent_dim=8, n_blocks=6, n_mask=2)
+                    latent_dim=8, n_patches=6, n_mask=2)
 
     x = torch.randn(B, L)
 
@@ -54,7 +54,7 @@ def test_mae_loss_and_backward_on_masked_sse():
     B, L = 3, 48
     model = ChemoMAE(seq_len=L, d_model=64, nhead=4, num_layers=2,
                     dim_feedforward=128, latent_dim=12,
-                    n_blocks=12, n_mask=4)
+                    n_patches=12, n_mask=4)
 
     x = torch.randn(B, L, requires_grad=True)
     x_recon, z, visible = model(x)

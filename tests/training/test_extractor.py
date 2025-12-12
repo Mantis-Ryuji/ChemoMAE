@@ -9,7 +9,7 @@ def _make_tiny_model(seq_len=16, d_model=16, latent_dim=8):
     return ChemoMAE(
         seq_len=seq_len, d_model=d_model, nhead=4, num_layers=1, dim_feedforward=32,
         dropout=0.0, use_learnable_pos=True, latent_dim=latent_dim,
-        n_blocks=4, n_mask=1
+        n_patches=4, n_mask=1
     )
 
 

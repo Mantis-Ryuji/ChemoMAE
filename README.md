@@ -24,7 +24,7 @@ ChemoMAE learns representations that are consistent with this geometry and prese
 ### 1. Extending Chemometrics with Deep Learning
 
 A **Transformer-based Masked Autoencoder (MAE)** specialized for **1D spectra** enables flexible, data-driven representation learning.<br>
-We apply block-wise masking to SNV-preprocessed spectra and optimize the **mean squared error (MSE)** only over the masked spectral regions.
+We apply **patch-wise masking** to SNV-preprocessed spectra and optimize the mean squared error (MSE) only over the masked spectral regions.
 The encoder produces **unit-norm embeddings** `z` that capture **directional spectral features**.
 This architecture naturally aligns with the **hyperspherical geometry** induced by SNV, resulting in representations inherently suited for **cosine similarity** and **hyperspherical clustering**.
 
@@ -96,7 +96,7 @@ test_loader  = DataLoader(test_ds,  batch_size=1024, shuffle=False, drop_last=Fa
 #### 3. Model, Optimizer, and Scheduler Setup
 
 Define ChemoMAE (Masked AutoEncoder for 1D spectra).
-This model learns to reconstruct masked spectral blocks while learning representations constrained on the unit hypersphere.
+This model learns to reconstruct masked spectral patches while learning representations constrained on the unit hypersphere.
 
 ```python
 from chemomae.models import ChemoMAE
@@ -111,8 +111,8 @@ model = ChemoMAE(
     dropout=0.1,
     use_learnable_pos=True,  # learnable positional encoding
     latent_dim=16,           # latent vector dimension
-    n_blocks=32,             # number of total blocks
-    n_mask=16                # number of masked blocks per sample
+    n_patches=32,             # number of total patches
+    n_mask=16                # number of masked patches per sample
 )
 
 # Optimizer: AdamW with decoupled weight decay
@@ -209,7 +209,7 @@ tester_cfg = TesterConfig(
     amp_dtype = "bf16",
     loss_type = "mse",
     reduction = "mean",
-    fixed_visible = None,         # optionally fix visible blocks during masking
+    fixed_visible = None,         # optionally fix visible patches during masking
     log_history = True,           # append evaluation results to history file
     history_filename = "training_history.json"
 )
@@ -423,8 +423,9 @@ X_down = cosine_fps_downsample(X_snv, ratio=0.1)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/models/chemo_mae.py)
 
 **ChemoMAE** is a **Masked Autoencoder for 1D spectra**.<br>
-It performs **block-wise masking** along the spectral axis, encoding only the **visible tokens** and the **[CLS] token**, and reconstructs the full sequence through a **linear projection decoder**.<br>
-The encoder incorporates **positional embeddings** to capture local spectral order, while the **[CLS]** output is projected to a `latent_dim` vector and **L2-normalized**, yielding embeddings that lie on the **unit hypersphere** — **naturally suited for cosine-based clustering and similarity metrics**.
+It adopts a **patch-token formulation**, where contiguous spectral bands are grouped into patches and masking is performed **at the patch level** along the spectral axis.
+The encoder processes only the **visible patch tokens** together with a [CLS] token, and the decoder reconstructs the full spectrum using a **lightweight MLP decoder**.<br>
+Positional embeddings preserve local spectral order, while the [CLS] output is projected to a `latent_dim` vector and **L2-normalized**, yielding embeddings that lie on the **unit hypersphere — naturally suited for cosine similarity and hyperspherical clustering**.
 
 ```python
 # === Basic training usage ===
@@ -438,7 +439,7 @@ mae = ChemoMAE(
     nhead=4, 
     num_layers=4, 
     dim_feedforward=1024,
-    n_blocks=32, 
+    n_patches=32, 
     n_mask=16
 )
 
@@ -459,9 +460,9 @@ x_rec2 = mae.reconstruct(x, n_mask=16)
 
 **Key Features**
 
-* **Block-wise masking:** split length-`L` spectra into `n_blocks`; hide `n_mask` blocks per sample. 
+* **Patch-wise masking:** split a length-`L` spectrum into `n_patches` contiguous patches and randomly hide `n_mask` patches per sample.
 * **Encoder (`ChemoEncoder`):** transforms only visible tokens + CLS; outputs **L2-normalized** latent `(B, latent_dim)`. 
-* **Decoder (`ChemoDecoderLP`):** linear projection decoder that reconstructs `(B, L)`; **loss computed externally**, typically on masked regions. 
+* **Decoder (`ChemoDecoder`):** a **lightweight two-layer MLP decoder** that reconstructs the full spectrum `(B, L)` from the latent representation; the reconstruction loss is computed externally, typically only on masked regions.
 * **Positional encoding:** choose **learnable** or **fixed sinusoidal** embeddings. 
 * **Cosine-friendly latents:** unit-sphere embeddings pair well with **CosineKMeans / vMF Mixture** and UMAP/t-SNE (`metric="cosine"`). 
 
@@ -560,7 +561,7 @@ from chemomae.training.optim import build_optimizer, build_scheduler
 from chemomae.training.trainer import Trainer, TrainerConfig
 
 # 1) Model and configuration
-model = ChemoMAE(seq_len=256, latent_dim=16, n_blocks=32, n_mask=24)
+model = ChemoMAE(seq_len=256, latent_dim=16, n_patches=32, n_mask=24)
 cfg = TrainerConfig(
     out_dir = "runs",
     device = "cuda",

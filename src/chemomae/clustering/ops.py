@@ -33,10 +33,10 @@ def find_elbow_curvature(
     smooth: bool = True,
     window_length: int = 5,
     polyorder: int = 2,
-) -> Tuple[int, int, np.ndarray]:
+) -> Tuple[int, int, float]:
     """
     Detect elbow point by curvature on a normalized curve.
-    Savitzky–Golay の微分出力（deriv=1,2）を直接用いて κ を計算する。
+    Savitzky–Golay の微分出力（deriv=1,2）を直接用いて κ を計算し、最大点の κ を返す。
     """
     x = np.asarray(k_list, dtype=float)
     y = np.asarray(inertia_list, dtype=float)
@@ -81,7 +81,7 @@ def find_elbow_curvature(
     kappa[0] = kappa[-1] = -np.inf
 
     idx = int(np.argmax(kappa))
-    return int(k_list[idx]), idx, kappa
+    return int(k_list[idx]), idx, float(kappa[idx])
 
 
 def plot_elbow_ckm(k_list, inertias, optimal_k, elbow_idx):

@@ -200,7 +200,14 @@ class VMFMixture(nn.Module):
 
     # ------------------------- initialization -------------------------
     @torch.no_grad()
-    def _init_params(self, X: torch.Tensor) -> None:
+    def _init_params(self, X: torch.Tensor, *, chunk: Optional[int] = None) -> None:
+        """Initialize parameters.
+
+        Notes
+        -----
+        If ``chunk`` is provided and ``X`` is very large, initialization uses a
+        random subset (on CPU) to avoid moving the full dataset to GPU.
+        """
         N, D = int(X.size(0)), int(X.size(1))
         if self.d is None:
             self.d = D
@@ -210,90 +217,140 @@ class VMFMixture(nn.Module):
         self._nu = 0.5 * float(self.d) - 1.0
         self._allocate_buffers()
 
-        # normalize data
-        Xn = torch.nn.functional.normalize(X.to(self.device, dtype=torch.float32), dim=1)
+        # --------------------------------------------------
+        # Choose data for initialization (subset when chunked)
+        # --------------------------------------------------
+        X_src = X
+        if chunk is not None and N > max(int(chunk), 0):
+            # Heuristic subset size: enough to cover components while keeping init cheap
+            m = min(N, max(10_000, 50 * self.K))
+            # sample without replacement on CPU for stability
+            perm = torch.randperm(N, generator=self._g, device=X.device)
+            idx = perm[:m]
+            X_src = X[idx]
 
-        # init mus by cosine k-means++ like seeding
-        C = torch.empty(self.K, self.d, device=self.device)
-        idx0 = torch.randint(0, N, (1,), generator=self._g).item()
+        Xn = torch.nn.functional.normalize(X_src.to(self.device, dtype=torch.float32), dim=1)
+        Nn = int(Xn.size(0))
+
+        # init mus by cosine k-means++ like seeding (on the init subset)
+        C = torch.empty(self.K, self.d, device=self.device, dtype=torch.float32)
+        idx0 = torch.randint(0, Nn, (1,), generator=self._g).item()
         C[0] = Xn[idx0]
         dmin = 1.0 - (Xn @ C[0:1].T).squeeze(1)  # 1 - cos
-        dmin = dmin.clamp_min_(1e-12)
-        probs = dmin / (dmin.sum() + 1e-12)
         for k in range(1, self.K):
-            idx = torch.multinomial(probs.cpu(), 1, generator=self._g).item()
-            C[k] = Xn[idx]
-            dk = 1.0 - (Xn @ C[k:k+1].T).squeeze(1)
-            dmin = torch.minimum(dmin, dk).clamp_min_(1e-12)
-            probs = dmin / (dmin.sum() + 1e-12)
-        self.mus.copy_(torch.nn.functional.normalize(C, dim=1))
+            probs = dmin.clamp_min(1e-8)
+            probs = probs / probs.sum()
+            idxk = torch.multinomial(probs, 1, generator=self._g).item()
+            C[k] = Xn[idxk]
+            d = 1.0 - (Xn @ C[k:k+1].T).squeeze(1)
+            dmin = torch.minimum(dmin, d)
 
-        # init kappas by average resultant length per cluster assignment once
-        labels = (Xn @ self.mus.T).argmax(dim=1)
-        kappa = torch.empty(self.K, device=self.device)
-        for k in range(self.K):
-            mask = labels == k
-            if mask.any():
-                r = Xn[mask].mean(dim=0)
-                Rbar = r.norm().clamp(1e-6, 1 - 1e-6)  # in [0,1]
-                Df = float(self.d)
-                kappa[k] = (Rbar * (Df - Rbar**2)) / (1.0 - Rbar**2)
-            else:
-                kappa[k] = 1.0
-        self.kappas.copy_(kappa.clamp_min(1e-6))
-        self.logpi.copy_(torch.full((self.K,), -math.log(self.K), device=self.device))
+        self.mus.copy_(torch.nn.functional.normalize(C, dim=1))
+        # init kappas moderately (avoid extremely flat)
+        self.kappas.fill_(self.kappa_init)
+        # init mixing weights uniform
+        self.logpi.fill_(-math.log(float(self.K)))
         self._refresh_logC()
 
-    @torch.no_grad()
-    def _refresh_logC(self) -> None:
-        assert self.d is not None, "d is not initialized"
-        self._logC.copy_(vmf_logC(self.d, self.kappas))
 
     # ------------------------- E / M with chunking -------------------------
     @torch.inference_mode()
-    def _e_step_chunk(self, X: torch.Tensor, chunk: Optional[int]) -> Tuple[torch.Tensor, float]:
-        """Return responsibilities γ (N,K) and lower bound (approx log-lik)."""
-        X = torch.nn.functional.normalize(X.to(self.device, dtype=torch.float32), dim=1)
+    def _validate_chunk(self, chunk: Optional[int]) -> Optional[int]:
+        if chunk is None:
+            return None
+        if not isinstance(chunk, int):
+            raise ValueError(f"chunk must be int or None, got {type(chunk)}")
+        if chunk <= 0:
+            raise ValueError(f"chunk must be positive, got {chunk}")
+        return chunk
+
+    @torch.inference_mode()
+    def _e_step_chunk(
+        self,
+        X: torch.Tensor,
+        chunk: Optional[int],
+        *,
+        return_gamma: bool = True,
+    ) -> Tuple[Optional[torch.Tensor], float, torch.Tensor, torch.Tensor]:
+        """Chunked E-step.
+
+        Returns
+        -------
+        gam : (N,K) responsibilities on ``self.device`` if ``return_gamma`` else None
+        lb  : float, approximate log-likelihood (sum over samples)
+        Nk  : (K,) effective counts (on device, float32)
+        Sk  : (K,d) weighted sums Σ_i γ_{ik} x_i (on device, float32)
+
+        Notes
+        -----
+        This implementation is *truly streaming* w.r.t. ``X``: it never moves the
+        full dataset to GPU. Only each chunk is transferred (if needed).
+        """
+        chunk = self._validate_chunk(chunk)
         N = int(X.size(0))
         K = self.K
         logpi = self.logpi.log_softmax(dim=0)  # (K,)
-        gam = torch.empty(N, K, device=self.device, dtype=torch.float32)
+
+        gam = torch.empty(N, K, device=self.device, dtype=torch.float32) if return_gamma else None
+        Nk = torch.zeros(K, device=self.device, dtype=torch.float32)
+        Sk = torch.zeros(K, self.d, device=self.device, dtype=torch.float32)
+
+        lb_total = 0.0
 
         def block(s: int, e: int) -> float:
-            x = X[s:e]
-            dot = x @ self.mus.T                     # (b,K)
-            loglik_components = dot * self.kappas.unsqueeze(0) + self._logC.unsqueeze(0)
-            logpost = loglik_components + logpi.unsqueeze(0)
-            gam[s:e] = torch.softmax(logpost, dim=1)  # responsibilities
-            return torch.logsumexp(logpost, dim=1).sum().item()
+            xb = X[s:e].to(self.device, dtype=torch.float32)
+            xb = torch.nn.functional.normalize(xb, dim=1)
 
-        if (chunk is None) or (chunk <= 0) or (N <= (chunk or 0)):
-            lb = block(0, N)
+            dot = xb @ self.mus.T  # (b,K)
+            loglik_components = dot * self.kappas.unsqueeze(0) + self._logC.unsqueeze(0)  # (b,K)
+            logpost = loglik_components + logpi.unsqueeze(0)  # (b,K)
+
+            gb = torch.softmax(logpost, dim=1)  # (b,K)
+            if return_gamma:
+                gam[s:e] = gb
+
+            Nk.add_(gb.sum(dim=0))
+            Sk.add_(gb.T @ xb)
+
+            return float(torch.logsumexp(logpost, dim=1).sum().item())
+
+        if chunk is None or N <= chunk:
+            lb_total += block(0, N)
         else:
-            lb = 0.0
             for s in range(0, N, chunk):
                 e = min(s + chunk, N)
-                lb += block(s, e)
-        return gam, float(lb)
+                lb_total += block(s, e)
+
+        return gam, float(lb_total), Nk, Sk
+
 
     @torch.no_grad()
-    def _m_step(self, X: torch.Tensor, gam: torch.Tensor, eps: float = 1e-8) -> None:
-        X = torch.nn.functional.normalize(X.to(self.device, dtype=torch.float32), dim=1)
-        Nk = gam.sum(dim=0).clamp_min(eps)              # (K,)
+    def _m_step_from_stats(self, Nk: torch.Tensor, Sk: torch.Tensor, eps: float = 1e-8) -> None:
+        """M-step using sufficient statistics.
+
+        Nk = Σ_i γ_{ik}  (K,)
+        Sk = Σ_i γ_{ik} x_i  (K,d)
+        """
+        Nk = Nk.to(self.device, dtype=torch.float32).clamp_min(eps)
+        Sk = Sk.to(self.device, dtype=torch.float32)
+
         # mixing weights
         pi = Nk / Nk.sum()
-        self.logpi.copy_(torch.log(pi))
+        self.logpi.copy_(torch.log(pi.clamp_min(1e-20)))
+
         # mean directions
-        mu = (gam.T @ X) / Nk.unsqueeze(1)              # (K,d)
+        Sk_norm = torch.linalg.vector_norm(Sk, dim=1).clamp_min(eps)  # (K,)
+        mu = Sk / Sk_norm.unsqueeze(1)
         mu = torch.nn.functional.normalize(mu, dim=1)
         self.mus.copy_(mu)
-        # update kappa via resultant length
-        Rnorm = torch.linalg.vector_norm((gam.T @ X), dim=1) / Nk  # (K,)
-        Rbar = Rnorm.clamp(1e-6, 1 - 1e-6)
+
+        # update kappa via resultant length: Rbar = ||Sk|| / Nk
+        Rbar = (Sk_norm / Nk).clamp(1e-6, 1.0 - 1e-6)
         Df = float(self.d)
         kappa = (Rbar * (Df - Rbar**2)) / (1.0 - Rbar**2 + 1e-8)
         self.kappas.copy_(kappa.clamp_min(1e-6))
         self._refresh_logC()
+
 
     # ------------------------- Public API -------------------------
     @torch.no_grad()
@@ -303,23 +360,29 @@ class VMFMixture(nn.Module):
         if not torch.isfinite(X).all():
             raise ValueError("X contains NaN/Inf")
 
-        # (X is moved to device inside _init_params/_e_step_chunk too; this is safe)
-        self._init_params(X)
-        prev = None
+        # init (uses subset when chunked)
+        self._init_params(X, chunk=chunk)
+
+        prev: Optional[float] = None
+        last_lb: float = -float("inf")
+
         for t in range(self.max_iter):
-            gam, lb = self._e_step_chunk(X, chunk)
-            self._m_step(X, gam)
+            _, lb, Nk, Sk = self._e_step_chunk(X, chunk, return_gamma=False)
+            self._m_step_from_stats(Nk, Sk)
+
             self.n_iter_ = t + 1
-            # relative improvement
+            last_lb = float(lb)
+
             if prev is not None:
-                rel = abs(lb - prev) / (abs(prev) + 1e-12)
-                if (rel < self.tol) or (abs(lb - prev) < 1e-6):
-                    prev = lb
+                rel = abs(last_lb - prev) / (abs(prev) + 1e-12)
+                if (rel < self.tol) or (abs(last_lb - prev) < 1e-6):
                     break
-            prev = lb
-        self.lower_bound_ = float(prev if prev is not None else lb)
+            prev = last_lb
+
+        self.lower_bound_ = float(last_lb)
         self._fitted = True
         return self
+
 
     @torch.no_grad()
     def predict_proba(self, X: torch.Tensor, *, chunk: Optional[int] = None) -> torch.Tensor:
@@ -327,8 +390,10 @@ class VMFMixture(nn.Module):
             raise RuntimeError("Model not fitted")
         if X.ndim != 2 or (self.d is not None and X.size(1) != self.d):
             raise ValueError(f"X must be (N,{self.d}), got {tuple(X.shape)}")
-        gam, _ = self._e_step_chunk(X, chunk)
+        gam, _, _, _ = self._e_step_chunk(X, chunk, return_gamma=True)
+        assert gam is not None
         return gam
+
 
     @torch.no_grad()
     def predict(self, X: torch.Tensor, *, chunk: Optional[int] = None) -> torch.Tensor:
@@ -358,28 +423,38 @@ class VMFMixture(nn.Module):
     # ------------------------- Model diagnostics -------------------------
     @torch.inference_mode()
     def loglik(self, X: torch.Tensor, *, chunk: Optional[int] = None, average: bool = False) -> float:
-        """Total (or average) log-likelihood under current parameters."""
+        """Total (or average) log-likelihood under current parameters.
+
+        Notes
+        -----
+        If ``chunk`` is provided, the computation streams ``X`` by chunks and does not
+        move the full dataset to GPU.
+        """
         if not self._fitted:
             raise RuntimeError("Model not fitted")
-        Xn = torch.nn.functional.normalize(X.to(self.device, dtype=torch.float32), dim=1)
-        N = int(Xn.size(0))
+
+        chunk = self._validate_chunk(chunk)
+        N = int(X.size(0))
         logpi = self.logpi.log_softmax(dim=0).unsqueeze(0)  # (1,K)
 
         def block(s: int, e: int) -> torch.Tensor:
-            x = Xn[s:e]
-            dot = x @ self.mus.T
+            xb = X[s:e].to(self.device, dtype=torch.float32)
+            xb = torch.nn.functional.normalize(xb, dim=1)
+            dot = xb @ self.mus.T
             loglik_components = dot * self.kappas.unsqueeze(0) + self._logC.unsqueeze(0)
             return torch.logsumexp(loglik_components + logpi, dim=1).sum()
 
-        if (chunk is None) or (chunk <= 0) or (N <= (chunk or 0)):
+        if chunk is None or N <= chunk:
             total = block(0, N)
         else:
             total = torch.tensor(0.0, device=self.device)
             for s in range(0, N, chunk):
                 e = min(s + chunk, N)
                 total = total + block(s, e)
+
         total_val = float(total.item())
         return (total_val / N) if average else total_val
+
 
     @torch.inference_mode()
     def num_params(self) -> int:

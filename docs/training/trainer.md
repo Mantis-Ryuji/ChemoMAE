@@ -162,7 +162,7 @@ from chemomae.models import ChemoMAE
 from chemomae.training.optim import build_optimizer, build_scheduler
 from chemomae.training.trainer import Trainer, TrainerConfig
 
-model = ChemoMAE(seq_len=256, latent_dim=64, n_blocks=16, n_mask=12)
+model = ChemoMAE(seq_len=256, latent_dim=64, n_patches=16, n_mask=12)
 opt = build_optimizer(model, lr=2e-4, weight_decay=0.05)
 sched = build_scheduler(opt, steps_per_epoch=len(train_loader), epochs=100, warmup_epochs=5)
 cfg = TrainerConfig(out_dir="runs", amp=True, amp_dtype="bf16", use_ema=True, loss_type="mse", reduction="mean")

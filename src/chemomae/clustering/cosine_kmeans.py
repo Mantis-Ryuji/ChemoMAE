@@ -376,6 +376,12 @@ class CosineKMeans(nn.Module):
         if int(X.size(1)) != self.latent_dim:
             raise ValueError(f"X dim mismatch: expected {self.latent_dim}, got {int(X.size(1))}")
 
+        if chunk is not None:
+            if not isinstance(chunk, int):
+                raise ValueError(f"chunk must be int or None, got {type(chunk)}")
+            if chunk <= 0:
+                raise ValueError(f"chunk must be positive, got {chunk}")
+
         stream = (chunk is not None) and (self.centroids.device.type == "cuda")
         if stream:
             X_cpu = X.to("cpu", dtype=torch.float32)
@@ -578,7 +584,7 @@ def elbow_ckmeans(
 
         # メモリ掃除（GPUを使っている時のみ）
         gc.collect()
-        if device == "cuda" and torch.cuda.is_available():
+        if torch.device(device).type == "cuda" and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
     # 局所 import（循環参照回避）
