@@ -23,21 +23,22 @@ def make_patch_mask(
     device: Optional[torch.device] = None,
 ) -> torch.Tensor:
     r"""
-    Make a random **patch-aligned boolean mask** for 1D MAE.
+    Make a random **patch-aligned boolean mask** for 1D MAE (per-sample diverse).
 
     概要
     ----
     1D スペクトル系列（長さ `seq_len=L`）を `n_patches=P` 個の等長パッチに分割し、
     **パッチ単位**で `n_mask` 個をランダムに「隠す」マスクを生成する。
 
-    本関数が返す `mask` は **トークン（スカラー）単位**の長さ L を持つが、
-    実際には「パッチ内は全て同じ値」になるように構成される（patch-aligned）。
+    本実装では **サンプルごとに独立なマスクパターン**を生成することで、
+    MAE 学習におけるマスク多様性（diversity）を確保する。
 
     マスク仕様
     ---------
     - `mask[b, t] = True`  : masked（隠す / 入力に見せない領域）
     - `mask[b, t] = False` : visible（可視 / 入力に見せる領域）
     - 形状は `(B, L)`、dtype は `torch.bool`
+    - パッチ整合性（patch-aligned）は常に保証される
 
     制約
     ----
@@ -64,11 +65,13 @@ def make_patch_mask(
 
     Notes
     -----
-    - 現行実装では **バッチ内の全サンプルで同じマスクパッチ集合**が選ばれる
-      （`torch.randperm(P)` を一度だけ生成して `patch_mask[:, idx]=True` としているため）。
-      サンプルごとに独立マスクにしたい場合は、サンプルごとに randperm を生成する実装へ変更する。
-    - MAE の “情報リーク” を避けるには、**パッチ内で True/False が混在しない**ことが重要であり、
-      本関数はそれを満たす。
+    - 各サンプル `b` について独立に `n_mask` 個のパッチを選択する。
+    - マスクは **呼び出しごとにランダム**に生成され、
+      学習中のマスク多様性を最大化する設計となっている。
+    - 特徴抽出時は全可視（mask 無し）で行うことを想定しており、
+      学習時のマスク再現性を厳密に管理する必要はない。
+    - MAE における情報リーク防止のため、パッチ内で
+      True / False が混在することはない。
     """
     if seq_len % n_patches != 0:
         raise ValueError("seq_len must be divisible by n_patches")
@@ -80,14 +83,24 @@ def make_patch_mask(
 
     patch_size = seq_len // n_patches
 
-    # パッチ単位マスク (B, P)
+    # -------------------------------------------------
+    # パッチ単位マスク (B, P) : per-sample
+    # -------------------------------------------------
     patch_mask = torch.zeros(batch_size, n_patches, device=device, dtype=torch.bool)
+
     if n_mask > 0:
-        idx = torch.randperm(n_patches, device=device)[:n_mask]
-        patch_mask[:, idx] = True
+        # (B, P) の乱数 → 各行で n_mask 個選択
+        r = torch.rand(batch_size, n_patches, device=device)
+        idx = torch.argsort(r, dim=1)[:, :n_mask]  # (B, n_mask)
+        patch_mask.scatter_(1, idx, True)
 
     # (B, P) → (B, P, S) → (B, L)
-    return patch_mask.unsqueeze(-1).expand(-1, -1, patch_size).reshape(batch_size, seq_len)
+    return (
+        patch_mask
+        .unsqueeze(-1)
+        .expand(-1, -1, patch_size)
+        .reshape(batch_size, seq_len)
+    )
 
 
 class ChemoEncoder(nn.Module):
