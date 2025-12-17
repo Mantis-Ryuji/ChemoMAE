@@ -42,7 +42,7 @@ This creates a reconstruction problem on a **mesoscopic scale**, aligned with th
 
 ### Decoder
 
-A lightweight **2-layer MLP decoder** that maps the latent vector directly to the full-length spectrum `(B, L)`.
+A lightweight **MLP decoder** that maps the latent vector directly to the full-length spectrum `(B, L)`.
 The decoder intentionally avoids any patch reconstruction structure to place the learning burden on the encoder.
 
 ---
@@ -117,6 +117,7 @@ mae = ChemoMAE(
     num_layers=4,
     dim_feedforward=1024,
     dropout=0.1,
+    decoder_num_layers=2
     latent_dim=16,
     n_patches=32,
     n_mask=16,
@@ -133,6 +134,7 @@ mae = ChemoMAE(
 | `num_layers`        | int   | 4       | Transformer encoder layers.                        |
 | `dim_feedforward`   | int   | 1024    | FFN hidden dimension.                              |
 | `dropout`           | float | 0.1     | Dropout in encoder layers.                         |
+| `decoder_num_layers`| int   | 2       | MLP decoder layers.                                |
 | `latent_dim`        | int   | 16      | Dimension of L2-normalized latent embedding.       |
 | `n_patches`         | int   | 32      | Number of patches; must divide `seq_len`.          |
 | `n_mask`            | int   | 16      | Number of patches to mask.                         |
@@ -228,4 +230,4 @@ assert torch.isfinite(loss)
 
 ## Version
 
-* v0.1.4
+* v0.1.5

@@ -110,6 +110,7 @@ model = ChemoMAE(
     dim_feedforward=1024,    # MLP dimension
     dropout=0.1,
     latent_dim=16,           # latent vector dimension
+    decoder_num_layers=2,    # decoder depth
     n_patches=32,            # number of total patches
     n_mask=16                # number of masked patches per sample
 )
@@ -461,7 +462,7 @@ x_rec2 = mae.reconstruct(x, n_mask=16)
 
 * **Patch-wise masking:** split a length-`L` spectrum into `n_patches` contiguous patches and randomly hide `n_mask` patches per sample.
 * **Encoder (`ChemoEncoder`):** transforms only visible tokens + CLS; outputs **L2-normalized** latent `(B, latent_dim)`. 
-* **Decoder (`ChemoDecoder`):** a **lightweight two-layer MLP decoder** that reconstructs the full spectrum `(B, L)` from the latent representation; the reconstruction loss is computed externally, typically only on masked regions.
+* **Decoder (`ChemoDecoder`):** a **lightweight MLP decoder** that reconstructs the full spectrum `(B, L)` from the latent representation; the reconstruction loss is computed externally, typically only on masked regions.
 * **Positional encoding:** choose **learnable** or **fixed sinusoidal** embeddings. 
 * **Cosine-friendly latents:** unit-sphere embeddings pair well with **CosineKMeans / vMF Mixture** and UMAP/t-SNE (`metric="cosine"`). 
 

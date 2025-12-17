@@ -307,7 +307,7 @@ class ChemoEncoder(nn.Module):
 
 class ChemoDecoder(nn.Module):
     r"""
-    Lightweight 2-layer MLP decoder for 1D spectral reconstruction.
+    Lightweight MLP decoder for 1D spectral reconstruction (configurable depth).
 
     概要
     ----
@@ -317,9 +317,15 @@ class ChemoDecoder(nn.Module):
     本デコーダは ViT-MAE のように「マスクトークン + Transformer デコーダ」で
     パッチ系列を復元する方式ではなく、`z` から **全系列へ直接写像**する。
 
-    復元写像
-    --------
-    `z -> Linear(latent_dim, L) -> GELU -> Linear(L, L) -> x_recon`
+    層数
+    ----
+    `num_layers` により深さを切り替える。
+
+    - `num_layers = 1` : **Linear projection**（`Linear(latent_dim, L)`）
+    - `num_layers >= 2`: MLP（隠れ次元 `hidden_dim`、GELU）
+
+    既定値（`num_layers=2, hidden_dim=L`）は従来実装と等価：
+    `z -> Linear(latent_dim, L) -> GELU -> Linear(L, L)`
 
     Parameters
     ----------
@@ -327,6 +333,10 @@ class ChemoDecoder(nn.Module):
         出力系列長 `L`。
     latent_dim : int
         入力潜在次元。
+    num_layers : int, default=2
+        デコーダの層数（1 以上）。1 の場合は線形写像として振る舞う。
+    hidden_dim : int | None, default=None
+        MLP の隠れ次元。None の場合 `seq_len`。
 
     Returns (forward)
     -----------------
@@ -340,15 +350,33 @@ class ChemoDecoder(nn.Module):
     - 入力 `z` は `(B, latent_dim)` を厳密に要求し、形状不一致は例外とする。
     """
 
-    def __init__(self, *, seq_len: int, latent_dim: int) -> None:
+    def __init__(
+        self,
+        *,
+        seq_len: int,
+        latent_dim: int,
+        num_layers: int = 2,
+        hidden_dim: Optional[int] = None,
+    ) -> None:
         super().__init__()
         self.seq_len = int(seq_len)
         self.latent_dim = int(latent_dim)
-        self.net = nn.Sequential(
-            nn.Linear(self.latent_dim, self.seq_len),
-            nn.GELU(),
-            nn.Linear(self.seq_len, self.seq_len),
-        )
+
+        nl = int(num_layers)
+        if nl < 1:
+            raise ValueError("num_layers must be >= 1")
+
+        if nl == 1:
+            self.net = nn.Linear(self.latent_dim, self.seq_len)
+        else:
+            if hidden_dim is None:
+                hidden_dim = self.seq_len
+            hd = int(hidden_dim)
+            layers = [nn.Linear(self.latent_dim, hd), nn.GELU()]
+            for _ in range(nl - 2):
+                layers += [nn.Linear(hd, hd), nn.GELU()]
+            layers += [nn.Linear(hd, self.seq_len)]
+            self.net = nn.Sequential(*layers)
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         if z.ndim != 2 or z.size(1) != self.latent_dim:
@@ -400,6 +428,8 @@ class ChemoMAE(nn.Module):
         Encoder dropout。
     latent_dim : int, default=16
         潜在次元。
+    decoder_num_layers : int, default=2
+        Decoder 層数。1 の場合は `Linear(latent_dim -> L)`。
     n_mask : int, default=4
         デフォルトで隠すパッチ数（`make_visible()`/`forward()` の `n_mask` 未指定時に使用）。
 
@@ -431,6 +461,7 @@ class ChemoMAE(nn.Module):
         dim_feedforward: Optional[int] = None,
         dropout: float = 0.0,
         latent_dim: int = 16,
+        decoder_num_layers: int = 2,
         n_mask: int = 4,
     ) -> None:
         super().__init__()
@@ -448,7 +479,7 @@ class ChemoMAE(nn.Module):
             dropout=dropout,
             latent_dim=latent_dim,
         )
-        self.decoder = ChemoDecoder(seq_len=self.seq_len, latent_dim=latent_dim)
+        self.decoder = ChemoDecoder(seq_len=self.seq_len, latent_dim=latent_dim, num_layers=decoder_num_layers)
 
     def make_visible(
         self,
