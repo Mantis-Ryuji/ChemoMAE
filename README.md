@@ -434,11 +434,12 @@ from chemomae.models import ChemoMAE
 
 mae = ChemoMAE(
     seq_len=256, 
-    latent_dim=16,
     d_model=256, 
     nhead=4, 
     num_layers=4, 
     dim_feedforward=1024,
+    decoder_num_layers=2,
+    latent_dim=8,
     n_patches=32, 
     n_mask=16
 )
