@@ -40,13 +40,13 @@ class CosineKMeans(nn.Module):
 
     Attributes
     ----------
-    centroids : torch.Tensor, shape (K, D)
+    `centroids` : torch.Tensor, shape (K, D)
         L2 正規化済みのクラスタ中心（register_buffer で保持）。
-    latent_dim : int | None
+    `latent_dim` : int | None
         特徴次元 D。`fit()` 実行時に `X.size(1)` から自動決定。
-    inertia_ : float
+    `inertia_` : float
         最終反復での `mean(1 - cos)` 値（SSE ではない点に注意）。
-    _fitted : bool
+    `_fitted` : bool
         学習済みであれば True。
 
     Notes
