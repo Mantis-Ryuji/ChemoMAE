@@ -9,8 +9,6 @@
 
 > **ChemoMAE**: A Research-Oriented PyTorch Toolkit and Models for **1D Spectral Representation Learning and Hyperspherical Clustering**.
 
-[**Research Repository**](https://github.com/Mantis-Ryuji/UnsupervisedSegmentation_NIR-HSI): **Unsupervised Segmentation of Wood Condition Patterns with NIR-HSI**
-
 ---
 
 ## Why ChemoMAE?
@@ -26,6 +24,9 @@ ChemoMAE learns representations that are consistent with this geometry and prese
 A **Transformer-based Masked Autoencoder (MAE)** specialized for **1D spectra** enables flexible, data-driven representation learning.<br>
 We apply **patch-wise masking** to SNV-preprocessed spectra and optimize the mean squared error (MSE) only over the masked spectral regions.
 The encoder produces **unit-norm embeddings** `z` that capture **directional spectral features**.
+
+> **Note**: The latent embedding `z` can be L2-normalized to unit norm (latent_normalize=True, default). Disable this (latent_normalize=False) if you prefer unconstrained embeddings. <br>
+
 This architecture naturally aligns with the **hyperspherical geometry** induced by SNV, resulting in representations inherently suited for **cosine similarity** and **hyperspherical clustering**.
 
 ### 2. Hyperspherical Geometry Toolkit (for downstream use)
@@ -110,6 +111,7 @@ model = ChemoMAE(
     dim_feedforward=1024,    # MLP dimension
     dropout=0.1,
     latent_dim=16,           # latent vector dimension
+    latent_normalize=True,   # L2-normalize latent
     decoder_num_layers=2,    # decoder depth
     n_patches=32,            # number of total patches
     n_mask=16                # number of masked patches per sample
@@ -440,6 +442,7 @@ mae = ChemoMAE(
     dim_feedforward=1024,
     decoder_num_layers=2,
     latent_dim=8,
+    latent_normalize=True,
     n_patches=32, 
     n_mask=16
 )

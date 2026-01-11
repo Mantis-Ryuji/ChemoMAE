@@ -2,7 +2,7 @@
 
 > Module: `chemomae.models.chemo_mae`
 
-This document describes **ChemoMAE**, a Transformer-based masked autoencoder specialized for **one-dimensional spectral data** such as near-infrared (NIR) spectra or 1D hyperspectral bands.
+This document describes **ChemoMAE**, a Transformer-based masked autoencoder specialized for **one-dimensional spectral data**.
 
 <p align="center">
 <img src="../../images/ChemoMAE.svg">
@@ -31,13 +31,14 @@ The sequence is reshaped into:
 ```
 
 Then `n_mask` patches are randomly hidden per sample.
-This creates a reconstruction problem on a **mesoscopic scale**, aligned with the physical smoothness of real spectra.
+This creates a reconstruction task at the patch level, encouraging the model to use broader spectral context rather than pointwise cues.
 
 ### Encoder
 
 * Patch embeddings → positional encoding
 * Only visible patches + a `[CLS]` token are passed to a Transformer encoder
-* The `[CLS]` output is projected to `latent_dim` and **L2-normalized** → latent vector on the **unit hypersphere**
+* The `[CLS]` output is projected to `latent_dim`
+* If `latent_normalize=True` (default), the latent vector is **L2-normalized** → embedding on the **unit hypersphere**
   (ideal for cosine metrics, CosineKMeans, vMF mixtures)
 
 ### Decoder
@@ -51,8 +52,7 @@ The decoder intentionally avoids any patch reconstruction structure to place the
 
 ### Positional Encoding
 
-* **Learnable positional embeddings** by default
-* Alternatively: **fixed sinusoidal** positional encoding
+* **Learnable positional embeddings** (current default)
 * Only `n_patches` positions are encoded (not length `L`)
 
 ---
@@ -85,11 +85,12 @@ make_patch_mask(batch_size, seq_len, n_patches, n_mask)
 3. Gather only visible patches (`V ≤ n_patches`)
 4. Add `[CLS]` token
 5. Transformer encoder
-6. `[CLS]` → linear → **L2 normalization**
+6. `[CLS]` → linear → (optional) **L2 normalization** controlled by `latent_normalize`
 
 **Output**
 
-* Latent vectors `(B, latent_dim)` lying on the **unit hypersphere**
+* Latent vectors `(B, latent_dim)`
+* If `latent_normalize=True`: latent lies on the **unit hypersphere** (`‖z‖=1`)
 
 ---
 
@@ -114,30 +115,32 @@ mae = ChemoMAE(
     seq_len=256,
     d_model=256,
     nhead=4,
-    num_layers=4,
-    dim_feedforward=1024,
-    dropout=0.1,
-    decoder_num_layers=2
+    num_layers=2,
+    dim_feedforward=None,   # defaults to 4*d_model
+    dropout=0.0,
+    decoder_num_layers=2,
     latent_dim=16,
-    n_patches=32,
-    n_mask=16,
+    latent_normalize=True,
+    n_patches=16,
+    n_mask=4,
 )
 ```
 
 ### Parameters
 
-| Name                | Type  | Default | Description                                        |
-| ------------------- | ----- | ------- | -------------------------------------------------- |
-| `seq_len`           | int   | 256     | Length of the input spectrum.                      |
-| `d_model`           | int   | 256     | Transformer embedding dimension.                   |
-| `nhead`             | int   | 4       | Number of attention heads.                         |
-| `num_layers`        | int   | 4       | Transformer encoder layers.                        |
-| `dim_feedforward`   | int   | 1024    | FFN hidden dimension.                              |
-| `dropout`           | float | 0.1     | Dropout in encoder layers.                         |
-| `decoder_num_layers`| int   | 2       | MLP decoder layers.                                |
-| `latent_dim`        | int   | 16      | Dimension of L2-normalized latent embedding.       |
-| `n_patches`         | int   | 32      | Number of patches; must divide `seq_len`.          |
-| `n_mask`            | int   | 16      | Number of patches to mask.                         |
+| Name                 | Type   | Default | Description                                        |
+| -------------------- | ------ | ------- | -------------------------------------------------- |
+| `seq_len`            | int    | 256     | Length of the input spectrum.                      |
+| `d_model`            | int    | 256     | Transformer embedding dimension.                   |
+| `nhead`              | int    | 4       | Number of attention heads.                         |
+| `num_layers`         | int    | 2       | Transformer encoder layers.                        |
+| `dim_feedforward`    | int\|None | None  | FFN hidden dimension (`None` → `4*d_model`).       |
+| `dropout`            | float  | 0.0     | Dropout in encoder layers.                         |
+| `decoder_num_layers` | int    | 2       | MLP decoder layers.                                |
+| `latent_dim`         | int    | 16      | Dimension of latent embedding.                     |
+| `latent_normalize`   | bool   | True    | If True, L2-normalize latent (`‖z‖=1`).            |
+| `n_patches`          | int    | 16      | Number of patches; must divide `seq_len`.          |
+| `n_mask`             | int    | 4       | Number of patches to mask.                         |
 
 ### Methods
 
@@ -155,7 +158,7 @@ mae = ChemoMAE(
 import torch
 from chemomae.models import ChemoMAE
 
-mae = ChemoMAE(seq_len=256, latent_dim=16, n_patches=16, n_mask=4)
+mae = ChemoMAE(seq_len=256, latent_dim=16, n_patches=16, n_mask=4, latent_normalize=True)
 x = torch.randn(8, 256)
 
 x_recon, z, visible = mae(x)  # visible=True → used in encoder
@@ -171,28 +174,27 @@ loss.backward()
 ## Downstream Applications
 
 * **Clustering:**
-  CosineKMeans, vMF mixture → latent space is hyperspherical
+  - If `latent_normalize=True`: CosineKMeans, vMF mixture → latent is hyperspherical
+  - If `latent_normalize=False`: normalize on the user side if your downstream assumes cosine geometry
 
 * **Visualization:**
-  UMAP / t-SNE using `metric="cosine"`
-
-* **Spectral segmentation / change detection:**
-  Patch masking + latent vectors capture mesoscopic chemical transitions
+  UMAP / t-SNE using `metric="cosine"` (recommended when using normalized latent)
 
 ---
 
 ## Design Notes
 
-### Hyperspherical latent
+### Hyperspherical latent (optional)
 
-L2 normalization ensures:
+If `latent_normalize=True`, L2 normalization ensures:
 
 ```
 ‖z‖ = 1
 cosine similarity = z_i · z_j
 ```
 
-Ideal for cosine geometry and directional clustering.
+This is ideal for cosine geometry and directional clustering.
+If disabled, the latent is unconstrained in norm.
 
 ### Clean architecture
 
@@ -210,7 +212,7 @@ Masking is RNG-driven; use fixed seeds or provide explicit `visible_mask` for re
 import torch
 from chemomae.models import ChemoMAE
 
-mae = ChemoMAE(seq_len=128, latent_dim=8, n_patches=8, n_mask=6)
+mae = ChemoMAE(seq_len=128, latent_dim=8, n_patches=8, n_mask=6, latent_normalize=True)
 x = torch.randn(4, 128)
 
 x_rec, z, visible = mae(x)
@@ -218,7 +220,9 @@ x_rec, z, visible = mae(x)
 assert x_rec.shape == x.shape
 assert z.shape == (4, 8)
 assert visible.shape == (4, 128)
-assert torch.allclose(z.norm(dim=1), torch.ones(4), atol=1e-5)
+
+if mae.encoder.latent_normalize:
+    assert torch.allclose(z.norm(dim=1), torch.ones(4), atol=1e-5)
 
 # masked loss
 sqerr = (x_rec - x).pow(2)
@@ -230,4 +234,4 @@ assert torch.isfinite(loss)
 
 ## Version
 
-* v0.1.5
+* v0.1.6

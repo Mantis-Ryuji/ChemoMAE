@@ -122,7 +122,7 @@ class ChemoEncoder(nn.Module):
       - `x` : `(B, L)` 連続値スペクトル
       - `visible_mask` : `(B, L)` bool, **True=可視 / False=隠す**
     - Output:
-      - `z` : `(B, latent_dim)` **L2 正規化済み**潜在
+      - `z` : `(B, latent_dim)` 潜在（`latent_normalize=True` の場合は L2 正規化）
 
     マスク制約（重要）
     ----------------
@@ -140,7 +140,7 @@ class ChemoEncoder(nn.Module):
        - 可視パッチを前に詰め、最大可視数 `max_vis` に揃えて PAD
        - `src_key_padding_mask` で PAD を無効化
     5. TransformerEncoder（`norm_first=True`, activation="gelu"）
-    6. `to_latent: Linear(d_model -> latent_dim)` → `F.normalize`
+    6. `to_latent: Linear(d_model -> latent_dim)` → （必要に応じて）`F.normalize`
 
     Parameters
     ----------
@@ -159,7 +159,9 @@ class ChemoEncoder(nn.Module):
     dropout : float, default=0.0
         Transformer 内部 dropout。
     latent_dim : int, default=16
-        出力潜在次元（最後に L2 正規化）。
+        出力潜在次元。
+    latent_normalize : bool, default=True
+        True の場合、潜在 `z` を `F.normalize(z, dim=1)` により L2 正規化して返す。
 
     Attributes
     ----------
@@ -184,7 +186,8 @@ class ChemoEncoder(nn.Module):
     -----
     - `max_vis == 0`（全パッチ不可視）は通常起こらないが、数値崩壊回避のため
       「先頭パッチのみ可視」に置き換える安全ガードが入っている。
-    - 出力 `z` は球面上（L2 正規化）であり、後段の CosineKMeans / vMF mixture と整合する設計。
+    - `latent_normalize=True` の場合、出力 `z` は球面上（L2 正規化）となり、CosineKMeans / vMF mixture と整合する。
+      False の場合は正規化しないため、後段の手法の前提に合わせて利用側で正規化すること。
     - `visible_mask` の True/False の意味は **ChemoMAE 側と一致（True=可視）**させること。
       逆の意味で渡すと学習が破綻する（本実装は dtype/shape のみをチェックする）。
     """
@@ -200,6 +203,7 @@ class ChemoEncoder(nn.Module):
         dim_feedforward: Optional[int] = None,
         dropout: float = 0.0,
         latent_dim: int = 16,
+        latent_normalize: bool = True,
     ) -> None:
         super().__init__()
         self.seq_len = int(seq_len)
@@ -210,6 +214,7 @@ class ChemoEncoder(nn.Module):
 
         self.d_model = int(d_model)
         self.latent_dim = int(latent_dim)
+        self.latent_normalize = bool(latent_normalize)
 
         if dim_feedforward is None:
             dim_feedforward = 4 * self.d_model
@@ -302,7 +307,9 @@ class ChemoEncoder(nn.Module):
         h = self.encoder(enc_in, src_key_padding_mask=key_pad)  # (B,1+max_vis,d)
         cls_out = h[:, 0, :]
         z = self.to_latent(cls_out)  # (B,latent_dim)
-        return F.normalize(z, dim=1)
+        if self.latent_normalize:
+            z = F.normalize(z, dim=1)
+        return z
 
 
 class ChemoDecoder(nn.Module):
@@ -394,15 +401,15 @@ class ChemoMAE(nn.Module):
     学習では「パッチ単位のマスク」を用いて一部のスペクトル情報を隠し、
     そこから潜在表現 `z` を学習しつつ系列全体を再構成する。
 
-    本クラスは **潜在 `z` の L2 正規化**を前提にしており、
-    そのまま CosineKMeans / vMF mixture 等の球面クラスタリングへ接続できる。
+    本クラスは既定で潜在 `z` を L2 正規化する（`latent_normalize=True`）。
+    正規化を有効にした場合は、そのまま CosineKMeans / vMF mixture 等の球面クラスタリングへ接続できる。
 
     返り値の契約（重要）
     ------------------
     `forward()` は常に **(x_recon, z, visible_mask)** を返す。
 
     - `x_recon` : `(B, L)` 再構成
-    - `z` : `(B, latent_dim)` L2 正規化潜在
+    - `z` : `(B, latent_dim)` 潜在（`latent_normalize=True` の場合は L2 正規化）
     - `visible_mask` : `(B, L)` bool, **True=可視 / False=隠す**（パッチ整合）
 
     マスク生成
@@ -428,6 +435,8 @@ class ChemoMAE(nn.Module):
         Encoder dropout。
     latent_dim : int, default=16
         潜在次元。
+    latent_normalize : bool, default=True
+        True の場合、潜在 `z` を L2 正規化して返す（球面潜在）。
     decoder_num_layers : int, default=2
         Decoder 層数。1 の場合は `Linear(latent_dim -> L)`。
     n_mask : int, default=4
@@ -449,7 +458,7 @@ class ChemoMAE(nn.Module):
     - `reconstruct()` は `forward()` の「x_recon だけ欲しい」用途の薄いラッパ。
     - shape/dtype の整合性は `_check_shapes()` が保証し、異常入力は例外とする。
     """
-    
+
     def __init__(
         self,
         *,
@@ -461,6 +470,7 @@ class ChemoMAE(nn.Module):
         dim_feedforward: Optional[int] = None,
         dropout: float = 0.0,
         latent_dim: int = 16,
+        latent_normalize: bool = True,
         decoder_num_layers: int = 2,
         n_mask: int = 4,
     ) -> None:
@@ -478,6 +488,7 @@ class ChemoMAE(nn.Module):
             dim_feedforward=dim_feedforward,
             dropout=dropout,
             latent_dim=latent_dim,
+            latent_normalize=latent_normalize,
         )
         self.decoder = ChemoDecoder(seq_len=self.seq_len, latent_dim=latent_dim, num_layers=decoder_num_layers)
 
@@ -611,7 +622,7 @@ class ChemoMAE(nn.Module):
         x_recon : torch.Tensor, shape (B, L)
             再構成系列。
         z : torch.Tensor, shape (B, latent_dim)
-            L2 正規化済み潜在（球面潜在）。
+            潜在表現（`latent_normalize=True` の場合は L2 正規化＝球面潜在）。
         visible_mask : torch.Tensor, shape (B, L), dtype=bool
             True=visible / False=masked（パッチ整合）。
 
