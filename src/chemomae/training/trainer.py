@@ -1,5 +1,8 @@
 from __future__ import annotations
-import json, math, time
+
+import json
+import math
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, Iterable
@@ -207,7 +210,7 @@ class Trainer:
                 pass
 
         use_scaler = self.amp and (self.amp_dtype == "fp16") and (self.device.type == "cuda")
-        self.scaler = torch.amp.GradScaler("cuda", enabled=use_scaler)
+        self.scaler = torch.amp.GradScaler("cuda", enabled=use_scaler) # type: ignore
 
         # EMA
         self.ema = EMACallback(self.model, cfg.ema_decay) if cfg.use_ema else None
@@ -231,7 +234,7 @@ class Trainer:
             from contextlib import nullcontext
             return nullcontext()
         dtype = torch.bfloat16 if self.amp_dtype == "bf16" else torch.float16
-        return torch.amp.autocast("cuda", dtype=dtype)
+        return torch.amp.autocast("cuda", dtype=dtype) # type: ignore
 
     def _save_history(self, rec: Dict):
         self.history.append(rec)
@@ -504,6 +507,12 @@ class Trainer:
                     start_epoch = self.load_checkpoint(p)
             else:
                 start_epoch = self.load_checkpoint(self.cfg.resume_from)
+
+        # If we resumed from a checkpoint that already finished the requested epochs,
+        # the epoch loop would be empty and `epoch` would be undefined at return time.
+        # Treat this as a no-op.
+        if start_epoch > epochs:
+            return {"best": self.best, "epochs": start_epoch - 1}
 
         for epoch in range(start_epoch, epochs + 1):
             ep_t0 = time.time()
