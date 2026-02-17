@@ -134,7 +134,7 @@ class ChemoEncoder(nn.Module):
     アーキテクチャ
     --------------
     1. Patchify: `x -> x_patches` shape `(B,P,S)`
-    2. Patch projection: `Linear(S -> d_model)`（bias=False）
+    2. Patch projection: `Linear(S -> d_model)`（bias=True）
     3. `CLS` token + learned positional embedding（長さ `1+P`）
     4. Visible compaction:
        - 可視パッチを前に詰め、最大可視数 `max_vis` に揃えて PAD
@@ -220,7 +220,7 @@ class ChemoEncoder(nn.Module):
             dim_feedforward = 4 * self.d_model
 
         # パッチ埋め込み
-        self.patch_proj = nn.Linear(self.patch_size, self.d_model, bias=False)
+        self.patch_proj = nn.Linear(self.patch_size, self.d_model, bias=True)
 
         # CLS + 位置埋め込み（learned）
         self.cls_token = nn.Parameter(torch.zeros(1, 1, self.d_model))
