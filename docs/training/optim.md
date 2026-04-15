@@ -8,7 +8,7 @@ This module provides utilities to construct a **parameter-grouped AdamW optimize
 
 ## Summary
 
-* **`build_optimizer(model, lr=3e-4, weight_decay=1e-4, betas=(0.9,0.95), eps=1e-8)`**
+* **`build_optimizer(model, lr=1.5e-4, weight_decay=0.05, betas=(0.9,0.95), eps=1e-8)`**
   Returns an **AdamW** optimizer with **standard weight-decay exclusions**:
 
   * bias parameters (`.bias`)
@@ -41,8 +41,8 @@ This module provides utilities to construct a **parameter-grouped AdamW optimize
 | Name           | Type                 | Default       | Description                                                   |
 | -------------- | -------------------- | ------------- | ------------------------------------------------------------- |
 | `model`        | `nn.Module`          | —             | Model whose parameters are grouped by decay / no-decay rules. |
-| `lr`           | `float`              | `3e-4`        | Base learning rate.                                           |
-| `weight_decay` | `float`              | `1e-4`        | L2 coefficient for the decay group.                           |
+| `lr`           | `float`              | `1.5e-4`        | Base learning rate.                                           |
+| `weight_decay` | `float`              | `0.05`        | L2 coefficient for the decay group.                           |
 | `betas`        | `tuple[float,float]` | `(0.9, 0.95)` | AdamW β coefficients.                                         |
 | `eps`          | `float`              | `1e-8`        | Numerical stability term for AdamW.                           |
 

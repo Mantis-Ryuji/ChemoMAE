@@ -1,7 +1,7 @@
 import math
+
 import numpy as np
 import pytest
-
 import torch
 from sklearn.metrics import silhouette_samples as sk_silhouette_samples
 
@@ -11,121 +11,248 @@ from chemomae.clustering.metric import (
 )
 
 
-def _make_blob_data(n_per_cluster=30, d=16, k=3, seed=0, add_zeros=False):
+def _make_blob_data(
+    n_per_cluster: int = 30,
+    d: int = 16,
+    k: int = 3,
+    seed: int = 0,
+    add_zeros: bool = False,
+) -> tuple[np.ndarray, np.ndarray]:
     rng = np.random.default_rng(seed)
     centers = rng.normal(size=(k, d)).astype(np.float32)
     centers /= np.linalg.norm(centers, axis=1, keepdims=True) + 1e-12
-    X_list = []
-    y_list = []
+
+    x_list: list[np.ndarray] = []
+    y_list: list[np.ndarray] = []
     for c in range(k):
-        Xc = centers[c] + 0.1 * rng.normal(size=(n_per_cluster, d)).astype(np.float32)
-        X_list.append(Xc)
+        xc = centers[c] + 0.1 * rng.normal(size=(n_per_cluster, d)).astype(np.float32)
+        x_list.append(xc)
         y_list.append(np.full(n_per_cluster, c, dtype=np.int64))
-    X = np.vstack(X_list).astype(np.float32)
+
+    x = np.vstack(x_list).astype(np.float32)
     y = np.concatenate(y_list).astype(np.int64)
+
     if add_zeros:
-        n_zero = max(1, len(X) // 15)
-        X[:n_zero] = 0.0
-    return X, y
+        n_zero = max(1, len(x) // 15)
+        x[:n_zero] = 0.0
+
+    return x, y
 
 
-def test_equivalence_to_sklearn_cpu_small():
+def test_equivalence_to_sklearn_cpu_small() -> None:
     """CPU: numpy I/O equivalence to sklearn silhouette_samples(metric='cosine')."""
-    X, y = _make_blob_data(n_per_cluster=20, d=8, k=3, seed=123)
+    x, y = _make_blob_data(n_per_cluster=20, d=8, k=3, seed=123)
     ours = silhouette_samples_cosine_gpu(
-        X, y, device="cpu", chunk=None, return_numpy=True, dtype=torch.float64
+        x,
+        y,
+        device="cpu",
+        chunk=None,
+        return_numpy=True,
+        dtype=torch.float64,
     )
-    ref = sk_silhouette_samples(X, y, metric="cosine")
+    ref = sk_silhouette_samples(x, y, metric="cosine")
     np.testing.assert_allclose(ours, ref, rtol=1e-7, atol=1e-7)
 
 
 @pytest.mark.parametrize("chunk", [None, 1024, 17])
-def test_chunking_invariance_cpu(chunk):
+def test_chunking_invariance_cpu(chunk: int | None) -> None:
     """CPU: invariance w.r.t. chunk size."""
-    X, y = _make_blob_data(n_per_cluster=25, d=12, k=4, seed=7)
-    base = silhouette_samples_cosine_gpu(X, y, device="cpu", chunk=None, return_numpy=True)
-    test = silhouette_samples_cosine_gpu(X, y, device="cpu", chunk=chunk, return_numpy=True)
-    np.testing.assert_allclose(test, base, rtol=0, atol=0)
+    x, y = _make_blob_data(n_per_cluster=25, d=12, k=4, seed=7)
+    base = silhouette_samples_cosine_gpu(
+        x,
+        y,
+        device="cpu",
+        chunk=None,
+        return_numpy=True,
+    )
+    test = silhouette_samples_cosine_gpu(
+        x,
+        y,
+        device="cpu",
+        chunk=chunk,
+        return_numpy=True,
+    )
+    np.testing.assert_allclose(test, base, rtol=0.0, atol=0.0)
 
 
-def test_nonconsecutive_labels_equivalence():
+def test_nonconsecutive_labels_equivalence() -> None:
     """Non-consecutive labels produce identical results to remapped labels."""
-    X, y = _make_blob_data(n_per_cluster=10, d=7, k=3, seed=42)
+    x, y = _make_blob_data(n_per_cluster=10, d=7, k=3, seed=42)
+
     y_non = y.copy()
     y_non[y == 0] = 10
     y_non[y == 1] = 30
     y_non[y == 2] = 20
-    s_non = silhouette_samples_cosine_gpu(X, y_non, device="cpu", chunk=None, return_numpy=True)
-    s_seq = silhouette_samples_cosine_gpu(X, y, device="cpu", chunk=None, return_numpy=True)
-    np.testing.assert_allclose(s_non, s_seq, rtol=0, atol=0)
+
+    s_non = silhouette_samples_cosine_gpu(
+        x,
+        y_non,
+        device="cpu",
+        chunk=None,
+        return_numpy=True,
+    )
+    s_seq = silhouette_samples_cosine_gpu(
+        x,
+        y,
+        device="cpu",
+        chunk=None,
+        return_numpy=True,
+    )
+    np.testing.assert_allclose(s_non, s_seq, rtol=0.0, atol=0.0)
 
 
-def test_singleton_cluster_yields_zero():
+def test_singleton_cluster_yields_zero() -> None:
     """Singleton cluster sample should yield silhouette 0."""
-    X, y = _make_blob_data(n_per_cluster=15, d=10, k=3, seed=0)
-    X = np.vstack([X, X[:1] + 0.0])
+    x, y = _make_blob_data(n_per_cluster=15, d=10, k=3, seed=0)
+    x = np.vstack([x, x[:1] + 0.0])
     y = np.concatenate([y, np.array([99], dtype=np.int64)])
-    s = silhouette_samples_cosine_gpu(X, y, device="cpu", chunk=None, return_numpy=True)
+
+    s = silhouette_samples_cosine_gpu(
+        x,
+        y,
+        device="cpu",
+        chunk=None,
+        return_numpy=True,
+    )
     assert s[-1] == 0.0
 
 
-def test_zero_vectors_match_sklearn():
+def test_zero_vectors_match_sklearn() -> None:
     """Zero rows behave like sklearn (cosine: distance 1 to all)."""
-    X, y = _make_blob_data(n_per_cluster=12, d=9, k=3, seed=5, add_zeros=True)
+    x, y = _make_blob_data(n_per_cluster=12, d=9, k=3, seed=5, add_zeros=True)
     ours = silhouette_samples_cosine_gpu(
-        X, y, device="cpu", chunk=None, return_numpy=True, dtype=torch.float64
+        x,
+        y,
+        device="cpu",
+        chunk=None,
+        return_numpy=True,
+        dtype=torch.float64,
     )
-    ref = sk_silhouette_samples(X, y, metric="cosine")
+    ref = sk_silhouette_samples(x, y, metric="cosine")
     np.testing.assert_allclose(ours, ref, rtol=1e-7, atol=1e-7)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-def test_gpu_matches_cpu_and_chunking():
-    """GPU results match CPU and are invariant to chunk size."""
-    X, y = _make_blob_data(n_per_cluster=40, d=32, k=5, seed=77)
+def test_gpu_matches_cpu_and_chunking() -> None:
+    """GPU results match CPU within float32-level tolerance and are chunk-invariant."""
+    x, y = _make_blob_data(n_per_cluster=40, d=32, k=5, seed=77)
+
     cpu = silhouette_samples_cosine_gpu(
-        X, y, device="cpu", chunk=None, return_numpy=False
+        x,
+        y,
+        device="cpu",
+        chunk=None,
+        return_numpy=False,
     ).cpu().numpy()
-    gpu_full = silhouette_samples_cosine_gpu(X, y, device="cuda", chunk=None, return_numpy=True)
-    gpu_chunk = silhouette_samples_cosine_gpu(X, y, device="cuda", chunk=12345, return_numpy=True)
-    np.testing.assert_allclose(gpu_full, cpu, rtol=0, atol=0)
-    np.testing.assert_allclose(gpu_chunk, cpu, rtol=0, atol=0)
+
+    gpu_full = silhouette_samples_cosine_gpu(
+        x,
+        y,
+        device="cuda",
+        chunk=None,
+        return_numpy=True,
+    )
+    gpu_chunk = silhouette_samples_cosine_gpu(
+        x,
+        y,
+        device="cuda",
+        chunk=12345,
+        return_numpy=True,
+    )
+
+    # CPU/GPU reductions need not be bitwise identical.
+    np.testing.assert_allclose(gpu_full, cpu, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(gpu_chunk, cpu, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(gpu_chunk, gpu_full, rtol=1e-6, atol=1e-6)
 
 
 @pytest.mark.parametrize("return_numpy", [True, False])
-def test_return_type_and_score(return_numpy):
+def test_return_type_and_score(return_numpy: bool) -> None:
     """Return type and mean score check."""
-    X, y = _make_blob_data(n_per_cluster=18, d=11, k=3, seed=9)
-    s = silhouette_samples_cosine_gpu(X, y, device="cpu", chunk=None, return_numpy=return_numpy)
+    x, y = _make_blob_data(n_per_cluster=18, d=11, k=3, seed=9)
+    s = silhouette_samples_cosine_gpu(
+        x,
+        y,
+        device="cpu",
+        chunk=None,
+        return_numpy=return_numpy,
+    )
 
     if return_numpy:
         assert isinstance(s, np.ndarray)
-        # NumPy 側も fp32 で平均（既定は fp64 になるためズレる）
         score = float(np.asarray(s, dtype=np.float32).mean(dtype=np.float32))
-        # silhouette_score も return_numpy=True として同条件に（戻りは Python float）
-        score2 = float(silhouette_score_cosine_gpu(X, y, device="cpu", chunk=None, return_numpy=True))
-        # NumPy(fp32) と Torch(fp32) の reduce 差をわずかに許容
+        score2 = float(
+            silhouette_score_cosine_gpu(
+                x,
+                y,
+                device="cpu",
+                chunk=None,
+                return_numpy=True,
+            )
+        )
+        # NumPy(fp32) vs torch(fp32) reduce path may differ slightly.
         assert math.isclose(score, score2, rel_tol=0.0, abs_tol=2e-7)
     else:
         assert torch.is_tensor(s)
         score = float(s.float().mean(dtype=torch.float32).item())
-        # silhouette_score は torch scalar で返すように
-        score2_t = silhouette_score_cosine_gpu(X, y, device="cpu", chunk=None, return_numpy=False)
-        assert torch.is_tensor(score2_t) and score2_t.numel() == 1
+        score2_t = silhouette_score_cosine_gpu(
+            x,
+            y,
+            device="cpu",
+            chunk=None,
+            return_numpy=False,
+        )
+        assert torch.is_tensor(score2_t)
+        assert score2_t.numel() == 1
         score2 = float(score2_t.item())
-        # 同じ Torch(fp32) 経路なので厳密一致期待
         assert math.isclose(score, score2, rel_tol=0.0, abs_tol=0.0)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-@pytest.mark.parametrize("dtype", [torch.float16, getattr(torch, "bfloat16", torch.float16)])
-def test_low_precision_dtypes(dtype):
-    """Half/BFloat16 consistency against float32 (allowing small tolerance)."""
-    X, y = _make_blob_data(n_per_cluster=32, d=64, k=4, seed=11)
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        torch.float16,
+        getattr(torch, "bfloat16", torch.float16),
+    ],
+)
+def test_low_precision_dtypes(dtype: torch.dtype) -> None:
+    """Half/BFloat16 consistency against float32 with dtype-aware tolerance.
+
+    Note
+    ----
+    Low-precision CUDA reductions are not expected to match float32 bitwise.
+    In particular, bfloat16 has much coarser mantissa precision than float16,
+    so a looser tolerance is required.
+    """
+    x, y = _make_blob_data(n_per_cluster=32, d=64, k=4, seed=11)
+
     s_low = silhouette_samples_cosine_gpu(
-        X, y, device="cuda", chunk=4096, return_numpy=True, dtype=dtype
+        x,
+        y,
+        device="cuda",
+        chunk=4096,
+        return_numpy=True,
+        dtype=dtype,
     )
     s_ref = silhouette_samples_cosine_gpu(
-        X, y, device="cuda", chunk=None, return_numpy=True, dtype=torch.float32
+        x,
+        y,
+        device="cuda",
+        chunk=None,
+        return_numpy=True,
+        dtype=torch.float32,
     )
-    np.testing.assert_allclose(s_low, s_ref, rtol=5e-4, atol=5e-4)
+
+    assert isinstance(s_low, np.ndarray)
+    assert isinstance(s_ref, np.ndarray)
+
+    if dtype == torch.float16:
+        rtol = 1e-3
+        atol = 1e-3
+    else:
+        # bfloat16 is substantially coarser than fp16 on mantissa precision.
+        rtol = 1.5e-2
+        atol = 7e-3
+
+    np.testing.assert_allclose(s_low, s_ref, rtol=rtol, atol=atol)

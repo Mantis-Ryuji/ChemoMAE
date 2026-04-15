@@ -130,7 +130,7 @@ def silhouette_samples_cosine_gpu(
     s = torch.where(n_c == 1, torch.zeros_like(s), s)
 
     if return_numpy:
-        return s.detach().cpu().numpy()
+        return s.detach().to(dtype=torch.float32).cpu().numpy()
     return s
 
 
