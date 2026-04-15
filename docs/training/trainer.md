@@ -8,7 +8,7 @@ This document describes the `Trainer` and its configuration (`TrainerConfig`), c
 
 ## Overview
 
-The `Trainer` implements a robust training routine for **masked reconstruction** using ChemoMAE.
+The `Trainer` implements a robust training routine for **masked reconstruction** using ChemoMAE.  
 It integrates precision management, exponential moving averages, optional spectral augmentation, and fully resumable state tracking.
 
 ### Key features
@@ -18,12 +18,13 @@ It integrates precision management, exponential moving averages, optional spectr
 * **EMA (Exponential Moving Average)** of model parameters
 * **Optional `SpectraAugmenter`** applied only during training
 * **Gradient clipping** (global-norm based)
-* **Masked losses** (`masked_mse`, `masked_sse`) consistent with MAE principle
+* **Masked losses** (`masked_mse`, `masked_sse`) consistent with the MAE principle
 * **Checkpointing and resume** — full training state (model, optimizer, scheduler, scaler, EMA, history)
+* **Weights-only export** for best and final model variants
 * **JSON-based training history** for reproducibility and visualization
 
-The model must return `(x_recon, z, visible_mask)`, and the Trainer computes loss only on the **masked** tokens (`mask = ~visible_mask`).
-If an augmenter is provided, the model input is augmented, but the reconstruction target remains the **original** input spectrum. 
+The model must return `(x_recon, z, visible_mask)`, and the Trainer computes loss only on the **masked** tokens (`mask = ~visible_mask`).  
+If an augmenter is provided, the model input is augmented, but the reconstruction target remains the **original** input spectrum.
 
 ---
 
@@ -94,7 +95,7 @@ trainer = Trainer(
   "cuda" -> "mps" -> "cpu"
   ```
 
-* `augmenter` is optional and, if provided, is moved onto the same device as the model. 
+* `augmenter` is optional and, if provided, is moved onto the same device as the model.
 
 ---
 
@@ -102,7 +103,7 @@ trainer = Trainer(
 
 ### `fit(epochs)` → `dict`
 
-Executes the full training loop with validation, checkpointing, and early stopping.
+Executes the full training loop with validation, checkpointing, early stopping, and final export.
 
 Returns:
 
@@ -115,11 +116,16 @@ Behavior:
 * **With validation**
 
   * best selection is based on **EMA-applied validation loss**
-  * `best_model.pt` is saved using **EMA weights**
+  * `best_model_ema.pt` is saved using **EMA weights** when EMA is enabled
+  * `best_model.pt` is saved using **raw weights** only when EMA is disabled
+  * `last_model.pt` is exported at the end
+  * `last_model_ema.pt` is exported at the end if EMA is enabled
+
 * **Without validation**
 
   * no best model is selected
-  * `ema_model.pt` is exported at the end if EMA is enabled
+  * `last_model.pt` is exported at the end
+  * `last_model_ema.pt` is exported at the end if EMA is enabled
 
 ### `train_one_epoch()` → `float`
 
@@ -142,15 +148,15 @@ If EMA is enabled:
 3. validation loss is computed,
 4. original training weights are restored.
 
-Returns mean validation loss, or `nan` if `val_loader is None`. 
+Returns mean validation loss, or `nan` if `val_loader is None`.
 
 ### Checkpoint / weight I/O
 
 * `save_checkpoint(epoch, is_best)`
   Saves `last.pt` and optionally `best.pt`.
 
-* `save_weights_only(filename="best_model.pt")`
-  Saves current model weights only.
+* `save_weights_only(filename="last_model.pt")`
+  Saves current raw model weights only.
 
 * `_save_ema_weights_only(filename)`
   Applies EMA weights temporarily, exports them, then restores the original model weights.
@@ -176,19 +182,21 @@ Thus:
 * **model input** = augmented spectrum
 * **reconstruction target** = original spectrum
 
-This makes the MAE objective behave as a **denoising-style regularizer** rather than reconstructing the augmented input itself. Augmentation is applied **only during training** and is disabled during validation. 
+This makes the MAE objective behave as a **denoising-style regularizer** rather than reconstructing the augmented input itself. Augmentation is applied **only during training** and is disabled during validation.
 
 ---
 
 ## Directory Layout & History
 
-| File                              | Description                                           |
-| --------------------------------- | ----------------------------------------------------- |
-| `{out_dir}/training_history.json` | Per-epoch JSON records (loss, lr, etc.)               |
-| `{out_dir}/checkpoints/last.pt`   | Full checkpoint (latest, resume target)               |
-| `{out_dir}/checkpoints/best.pt`   | Full checkpoint at best validation epoch              |
-| `{out_dir}/best_model.pt`         | **EMA weights** at best validation epoch              |
-| `{out_dir}/ema_model.pt`          | EMA weights exported when training without validation |
+| File                              | Description                                                              |
+| --------------------------------- | ------------------------------------------------------------------------ |
+| `{out_dir}/training_history.json` | Per-epoch JSON records (loss, lr, etc.)                                  |
+| `{out_dir}/checkpoints/last.pt`   | Full checkpoint (latest, resume target)                                  |
+| `{out_dir}/checkpoints/best.pt`   | Full checkpoint at best validation epoch                                 |
+| `{out_dir}/last_model.pt`         | Final raw model weights at the end of training                           |
+| `{out_dir}/last_model_ema.pt`     | Final EMA weights at the end of training (if EMA enabled)                |
+| `{out_dir}/best_model_ema.pt`     | Best-validation EMA weights (validation-enabled runs, if EMA enabled)    |
+| `{out_dir}/best_model.pt`         | Best-validation raw weights (validation-enabled runs, EMA disabled only) |
 
 Example record:
 
@@ -214,25 +222,42 @@ This is the **resume checkpoint**. It contains:
 * history
 * best metadata
 
-This file is intended for **continuing training**, not for direct inference export. 
+This file is intended for **continuing training**, not for direct inference export.
 
-### `best_model.pt`
+### `checkpoints/best.pt`
+
+This is the **full checkpoint** at the best validation epoch.
+It includes the same full state as `last.pt`, but frozen at the best validation step.
+
+### `last_model.pt`
+
+This always stores the **final raw model weights** at the end of training.
+
+Use this when you want the exact last-step model without reconstructing it from `last.pt`.
+
+### `last_model_ema.pt`
+
+When EMA is enabled:
+
+* the final EMA weights are exported as `last_model_ema.pt`
+
+This is the canonical final EMA export, regardless of whether validation was used.
+
+### `best_model_ema.pt`
 
 When validation is available and EMA is enabled:
 
 * best epoch is selected based on **EMA validation**
-* `best_model.pt` stores the **EMA weights** corresponding to that selection
+* `best_model_ema.pt` stores the **EMA weights** corresponding to that selection
 
-This is the recommended inference / extraction / downstream-export artifact in validation-based training.
+This is the recommended inference / extraction / downstream-export artifact for validation-based training under EMA.
 
-### `ema_model.pt`
+### `best_model.pt`
 
-When validation is not available and EMA is enabled:
+When validation is available and EMA is disabled:
 
-* no best epoch is defined
-* the final EMA weights are exported as `ema_model.pt`
-
-This is the recommended inference / extraction / downstream-export artifact in validation-free SSL pretraining.
+* best epoch is selected using the raw validation model
+* `best_model.pt` stores the **raw weights** corresponding to that selection
 
 ---
 
@@ -262,7 +287,7 @@ elif cfg.loss_type == "sse":
 * **GradScaler:** Enabled automatically for `fp16` on CUDA
 * **TF32:** Activates TF32 matmul/cuDNN acceleration via `torch.backends.cuda.matmul.allow_tf32=True`
 * **Gradient clipping:** `clip_grad_norm_` applied after unscaling when GradScaler is active
-* **EMA:** Shadow weights are updated after every optimizer step and used only for evaluation/export, not for training forward/backward itself  
+* **EMA:** Shadow weights are updated after every optimizer step and used only for evaluation/export, not for training forward/backward itself
 
 ---
 
@@ -306,6 +331,14 @@ trainer = Trainer(
 
 history = trainer.fit(epochs=100)
 print("Best:", history["best"])
+
+# Outputs:
+# - runs/checkpoints/last.pt
+# - runs/checkpoints/best.pt
+# - runs/last_model.pt
+# - runs/last_model_ema.pt   (if EMA enabled)
+# - runs/best_model_ema.pt   (if EMA enabled)
+# - runs/best_model.pt       (if EMA disabled)
 ```
 
 ### Validation-free SSL pretraining
@@ -330,9 +363,11 @@ trainer = Trainer(
 )
 
 trainer.fit(epochs=100)
+
 # Outputs:
 # - runs_ssl/checkpoints/last.pt
-# - runs_ssl/ema_model.pt
+# - runs_ssl/last_model.pt
+# - runs_ssl/last_model_ema.pt   (if EMA enabled)
 ```
 
 ### Resume training automatically
@@ -368,13 +403,13 @@ trainer.fit(epochs=100)
   EMA is **not** used for training-time forward/backward. It is used for:
 
   * validation-time evaluation
-  * best-model export
-  * no-validation final EMA export
+  * best-model EMA export
+  * final EMA export
 
 * **Checkpoint vs export**
 
   * `last.pt` / `best.pt` are full checkpoints
-  * `best_model.pt` / `ema_model.pt` are weights-only export files
+  * `last_model.pt` / `last_model_ema.pt` / `best_model_ema.pt` / `best_model.pt` are weights-only export files
 
 * **Reduction tip**
   Prefer `"batch_mean"` when the number of masked tokens per sample may vary.
@@ -383,4 +418,5 @@ trainer.fit(epochs=100)
 
 ## Version
 
-* Updated for the Augmenter-enabled ChemoMAE training pipeline, with EMA-consistent export behavior for both validation and validation-free runs.
+* Updated for the Augmenter-enabled ChemoMAE training pipeline, with unified final export naming:
+  `last_model.pt`, `last_model_ema.pt`, and `best_model_ema.pt` / `best_model.pt`.

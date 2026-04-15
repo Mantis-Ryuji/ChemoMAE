@@ -1,7 +1,7 @@
 <h1 align="center">ChemoMAE</h1>
 
 [![PyPI version](https://img.shields.io/pypi/v/chemomae.svg)](https://pypi.org/project/chemomae/)
-[![torch](https://img.shields.io/badge/torch-2.6-orange)](#)
+[![torch](https://img.shields.io/badge/torch-%E2%89%A52.1.0-orange)](#)
 [![CI](https://github.com/Mantis-Ryuji/ChemoMAE/actions/workflows/ci.yml/badge.svg)](https://github.com/Mantis-Ryuji/ChemoMAE/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/pypi/pyversions/chemomae.svg)](https://pypi.org/project/chemomae/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -37,7 +37,7 @@ ChemoMAE also provides a **spectral augmenter** designed specifically for SNV-no
 
 Instead of applying unconstrained Euclidean perturbations, `SpectraAugmenter` perturbs spectra **along the hypersphere** , preserving per-spectrum L2 norm.
 
-The current implementation supports:
+The current implementation supports (v0.1.8):
 
 * **spherical Gaussian noise**
   random local perturbation along the sphere
@@ -230,13 +230,20 @@ runs/
 │    ↳ Per-epoch records:
 │       [{"epoch": 1, "train_loss": ..., "val_loss": ..., "lr": ...}, ...]
 │
-├── best_model.pt
-│    ↳ EMA weights at the best validation epoch
-│       (saved only when validation is available and improves)
+├── last_model.pt
+│    ↳ Final raw model weights at the end of training
 │
-├── ema_model.pt
-│    ↳ Final EMA weights
-│       (saved when training without validation and EMA is enabled)
+├── last_model_ema.pt
+│    ↳ Final EMA weights at the end of training
+│       (saved only when EMA is enabled)
+│
+├── best_model_ema.pt
+│    ↳ EMA weights at the best validation epoch
+│       (saved only when validation is available and EMA is enabled)
+│
+├── best_model.pt
+│    ↳ Raw weights at the best validation epoch
+│       (saved only when validation is available and EMA is disabled)
 │
 └── checkpoints/
      ├── last.pt
@@ -571,7 +578,7 @@ x_aug = augmenter(x)
 
 `TrainerConfig` and `Trainer` form the **core training engine** of ChemoMAE.
 
-They provide a robust training loop for **masked reconstruction** , with support for:
+They provide a robust training loop for **masked reconstruction**, with support for:
 
 * AMP (`bf16` / `fp16`)
 * optional TF32
@@ -580,6 +587,7 @@ They provide a robust training loop for **masked reconstruction** , with support
 * gradient clipping
 * checkpointing and resume
 * early stopping
+* weights-only export for final and best model variants
 * JSON history logging
 
 ```python
@@ -648,9 +656,12 @@ print("Best validation:", history["best"])
 * EMA tracking after each optimizer step
 * EMA-consistent export behavior:
 
-  * with validation → `best_model.pt` stores **EMA weights**
-  * without validation → `ema_model.pt` stores final **EMA weights**
-* `last.pt` stores the full resumable training state
+  * final raw weights → `last_model.pt`
+  * final EMA weights → `last_model_ema.pt` (if EMA is enabled)
+  * best validation EMA weights → `best_model_ema.pt` (if validation is available and EMA is enabled)
+  * best validation raw weights → `best_model.pt` (if validation is available and EMA is disabled)
+* `checkpoints/last.pt` stores the full resumable training state
+* `checkpoints/best.pt` stores the full checkpoint at the best validation epoch
 * optional train-time spectral augmentation
 * atomic JSON history logging
 

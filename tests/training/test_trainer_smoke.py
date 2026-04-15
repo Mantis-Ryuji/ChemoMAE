@@ -1,4 +1,5 @@
 import json
+import math
 
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -33,7 +34,7 @@ def _tiny_augmenter() -> SpectraAugmenter:
     return SpectraAugmenter(cfg)
 
 
-def test_trainer_fit_with_val_and_augmenter_creates_best_artifacts(tmp_path) -> None:
+def test_trainer_fit_with_val_and_augmenter_creates_best_and_last_artifacts(tmp_path) -> None:
     torch.manual_seed(0)
 
     batch_size_total = 12
@@ -84,13 +85,19 @@ def test_trainer_fit_with_val_and_augmenter_creates_best_artifacts(tmp_path) -> 
     assert out["best"]["epoch"] > 0
     assert out["epochs"] >= 1
 
-    assert (tmp_path / "best_model.pt").exists()
-    assert (tmp_path / "training_history.json").exists()
-
     ckpt_dir = tmp_path / "checkpoints"
     assert (ckpt_dir / "last.pt").exists()
+    assert (tmp_path / "training_history.json").exists()
 
-    # ema_model.pt is only exported for validation-free runs.
+    # Final exports are always produced.
+    assert (tmp_path / "last_model.pt").exists()
+    assert (tmp_path / "last_model_ema.pt").exists()
+
+    # With validation + EMA enabled, best EMA export should exist.
+    assert (tmp_path / "best_model_ema.pt").exists()
+
+    # Legacy names should not be used anymore.
+    assert not (tmp_path / "best_model.pt").exists()
     assert not (tmp_path / "ema_model.pt").exists()
 
     history = json.loads((tmp_path / "training_history.json").read_text(encoding="utf-8"))
@@ -101,7 +108,7 @@ def test_trainer_fit_with_val_and_augmenter_creates_best_artifacts(tmp_path) -> 
     assert "lr" in history[0]
 
 
-def test_trainer_fit_without_val_and_with_augmenter_creates_ema_artifacts(tmp_path) -> None:
+def test_trainer_fit_without_val_and_with_augmenter_creates_last_exports(tmp_path) -> None:
     torch.manual_seed(0)
 
     batch_size_total = 12
@@ -153,11 +160,18 @@ def test_trainer_fit_without_val_and_with_augmenter_creates_ema_artifacts(tmp_pa
 
     ckpt_dir = tmp_path / "checkpoints"
     assert (ckpt_dir / "last.pt").exists()
-    assert (tmp_path / "ema_model.pt").exists()
     assert (tmp_path / "training_history.json").exists()
 
-    # Without validation, best_model.pt should not be exported.
+    # Final exports are always produced.
+    assert (tmp_path / "last_model.pt").exists()
+    assert (tmp_path / "last_model_ema.pt").exists()
+
+    # Without validation, no best export should be produced.
+    assert not (tmp_path / "best_model_ema.pt").exists()
     assert not (tmp_path / "best_model.pt").exists()
+
+    # Legacy name should not be used anymore.
+    assert not (tmp_path / "ema_model.pt").exists()
 
     history = json.loads((tmp_path / "training_history.json").read_text(encoding="utf-8"))
     assert isinstance(history, list)
@@ -167,4 +181,4 @@ def test_trainer_fit_without_val_and_with_augmenter_creates_ema_artifacts(tmp_pa
     assert "lr" in history[0]
 
     # Validation-free run should record NaN val_loss in history.
-    assert history[0]["val_loss"] != history[0]["val_loss"]
+    assert math.isnan(history[0]["val_loss"])

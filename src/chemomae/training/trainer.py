@@ -100,8 +100,8 @@ class Trainer:
     - checkpoint（last/best）と履歴保存（JSON）
     - resume（"auto" で last.pt を検出）
     - early stopping
-    - val なし運用時の `ema_model.pt` export
-    - val あり運用時の `best_model.pt` は EMA 重みで保存
+    - 学習終了時の raw / EMA weights export
+    - val あり運用時の best EMA weights export
 
     モデルの入出力契約（最重要）
     --------------------------
@@ -133,10 +133,14 @@ class Trainer:
       最新の完全 checkpoint（生重み + optimizer/scaler/scheduler/ema state）。
     - `out_dir/checkpoints/best.pt`
       best（val 改善）時の完全 checkpoint。
+    - `out_dir/last_model.pt`
+      学習終了時の **生重み**。
+    - `out_dir/last_model_ema.pt`
+      学習終了時の **EMA 重み**（EMA 有効時）。
+    - `out_dir/best_model_ema.pt`
+      val あり運用時、best 判定時点の **EMA 重み**（EMA 有効時）。
     - `out_dir/best_model.pt`
-      val あり運用時、best 判定時点の **EMA 重み**。
-    - `out_dir/ema_model.pt`
-      val なし運用かつ EMA 有効時に、学習終了後の EMA 重みを書き出したもの。
+      val あり運用時、best 判定時点の **生重み**（EMA 無効時のみ）。
 
     Notes
     -----
@@ -144,7 +148,8 @@ class Trainer:
     - augmenter は train 時のみ適用し、validate では適用しない。
     - scheduler を epoch 単位で step したい場合は、この Trainer の実装（バッチ step）に合わせて
       スケジューラ側を設計すること（例: 総 step 数ベースの LambdaLR）。
-    - `last.pt` は resume 用の生重み checkpoint、`best_model.pt` / `ema_model.pt` は利用用の export として分離している。
+    - `last.pt` は resume 用の生重み checkpoint、`last_model.pt` / `last_model_ema.pt` /
+      `best_model_ema.pt` / `best_model.pt` は利用用の export として分離している。
     """
 
     def __init__(
@@ -180,7 +185,6 @@ class Trainer:
         self.augmenter = augmenter.to(self.device) if augmenter is not None else None
         self.cfg = cfg
 
-        # I/O
         self.out_dir = Path(cfg.out_dir)
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.ckpt_dir = self.out_dir / "checkpoints"
@@ -188,7 +192,6 @@ class Trainer:
         self.history_path = self.out_dir / "training_history.json"
         self.history: list[dict] = []
 
-        # AMP/TF32 設定
         self.amp = bool(cfg.amp)
         self.amp_dtype = cfg.amp_dtype.lower()
         if self.device.type == "cuda" and cfg.enable_tf32:
@@ -202,13 +205,9 @@ class Trainer:
         use_scaler = self.amp and (self.amp_dtype == "fp16") and (self.device.type == "cuda")
         self.scaler = torch.amp.GradScaler("cuda", enabled=use_scaler)  # type: ignore[arg-type]
 
-        # EMA
         self.ema = EMACallback(self.model, cfg.ema_decay) if cfg.use_ema else None
-
-        # best
         self.best = {"epoch": -1, "val_loss": float("inf")}
 
-        # 履歴ロード
         try:
             if self.history_path.exists():
                 self.history = json.loads(self.history_path.read_text(encoding="utf-8"))
@@ -303,9 +302,9 @@ class Trainer:
             torch.save(state, tmp_best.as_posix())
             tmp_best.replace(best)
 
-    def save_weights_only(self, filename: str = "best_model.pt") -> None:
+    def save_weights_only(self, filename: str = "last_model.pt") -> None:
         """
-        Save current model weights only.
+        Save current raw model weights only.
         """
         torch.save(self.model.state_dict(), (self.out_dir / filename).as_posix())
 
@@ -339,9 +338,6 @@ class Trainer:
 
     # ------------------------------ loops ------------------------------
     def train_one_epoch(self) -> float:
-        r"""
-        Run one training epoch.
-        """
         self.model.train()
         if self.augmenter is not None:
             self.augmenter.train()
@@ -423,8 +419,13 @@ class Trainer:
 
         Notes
         -----
-        - val あり: best 判定は EMA-val に基づき、`best_model.pt` は EMA 重みで保存する。
-        - val なし: 学習終了時に `ema_model.pt` を保存する（EMA 有効時）。
+        - val あり:
+          - best 判定は EMA-val に基づく
+          - EMA 有効時は `best_model_ema.pt` を保存
+          - EMA 無効時は `best_model.pt` を保存
+        - 学習終了時:
+          - 常に `last_model.pt` を保存
+          - EMA 有効時は `last_model_ema.pt` を保存
         """
         es = EarlyStopping(
             patience=self.cfg.early_stop_patience if self.cfg.early_stop_patience is not None else 10**9,
@@ -443,8 +444,9 @@ class Trainer:
                 start_epoch = self.load_checkpoint(self.cfg.resume_from)
 
         if start_epoch > epochs:
-            if self.val_loader is None and self.ema is not None:
-                self._save_ema_weights_only("ema_model.pt")
+            self.save_weights_only("last_model.pt")
+            if self.ema is not None:
+                self._save_ema_weights_only("last_model_ema.pt")
             return {"best": self.best, "epochs": start_epoch - 1}
 
         for epoch in range(start_epoch, epochs + 1):
@@ -463,7 +465,7 @@ class Trainer:
             if improved:
                 self.best = {"epoch": epoch, "val_loss": vl}
                 if self.ema is not None:
-                    self._save_ema_weights_only("best_model.pt")
+                    self._save_ema_weights_only("best_model_ema.pt")
                 else:
                     self.save_weights_only("best_model.pt")
 
@@ -488,7 +490,8 @@ class Trainer:
                 self.save_checkpoint(epoch, is_best=False)
                 break
 
-        if self.val_loader is None and self.ema is not None:
-            self._save_ema_weights_only("ema_model.pt")
+        self.save_weights_only("last_model.pt")
+        if self.ema is not None:
+            self._save_ema_weights_only("last_model_ema.pt")
 
         return {"best": self.best, "epochs": epoch}
