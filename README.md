@@ -169,8 +169,8 @@ from chemomae.training import SpectraAugmenter, SpectraAugmenterConfig
 
 aug_cfg = SpectraAugmenterConfig(
     shift_prob=0.5,
-    shift_delta_range=(-4.0, 4.0),
-    shift_angle_deg_range=(1.0, 4.0),
+    shift_delta_range=(-2.0, 2.0),
+    shift_angle_deg_range=(0.5, 3.0),
     noise_prob=0.5,
     noise_angle_deg_range=(0.5, 3.0),
     shuffle_order_per_batch=False,

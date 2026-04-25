@@ -221,7 +221,7 @@ If the candidate is closer than the sampled angle, the movement is clipped at th
 This gives a controlled operation:
 
 ```math
-\mathbf{x}_{\mathrm{aug}}=\operatorname{SLERP}(\mathbf{x},\mathbf{x}_{\mathrm{shift}},\theta_{\mathrm{shift}}).
+\mathbf{x}_{\mathrm{aug}}=\mathrm{SLERP}(\mathbf{x},\mathbf{x}_{\mathrm{shift}},\theta_{\mathrm{shift}}).
 ```
 
 This separates:
@@ -564,11 +564,7 @@ augmenter.eval()
 x_out = augmenter(x)
 ```
 
-gives
-
-```math
-\mathbf{x}_{\mathrm{out}} = \mathbf{x}.
-```
+gives $`\mathbf{x}_{\mathrm{out}} = \mathbf{x}`$ .
 
 ### Do not use for deterministic feature extraction
 
