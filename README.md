@@ -26,7 +26,7 @@ ChemoMAE introduces a **Transformer-based Masked Autoencoder (MAE)** specialized
 * reconstruction loss is computed only on the **masked spectral regions**
 * the encoder produces latent representations `z` that are naturally compatible with **cosine similarity**
 
-> **Note** <br>
+> **Note** :
 > The latent embedding `z` can be L2-normalized to unit norm (`latent_normalize=True`, default). Disable this (`latent_normalize=False`) if you prefer unconstrained embeddings.
 
 This architecture aligns naturally with the **hyperspherical geometry** induced by SNV, making the learned representations well suited for **cosine-based clustering** , retrieval, and downstream analysis.
@@ -35,16 +35,18 @@ This architecture aligns naturally with the **hyperspherical geometry** induced 
 
 ChemoMAE also provides a **spectral augmenter** designed specifically for SNV-normalized spectra.
 
-Instead of applying unconstrained Euclidean perturbations, `SpectraAugmenter` perturbs spectra **along the hypersphere** , preserving per-spectrum L2 norm.
+Instead of applying unconstrained Euclidean perturbations, `SpectraAugmenter` applies weak spectral perturbations while maintaining the geometry induced by SNV preprocessing. In particular, the augmenter can re-center each augmented spectrum to zero mean and re-normalize it to the original per-spectrum L2 norm.
 
-The current implementation supports (v0.1.8):
+The current implementation supports:
 
-* **spherical Gaussian noise**
-  random local perturbation along the sphere
-* **geodesic tilt**
-  structured low-frequency perturbation along the sphere
+* **fractional shift**
+  small wavelength-axis perturbation using interpolation and angle-limited movement toward the shifted candidate
+* **tangent Gaussian noise**
+  random local perturbation constructed in the tangent space of the hypersphere
 
-Both augmentation strengths are controlled by **target cosine similarity ranges** , making them easier to tune than raw geodesic angles.
+Both augmentation strengths are controlled by **geodesic angle ranges in degrees** . This makes the perturbation magnitude easier to reason about directly than cosine-similarity ranges.
+
+These augmentations are intended as **auxiliary regularization** for masked reconstruction, not as a strong contrastive multi-view augmentation pipeline.
 
 ### 3. Hyperspherical Geometry Toolkit
 
@@ -166,10 +168,14 @@ Define a hypersphere-aware augmenter for SNV-normalized spectra.
 from chemomae.training import SpectraAugmenter, SpectraAugmenterConfig
 
 aug_cfg = SpectraAugmenterConfig(
+    shift_prob=0.5,
+    shift_delta_range=(-4.0, 4.0),
+    shift_angle_deg_range=(1.0, 4.0),
     noise_prob=0.5,
-    noise_cos_range=(0.995, 0.9995),
-    tilt_prob=0.3,
-    tilt_cos_range=(0.997, 0.9998),
+    noise_angle_deg_range=(0.5, 3.0),
+    shuffle_order_per_batch=False,
+    recenter_after_each_op=True,
+    renorm_to_input_norm=True,
 )
 
 augmenter = SpectraAugmenter(aug_cfg)
@@ -177,6 +183,14 @@ augmenter = SpectraAugmenter(aug_cfg)
 
 This augmenter is applied **only during training**.
 The model input is augmented, but the reconstruction target remains the **original** spectrum.
+
+With the configuration above, augmentation follows the fixed order:
+
+```
+fractional shift -> recenter/renorm -> tangent Gaussian noise -> recenter/renorm
+```
+
+This provides weak denoising-style regularization while preserving the SNV-compatible geometry of the input spectra.
 
 ### 5. Training Setup (Trainer + Config)
 
@@ -530,25 +544,32 @@ scheduler = build_scheduler(
 
 `SpectraAugmenter` provides **hypersphere-aware augmentation** for **SNV-normalized spectra**.
 
-Instead of unconstrained Euclidean perturbations, it moves spectra **along the hypersphere**, preserving per-spectrum L2 norm.
+Instead of applying unconstrained Euclidean perturbations, it applies weak spectral perturbations and optionally projects the result back to the SNV-compatible geometry by:
+
+* re-centering each spectrum to mean zero
+* re-normalizing each spectrum to the original per-spectrum L2 norm
 
 The current implementation supports two augmentations:
 
-* **spherical Gaussian noise**
-  random local perturbation along the hypersphere
-* **geodesic tilt**
-  structured low-frequency perturbation along the hypersphere
+* **fractional shift**
+  small wavelength-axis perturbation using interpolation and angle-limited movement toward the shifted candidate
+* **tangent Gaussian noise**
+  random local perturbation constructed in the tangent space of the hypersphere
 
-Both augmentation strengths are controlled by **target cosine similarity ranges**.
+Both augmentation strengths are controlled by **geodesic angle ranges in degrees**.
 
 ```python
 from chemomae.training import SpectraAugmenter, SpectraAugmenterConfig
 
 aug_cfg = SpectraAugmenterConfig(
+    shift_prob=0.5,
+    shift_delta_range=(-2.0, 2.0),
+    shift_angle_deg_range=(0.5, 3.0),
     noise_prob=0.5,
-    noise_cos_range=(0.990, 0.999),
-    tilt_prob=0.5,
-    tilt_cos_range=(0.990, 0.999),
+    noise_angle_deg_range=(0.5, 3.0),
+    shuffle_order_per_batch=False,
+    recenter_after_each_op=True,
+    renorm_to_input_norm=True,
 )
 
 augmenter = SpectraAugmenter(aug_cfg)
@@ -559,15 +580,19 @@ x_aug = augmenter(x)
 
 **Key Features**
 
-* norm-preserving augmentation
-* random local perturbation + structured low-frequency perturbation
-* cosine-based strength control
+* SNV-compatible spectral augmentation
+* fractional wavelength-axis shift
+* tangent-space Gaussian perturbation
+* angle-based strength control
+* optional re-centering to zero mean
+* optional re-normalization to the input L2 norm
 * automatically inactive in `eval()` mode
 
 **When to Use**
 
 * during ChemoMAE pretraining on SNV-normalized spectra
-* when you want auxiliary regularization beyond masking
+* when you want weak denoising-style regularization beyond masking
+* when perturbations should remain compatible with cosine-based or hyperspherical downstream analysis
 
 ---
 
@@ -621,10 +646,14 @@ cfg = TrainerConfig(
 )
 
 aug_cfg = SpectraAugmenterConfig(
+    shift_prob=0.5,
+    shift_delta_range=(-2.0, 2.0),
+    shift_angle_deg_range=(0.5, 3.0),
     noise_prob=0.5,
-    noise_cos_range=(0.995, 0.9995),
-    tilt_prob=0.3,
-    tilt_cos_range=(0.997, 0.9998),
+    noise_angle_deg_range=(0.5, 3.0),
+    shuffle_order_per_batch=False,
+    recenter_after_each_op=True,
+    renorm_to_input_norm=True,
 )
 augmenter = SpectraAugmenter(aug_cfg)
 
