@@ -25,12 +25,7 @@ def _tiny_model(seq_len: int = 16) -> ChemoMAE:
 
 
 def _tiny_augmenter() -> SpectraAugmenter:
-    cfg = SpectraAugmenterConfig(
-        noise_prob=0.5,
-        noise_cos_range=(0.995, 0.9995),
-        tilt_prob=0.3,
-        tilt_cos_range=(0.997, 0.9998),
-    )
+    cfg = SpectraAugmenterConfig()
     return SpectraAugmenter(cfg)
 
 

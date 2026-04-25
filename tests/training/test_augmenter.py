@@ -1,4 +1,4 @@
-import math
+from __future__ import annotations
 
 import pytest
 import torch
@@ -6,202 +6,296 @@ import torch
 from chemomae.training.augmenter import SpectraAugmenter, SpectraAugmenterConfig
 
 
-def _normalized_batch(
+def _snv_like_batch(
     batch_size: int = 8,
     seq_len: int = 16,
     seed: int = 0,
 ) -> torch.Tensor:
+    """平均0・行ノルム1のSNV風バッチを作成する。"""
     g = torch.Generator().manual_seed(seed)
     x = torch.randn(batch_size, seq_len, generator=g, dtype=torch.float32)
-    x = x / (torch.linalg.norm(x, dim=1, keepdim=True) + 1e-12)
+    x = x - x.mean(dim=1, keepdim=True)
+    x = x / torch.linalg.norm(x, dim=1, keepdim=True).clamp_min(1.0e-12)
     return x
 
 
+def _row_cosine(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    """行ごとの cosine similarity を計算する。"""
+    denom = (
+        torch.linalg.norm(x, dim=1)
+        * torch.linalg.norm(y, dim=1)
+    ).clamp_min(1.0e-12)
+    return torch.sum(x * y, dim=1) / denom
+
+
+def _row_angle_deg(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    """行ごとの角度を degree 単位で計算する。"""
+    cos = _row_cosine(x, y).clamp(-1.0, 1.0)
+    return torch.rad2deg(torch.arccos(cos))
+
+
 def test_augmenter_eval_mode_returns_input_unchanged() -> None:
-    x = _normalized_batch()
+    x = _snv_like_batch()
     aug = SpectraAugmenter(
         SpectraAugmenterConfig(
+            shift_prob=1.0,
+            shift_delta_range=(-4.0, 4.0),
+            shift_angle_deg_range=(1.0, 4.0),
             noise_prob=1.0,
-            noise_cos_range=(0.99, 0.999),
-            tilt_prob=1.0,
-            tilt_cos_range=(0.99, 0.999),
+            noise_angle_deg_range=(0.5, 3.0),
+            shuffle_order_per_batch=False,
         )
     )
     aug.eval()
 
-    y = aug(x)
+    x_aug = aug(x)
 
-    torch.testing.assert_close(y, x)
+    torch.testing.assert_close(x_aug, x)
 
 
 def test_augmenter_train_mode_preserves_shape() -> None:
-    x = _normalized_batch()
+    x = _snv_like_batch()
     aug = SpectraAugmenter(
         SpectraAugmenterConfig(
+            shift_prob=1.0,
+            shift_delta_range=(-4.0, 4.0),
+            shift_angle_deg_range=(1.0, 4.0),
             noise_prob=1.0,
-            noise_cos_range=(0.99, 0.999),
-            tilt_prob=1.0,
-            tilt_cos_range=(0.99, 0.999),
+            noise_angle_deg_range=(0.5, 3.0),
+            shuffle_order_per_batch=False,
         )
     )
     aug.train()
 
-    y = aug(x)
+    torch.manual_seed(0)
+    x_aug = aug(x)
 
-    assert y.shape == x.shape
+    assert x_aug.shape == x.shape
 
 
 def test_noise_only_preserves_row_norm() -> None:
-    x = _normalized_batch()
+    x = _snv_like_batch()
     aug = SpectraAugmenter(
         SpectraAugmenterConfig(
+            shift_prob=0.0,
+            shift_delta_range=(0.0, 0.0),
+            shift_angle_deg_range=(0.0, 0.0),
             noise_prob=1.0,
-            noise_cos_range=(0.995, 0.995),
-            tilt_prob=0.0,
-            tilt_cos_range=(1.0, 1.0),
+            noise_angle_deg_range=(2.0, 2.0),
+            shuffle_order_per_batch=False,
+            recenter_after_each_op=True,
+            renorm_to_input_norm=True,
         )
     )
     aug.train()
 
-    y = aug(x)
+    torch.manual_seed(0)
+    x_aug = aug(x)
 
     x_norm = torch.linalg.norm(x, dim=1)
-    y_norm = torch.linalg.norm(y, dim=1)
-    torch.testing.assert_close(x_norm, y_norm, rtol=1e-5, atol=1e-6)
+    x_aug_norm = torch.linalg.norm(x_aug, dim=1)
+    torch.testing.assert_close(x_norm, x_aug_norm, rtol=1.0e-5, atol=1.0e-6)
 
 
-def test_tilt_only_preserves_row_norm() -> None:
-    x = _normalized_batch()
+def test_noise_only_preserves_row_mean_when_recenter_enabled() -> None:
+    x = _snv_like_batch()
     aug = SpectraAugmenter(
         SpectraAugmenterConfig(
+            shift_prob=0.0,
+            noise_prob=1.0,
+            noise_angle_deg_range=(2.0, 2.0),
+            recenter_after_each_op=True,
+            renorm_to_input_norm=True,
+        )
+    )
+    aug.train()
+
+    torch.manual_seed(0)
+    x_aug = aug(x)
+
+    x_aug_mean = x_aug.mean(dim=1)
+    torch.testing.assert_close(
+        x_aug_mean,
+        torch.zeros_like(x_aug_mean),
+        rtol=1.0e-5,
+        atol=1.0e-6,
+    )
+
+
+def test_shift_only_preserves_row_norm() -> None:
+    x = _snv_like_batch()
+    aug = SpectraAugmenter(
+        SpectraAugmenterConfig(
+            shift_prob=1.0,
+            shift_delta_range=(2.0, 2.0),
+            shift_angle_deg_range=(2.0, 2.0),
             noise_prob=0.0,
-            noise_cos_range=(1.0, 1.0),
-            tilt_prob=1.0,
-            tilt_cos_range=(0.995, 0.995),
+            noise_angle_deg_range=(0.0, 0.0),
+            shuffle_order_per_batch=False,
+            recenter_after_each_op=True,
+            renorm_to_input_norm=True,
         )
     )
     aug.train()
 
-    y = aug(x)
+    torch.manual_seed(0)
+    x_aug = aug(x)
 
     x_norm = torch.linalg.norm(x, dim=1)
-    y_norm = torch.linalg.norm(y, dim=1)
-    torch.testing.assert_close(x_norm, y_norm, rtol=1e-5, atol=1e-6)
+    x_aug_norm = torch.linalg.norm(x_aug, dim=1)
+    torch.testing.assert_close(x_norm, x_aug_norm, rtol=1.0e-5, atol=1.0e-6)
 
 
-def test_noise_and_tilt_together_preserve_row_norm() -> None:
-    x = _normalized_batch()
+def test_shift_only_preserves_row_mean_when_recenter_enabled() -> None:
+    x = _snv_like_batch()
     aug = SpectraAugmenter(
         SpectraAugmenterConfig(
-            noise_prob=1.0,
-            noise_cos_range=(0.995, 0.999),
-            tilt_prob=1.0,
-            tilt_cos_range=(0.995, 0.999),
+            shift_prob=1.0,
+            shift_delta_range=(2.0, 2.0),
+            shift_angle_deg_range=(2.0, 2.0),
+            noise_prob=0.0,
+            recenter_after_each_op=True,
+            renorm_to_input_norm=True,
         )
     )
     aug.train()
 
-    y = aug(x)
+    torch.manual_seed(0)
+    x_aug = aug(x)
+
+    x_aug_mean = x_aug.mean(dim=1)
+    torch.testing.assert_close(
+        x_aug_mean,
+        torch.zeros_like(x_aug_mean),
+        rtol=1.0e-5,
+        atol=1.0e-6,
+    )
+
+
+def test_noise_and_shift_together_preserve_row_norm() -> None:
+    x = _snv_like_batch()
+    aug = SpectraAugmenter(
+        SpectraAugmenterConfig(
+            shift_prob=1.0,
+            shift_delta_range=(2.0, 2.0),
+            shift_angle_deg_range=(2.0, 2.0),
+            noise_prob=1.0,
+            noise_angle_deg_range=(1.0, 1.0),
+            shuffle_order_per_batch=False,
+            recenter_after_each_op=True,
+            renorm_to_input_norm=True,
+        )
+    )
+    aug.train()
+
+    torch.manual_seed(0)
+    x_aug = aug(x)
 
     x_norm = torch.linalg.norm(x, dim=1)
-    y_norm = torch.linalg.norm(y, dim=1)
-    torch.testing.assert_close(x_norm, y_norm, rtol=1e-5, atol=1e-6)
+    x_aug_norm = torch.linalg.norm(x_aug, dim=1)
+    torch.testing.assert_close(x_norm, x_aug_norm, rtol=1.0e-5, atol=1.0e-6)
 
 
 def test_zero_probability_keeps_input_unchanged_even_in_train_mode() -> None:
-    x = _normalized_batch()
+    x = _snv_like_batch()
     aug = SpectraAugmenter(
         SpectraAugmenterConfig(
+            shift_prob=0.0,
+            shift_delta_range=(-4.0, 4.0),
+            shift_angle_deg_range=(1.0, 4.0),
             noise_prob=0.0,
-            noise_cos_range=(0.99, 0.999),
-            tilt_prob=0.0,
-            tilt_cos_range=(0.99, 0.999),
+            noise_angle_deg_range=(0.5, 3.0),
         )
     )
     aug.train()
 
-    y = aug(x)
+    torch.manual_seed(0)
+    x_aug = aug(x)
 
-    torch.testing.assert_close(y, x)
+    torch.testing.assert_close(x_aug, x)
 
 
 def test_noise_changes_input_when_enabled() -> None:
-    x = _normalized_batch()
+    x = _snv_like_batch()
     aug = SpectraAugmenter(
         SpectraAugmenterConfig(
+            shift_prob=0.0,
             noise_prob=1.0,
-            noise_cos_range=(0.99, 0.99),
-            tilt_prob=0.0,
-            tilt_cos_range=(1.0, 1.0),
+            noise_angle_deg_range=(3.0, 3.0),
+            recenter_after_each_op=True,
+            renorm_to_input_norm=True,
         )
     )
     aug.train()
 
-    y = aug(x)
+    torch.manual_seed(0)
+    x_aug = aug(x)
 
-    assert not torch.allclose(y, x)
+    assert not torch.allclose(x_aug, x)
 
 
-def test_tilt_changes_input_when_enabled() -> None:
-    x = _normalized_batch()
+def test_shift_changes_input_when_enabled() -> None:
+    x = _snv_like_batch()
     aug = SpectraAugmenter(
         SpectraAugmenterConfig(
+            shift_prob=1.0,
+            shift_delta_range=(2.0, 2.0),
+            shift_angle_deg_range=(3.0, 3.0),
             noise_prob=0.0,
-            noise_cos_range=(1.0, 1.0),
-            tilt_prob=1.0,
-            tilt_cos_range=(0.99, 0.99),
+            recenter_after_each_op=True,
+            renorm_to_input_norm=True,
         )
     )
     aug.train()
 
-    y = aug(x)
+    torch.manual_seed(0)
+    x_aug = aug(x)
 
-    assert not torch.allclose(y, x)
+    assert not torch.allclose(x_aug, x)
 
 
 @pytest.mark.parametrize(
-    ("noise_prob", "noise_cos_range", "tilt_prob", "tilt_cos_range"),
+    (
+        "shift_prob",
+        "shift_delta_range",
+        "shift_angle_deg_range",
+        "noise_prob",
+        "noise_angle_deg_range",
+    ),
     [
-        (-0.1, (1.0, 1.0), 0.0, (1.0, 1.0)),
-        (1.1, (1.0, 1.0), 0.0, (1.0, 1.0)),
-        (0.0, (0.0, 1.0), 0.0, (1.0, 1.0)),
-        (0.0, (1.0, 1.1), 0.0, (1.0, 1.0)),
-        (0.0, (0.999, 0.5), 0.0, (1.0, 1.0)),
-        (0.0, (1.0, 1.0), -0.1, (1.0, 1.0)),
-        (0.0, (1.0, 1.0), 1.1, (1.0, 1.0)),
-        (0.0, (1.0, 1.0), 0.0, (0.0, 1.0)),
-        (0.0, (1.0, 1.0), 0.0, (1.0, 1.1)),
-        (0.0, (1.0, 1.0), 0.0, (0.999, 0.5)),
+        (-0.1, (-4.0, 4.0), (1.0, 4.0), 0.0, (0.5, 3.0)),
+        (1.1, (-4.0, 4.0), (1.0, 4.0), 0.0, (0.5, 3.0)),
+        (0.0, (4.0, -4.0), (1.0, 4.0), 0.0, (0.5, 3.0)),
+        (0.0, (-4.0, 4.0), (-1.0, 4.0), 0.0, (0.5, 3.0)),
+        (0.0, (-4.0, 4.0), (4.0, 1.0), 0.0, (0.5, 3.0)),
+        (0.0, (-4.0, 4.0), (1.0, 181.0), 0.0, (0.5, 3.0)),
+        (0.0, (-4.0, 4.0), (1.0, 4.0), -0.1, (0.5, 3.0)),
+        (0.0, (-4.0, 4.0), (1.0, 4.0), 1.1, (0.5, 3.0)),
+        (0.0, (-4.0, 4.0), (1.0, 4.0), 0.0, (-0.5, 3.0)),
+        (0.0, (-4.0, 4.0), (1.0, 4.0), 0.0, (3.0, 0.5)),
+        (0.0, (-4.0, 4.0), (1.0, 4.0), 0.0, (0.5, 181.0)),
     ],
 )
 def test_invalid_config_raises_value_error(
+    shift_prob: float,
+    shift_delta_range: tuple[float, float],
+    shift_angle_deg_range: tuple[float, float],
     noise_prob: float,
-    noise_cos_range: tuple[float, float],
-    tilt_prob: float,
-    tilt_cos_range: tuple[float, float],
+    noise_angle_deg_range: tuple[float, float],
 ) -> None:
     with pytest.raises(ValueError):
-        SpectraAugmenter(
-            SpectraAugmenterConfig(
-                noise_prob=noise_prob,
-                noise_cos_range=noise_cos_range,
-                tilt_prob=tilt_prob,
-                tilt_cos_range=tilt_cos_range,
-            )
+        _ = SpectraAugmenterConfig(
+            shift_prob=shift_prob,
+            shift_delta_range=shift_delta_range,
+            shift_angle_deg_range=shift_angle_deg_range,
+            noise_prob=noise_prob,
+            noise_angle_deg_range=noise_angle_deg_range,
         )
 
 
 def test_non_positive_eps_raises_value_error() -> None:
     with pytest.raises(ValueError):
-        SpectraAugmenter(
-            SpectraAugmenterConfig(
-                noise_prob=0.0,
-                noise_cos_range=(1.0, 1.0),
-                tilt_prob=0.0,
-                tilt_cos_range=(1.0, 1.0),
-                eps=0.0,
-            )
-        )
+        _ = SpectraAugmenterConfig(eps=0.0)
 
 
 def test_forward_rejects_non_2d_input() -> None:
@@ -222,14 +316,15 @@ def test_forward_rejects_non_floating_input() -> None:
         _ = aug(x)
 
 
-def test_num_features_less_than_two_raises_for_noise_fallback() -> None:
-    x = _normalized_batch(batch_size=4, seq_len=1)
+def test_num_features_less_than_two_raises_value_error() -> None:
+    x = _snv_like_batch(batch_size=4, seq_len=1)
     aug = SpectraAugmenter(
         SpectraAugmenterConfig(
+            shift_prob=1.0,
+            shift_delta_range=(0.0, 0.0),
+            shift_angle_deg_range=(1.0, 1.0),
             noise_prob=1.0,
-            noise_cos_range=(0.99, 0.99),
-            tilt_prob=0.0,
-            tilt_cos_range=(1.0, 1.0),
+            noise_angle_deg_range=(1.0, 1.0),
         )
     )
     aug.train()
@@ -238,39 +333,74 @@ def test_num_features_less_than_two_raises_for_noise_fallback() -> None:
         _ = aug(x)
 
 
-def test_num_features_less_than_two_raises_for_tilt() -> None:
-    x = _normalized_batch(batch_size=4, seq_len=1)
+def test_noise_only_angle_is_close_to_configured_value() -> None:
+    x = _snv_like_batch()
     aug = SpectraAugmenter(
         SpectraAugmenterConfig(
-            noise_prob=0.0,
-            noise_cos_range=(1.0, 1.0),
-            tilt_prob=1.0,
-            tilt_cos_range=(0.99, 0.99),
+            shift_prob=0.0,
+            noise_prob=1.0,
+            noise_angle_deg_range=(2.0, 2.0),
+            recenter_after_each_op=True,
+            renorm_to_input_norm=True,
         )
     )
     aug.train()
 
-    with pytest.raises(ValueError):
-        _ = aug(x)
+    torch.manual_seed(0)
+    x_aug = aug(x)
+
+    angle_deg = _row_angle_deg(x, x_aug)
+    torch.testing.assert_close(
+        angle_deg,
+        torch.full_like(angle_deg, 2.0),
+        rtol=1.0e-4,
+        atol=1.0e-4,
+    )
+
+
+def test_shift_only_angle_does_not_exceed_configured_value() -> None:
+    x = _snv_like_batch()
+    aug = SpectraAugmenter(
+        SpectraAugmenterConfig(
+            shift_prob=1.0,
+            shift_delta_range=(2.0, 2.0),
+            shift_angle_deg_range=(3.0, 3.0),
+            noise_prob=0.0,
+            recenter_after_each_op=True,
+            renorm_to_input_norm=True,
+        )
+    )
+    aug.train()
+
+    torch.manual_seed(0)
+    x_aug = aug(x)
+
+    angle_deg = _row_angle_deg(x, x_aug)
+
+    assert torch.all(angle_deg >= 0.0)
+    assert torch.all(angle_deg <= 3.0 + 1.0e-4)
 
 
 def test_cosine_similarity_stays_within_valid_range_for_weak_aug() -> None:
-    x = _normalized_batch()
+    x = _snv_like_batch()
     aug = SpectraAugmenter(
         SpectraAugmenterConfig(
+            shift_prob=1.0,
+            shift_delta_range=(2.0, 2.0),
+            shift_angle_deg_range=(2.0, 2.0),
             noise_prob=1.0,
-            noise_cos_range=(0.999, 0.999),
-            tilt_prob=1.0,
-            tilt_cos_range=(0.999, 0.999),
+            noise_angle_deg_range=(1.0, 1.0),
+            shuffle_order_per_batch=False,
+            recenter_after_each_op=True,
+            renorm_to_input_norm=True,
         )
     )
     aug.train()
 
-    y = aug(x)
+    torch.manual_seed(0)
+    x_aug = aug(x)
 
-    cos = torch.sum(x * y, dim=1) / (
-        torch.linalg.norm(x, dim=1) * torch.linalg.norm(y, dim=1) + 1e-12
-    )
+    cos = _row_cosine(x, x_aug)
 
-    assert torch.all(cos <= 1.0 + 1e-6)
-    assert torch.all(cos >= -1.0 - 1e-6)
+    assert torch.all(cos <= 1.0 + 1.0e-6)
+    assert torch.all(cos >= -1.0 - 1.0e-6)
