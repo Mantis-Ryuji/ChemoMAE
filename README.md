@@ -26,7 +26,7 @@ ChemoMAE introduces a **Transformer-based Masked Autoencoder (MAE)** specialized
 * reconstruction loss is computed only on the **masked spectral regions**
 * the encoder produces latent representations `z` that are naturally compatible with **cosine similarity**
 
-> **Note** :
+> [!NOTE]
 > The latent embedding `z` can be L2-normalized to unit norm (`latent_normalize=True`, default). Disable this (`latent_normalize=False`) if you prefer unconstrained embeddings.
 
 This architecture aligns naturally with the **hyperspherical geometry** induced by SNV, making the learned representations well suited for **cosine-based clustering** , retrieval, and downstream analysis.
@@ -40,11 +40,11 @@ Instead of applying unconstrained Euclidean perturbations, `SpectraAugmenter` ap
 The current implementation supports:
 
 * **fractional shift**
-  small wavelength-axis perturbation using interpolation and angle-limited movement toward the shifted candidate
+  small wavelength-axis perturbation using interpolation
 * **tangent Gaussian noise**
   random local perturbation constructed in the tangent space of the hypersphere
 
-Both augmentation strengths are controlled by **geodesic angle ranges in degrees** . This makes the perturbation magnitude easier to reason about directly than cosine-similarity ranges.
+Fractional shift is controlled by the shift amount in channel-index units, while tangent Gaussian noise is controlled by a geodesic angle range in degrees.
 
 These augmentations are intended as **auxiliary regularization** for masked reconstruction, not as a strong contrastive multi-view augmentation pipeline.
 
@@ -170,7 +170,6 @@ from chemomae.training import SpectraAugmenter, SpectraAugmenterConfig
 aug_cfg = SpectraAugmenterConfig(
     shift_prob=0.5,
     shift_delta_range=(-2.0, 2.0),
-    shift_angle_deg_range=(0.5, 3.0),
     noise_prob=0.5,
     noise_angle_deg_range=(0.5, 3.0),
     shuffle_order_per_batch=False,
@@ -552,11 +551,11 @@ Instead of applying unconstrained Euclidean perturbations, it applies weak spect
 The current implementation supports two augmentations:
 
 * **fractional shift**
-  small wavelength-axis perturbation using interpolation and angle-limited movement toward the shifted candidate
+  small wavelength-axis perturbation using interpolation
 * **tangent Gaussian noise**
   random local perturbation constructed in the tangent space of the hypersphere
 
-Both augmentation strengths are controlled by **geodesic angle ranges in degrees**.
+Fractional shift is controlled by `shift_delta_range`, while tangent Gaussian noise is controlled by `noise_angle_deg_range`.
 
 ```python
 from chemomae.training import SpectraAugmenter, SpectraAugmenterConfig
@@ -564,7 +563,6 @@ from chemomae.training import SpectraAugmenter, SpectraAugmenterConfig
 aug_cfg = SpectraAugmenterConfig(
     shift_prob=0.5,
     shift_delta_range=(-2.0, 2.0),
-    shift_angle_deg_range=(0.5, 3.0),
     noise_prob=0.5,
     noise_angle_deg_range=(0.5, 3.0),
     shuffle_order_per_batch=False,
@@ -583,7 +581,8 @@ x_aug = augmenter(x)
 * SNV-compatible spectral augmentation
 * fractional wavelength-axis shift
 * tangent-space Gaussian perturbation
-* angle-based strength control
+* delta-controlled fractional shift
+* angle-controlled tangent Gaussian noise
 * optional re-centering to zero mean
 * optional re-normalization to the input L2 norm
 * automatically inactive in `eval()` mode
@@ -648,7 +647,6 @@ cfg = TrainerConfig(
 aug_cfg = SpectraAugmenterConfig(
     shift_prob=0.5,
     shift_delta_range=(-2.0, 2.0),
-    shift_angle_deg_range=(0.5, 3.0),
     noise_prob=0.5,
     noise_angle_deg_range=(0.5, 3.0),
     shuffle_order_per_batch=False,

@@ -96,11 +96,8 @@ class SpectraAugmenterConfig:
     shift_prob : float, default=0.5
         fractional shift を適用する確率。
     shift_delta_range : tuple[float, float], default=(-2.0, 2.0)
-        fractional shift の候補生成に使う shift 量の範囲。
+        fractional shift の shift 量の範囲。
         単位はチャネル index。
-    shift_angle_deg_range : tuple[float, float], default=(0.5, 3.0)
-        shift 候補方向へ移動する角度範囲。
-        単位は degree。
     noise_prob : float, default=0.5
         tangent Gaussian noise を適用する確率。
     noise_angle_deg_range : tuple[float, float], default=(0.5, 3.0)
@@ -117,13 +114,12 @@ class SpectraAugmenterConfig:
 
     Notes
     -----
-    angle 指定は degree 単位で行う。
-    内部計算では radian に変換して使用する。
+    shift は波数軸方向の位置ずれとして扱い、delta のみで制御する。
+    noise はランダム接空間方向への摂動として扱い、球面角で制御する。
     """
 
     shift_prob: float = 0.5
     shift_delta_range: tuple[float, float] = (-2.0, 2.0)
-    shift_angle_deg_range: tuple[float, float] = (0.5, 3.0)
 
     noise_prob: float = 0.5
     noise_angle_deg_range: tuple[float, float] = (0.5, 3.0)
@@ -149,7 +145,6 @@ class SpectraAugmenterConfig:
         _validate_probability("noise_prob", self.noise_prob)
 
         _validate_range("shift_delta_range", self.shift_delta_range)
-        _validate_angle_deg_range("shift_angle_deg_range", self.shift_angle_deg_range)
         _validate_angle_deg_range("noise_angle_deg_range", self.noise_angle_deg_range)
 
         if self.eps <= 0.0:
@@ -381,7 +376,9 @@ class SpectraAugmenter(nn.Module):
         torch.Tensor
             再正規化後テンソル。
         """
-        ref_norm = torch.linalg.norm(ref, dim=1, keepdim=True).clamp_min(self.config.eps)
+        ref_norm = torch.linalg.norm(ref, dim=1, keepdim=True).clamp_min(
+            self.config.eps
+        )
         x_norm = torch.linalg.norm(x, dim=1, keepdim=True)
 
         bad = x_norm <= self.config.eps
@@ -410,7 +407,11 @@ class SpectraAugmenter(nn.Module):
             out = self._renorm_like(out, ref=ref)
         return out
 
-    def _project_to_tangent(self, base: torch.Tensor, direction: torch.Tensor) -> torch.Tensor:
+    def _project_to_tangent(
+        self,
+        base: torch.Tensor,
+        direction: torch.Tensor,
+    ) -> torch.Tensor:
         """方向ベクトルを接空間へ射影する。
 
         Parameters
@@ -427,7 +428,9 @@ class SpectraAugmenter(nn.Module):
         """
         direction_centered = self._center(direction)
 
-        denom = torch.sum(base * base, dim=1, keepdim=True).clamp_min(self.config.eps)
+        denom = torch.sum(base * base, dim=1, keepdim=True).clamp_min(
+            self.config.eps
+        )
         coeff = torch.sum(direction_centered * base, dim=1, keepdim=True) / denom
         return direction_centered - coeff * base
 
@@ -464,7 +467,9 @@ class SpectraAugmenter(nn.Module):
         if not torch.any(valid):
             return base
 
-        base_norm = torch.linalg.norm(base, dim=1, keepdim=True).clamp_min(self.config.eps)
+        base_norm = torch.linalg.norm(base, dim=1, keepdim=True).clamp_min(
+            self.config.eps
+        )
         unit_base = base / base_norm
         unit_tangent = tangent / tangent_norm.clamp_min(self.config.eps)
 
@@ -476,82 +481,11 @@ class SpectraAugmenter(nn.Module):
         ).unsqueeze(1)
 
         rotated = base_norm * (
-            torch.cos(angle) * unit_base
-            + torch.sin(angle) * unit_tangent
+            torch.cos(angle) * unit_base + torch.sin(angle) * unit_tangent
         )
 
         out = base.clone()
         out[valid] = rotated[valid]
-        return self._reproject(out, ref=base)
-
-    def _slerp_to_target_angle(
-        self,
-        base: torch.Tensor,
-        target: torch.Tensor,
-        angle_deg_range: tuple[float, float],
-    ) -> torch.Tensor:
-        """target 方向へ指定角度だけ球面補間する。
-
-        Parameters
-        ----------
-        base : torch.Tensor
-            基準スペクトル。shape は (B, L)。
-        target : torch.Tensor
-            補間先候補スペクトル。shape は (B, L)。
-        angle_deg_range : tuple[float, float]
-            base から移動する角度範囲。単位は degree。
-
-        Returns
-        -------
-        torch.Tensor
-            球面補間後スペクトル。
-        """
-        batch_size = base.shape[0]
-        device = base.device
-        dtype = base.dtype
-
-        base_norm = torch.linalg.norm(base, dim=1, keepdim=True).clamp_min(self.config.eps)
-        target_norm = torch.linalg.norm(target, dim=1, keepdim=True).clamp_min(self.config.eps)
-
-        u = base / base_norm
-        v = target / target_norm
-
-        dot = torch.sum(u * v, dim=1).clamp(-1.0, 1.0)
-        omega = torch.arccos(dot)
-        omega_safe = omega.clamp_min(self.config.eps)
-
-        sampled_angle = self._sample_angle_rad(
-            batch_size=batch_size,
-            angle_deg_range=angle_deg_range,
-            device=device,
-            dtype=dtype,
-        )
-
-        target_angle = torch.minimum(sampled_angle, omega)
-        t = (target_angle / omega_safe).clamp(0.0, 1.0)
-
-        sin_omega = torch.sin(omega_safe).clamp_min(self.config.eps)
-
-        coeff_base = torch.sin((1.0 - t) * omega_safe) / sin_omega
-        coeff_target = torch.sin(t * omega_safe) / sin_omega
-
-        slerped_unit = coeff_base.unsqueeze(1) * u + coeff_target.unsqueeze(1) * v
-
-        lerped_unit = (1.0 - t).unsqueeze(1) * u + t.unsqueeze(1) * v
-        lerped_unit = lerped_unit / torch.linalg.norm(
-            lerped_unit,
-            dim=1,
-            keepdim=True,
-        ).clamp_min(self.config.eps)
-
-        near_collinear = omega <= 1.0e-6
-        out_unit = torch.where(
-            near_collinear.unsqueeze(1),
-            lerped_unit,
-            slerped_unit,
-        )
-
-        out = base_norm * out_unit
         return self._reproject(out, ref=base)
 
     def _fractional_shift_batch(
@@ -588,7 +522,7 @@ class SpectraAugmenter(nn.Module):
                 f"got {delta.shape[0]} and {x.shape[0]}."
             )
 
-        batch_size, num_features = x.shape
+        _, num_features = x.shape
         device = x.device
         dtype = x.dtype
 
@@ -646,17 +580,11 @@ class SpectraAugmenter(nn.Module):
         x_selected = x[rows]
         delta_selected = deltas[rows]
 
-        candidate = self._fractional_shift_batch(
+        shifted = self._fractional_shift_batch(
             x=x_selected,
             delta=delta_selected,
         )
-        candidate = self._reproject(candidate, ref=x_selected)
-
-        shifted = self._slerp_to_target_angle(
-            base=x_selected,
-            target=candidate,
-            angle_deg_range=cfg.shift_angle_deg_range,
-        )
+        shifted = self._reproject(shifted, ref=x_selected)
 
         out = x.clone()
         out[rows] = shifted

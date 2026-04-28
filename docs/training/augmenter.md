@@ -2,7 +2,7 @@
 
 > Module: `chemomae.training.augmenter`
 
-This document describes **`SpectraAugmenter`** , a hypersphere-aware spectral augmentation module for **SNV-normalized spectra** in ChemoMAE training.
+This document describes **`SpectraAugmenter`**, a hypersphere-aware spectral augmentation module for **SNV-normalized spectra** in ChemoMAE training.
 
 The implementation provides two lightweight training-time augmentations:
 
@@ -29,7 +29,7 @@ where each spectrum satisfies approximately
 \frac{1}{L}\sum_{\ell=1}^{L} x_{i,\ell} \approx 0 \quad\text{and}\quad\lVert \mathbf{x}_i \rVert_2 \approx r
 ```
 
-for some nearly constant radius $`r > 0`$ .
+for some nearly constant radius $`r > 0`$.
 
 Under exact SNV with population standard deviation, each spectrum lies on the intersection of:
 
@@ -59,7 +59,7 @@ generally violates this structure because it may change both the sample mean and
 
 ## Design Goal
 
-The main learning signal in ChemoMAE is **masked reconstruction** .
+The main learning signal in ChemoMAE is **masked reconstruction**.
 
 The model receives a partially visible spectrum and learns to reconstruct masked wavelength regions. Augmentation is used only as a secondary regularizer:
 
@@ -85,26 +85,47 @@ Structured low-frequency augmentations such as tilt or quadratic baseline are in
 
 ---
 
-## Strength Control via Angle
+## Strength Control
 
-This implementation controls augmentation strength by **geodesic angle**, not by cosine similarity.
+This implementation uses different control variables for fractional shift and tangent Gaussian noise.
 
-For an input spectrum $`\mathbf{x}`$ and augmented spectrum $`\mathbf{x}_{\mathrm{aug}}`$ , the angle is defined through
+### Fractional shift
+
+Fractional shift is controlled only by the shift amount
+
+```math
+\delta \quad \text{[channel index]}.
+```
+
+The corresponding API parameter is:
+
+```python
+shift_delta_range: tuple[float, float]
+```
+
+This means the operation directly controls the wavelength-axis displacement. The final shifted spectrum is not additionally clipped by cosine similarity or geodesic angle.
+
+This design is intentional. Fractional shift is an axis-domain operation, and its physically interpretable control variable is the displacement along the wavelength or channel axis. Controlling the same operation again by spherical angle can unintentionally weaken the perturbation because the angular distance induced by a fixed shift depends strongly on the spectrum shape.
+
+### Tangent Gaussian noise
+
+Tangent Gaussian noise is controlled by geodesic angle.
+
+For an input spectrum $`\mathbf{x}`$ and augmented spectrum $`\mathbf{x}_{\mathrm{aug}}`$, the angle is defined through
 
 ```math
 \cos(\theta)=\frac{\mathbf{x}^{\top}\mathbf{x}_{\mathrm{aug}}}{\lVert \mathbf{x} \rVert_2 \lVert \mathbf{x}_{\mathrm{aug}} \rVert_2}.
 ```
 
-The API specifies angle ranges in **degrees** :
+The API specifies the noise angle range in **degrees**:
 
 ```python
 noise_angle_deg_range: tuple[float, float]
-shift_angle_deg_range: tuple[float, float]
 ```
 
 Internally, sampled angles are converted to radians.
 
-Angle-based control is often easier to reason about than cosine-based control because the perturbation magnitude is specified directly as a movement angle on the sphere.
+Angle-based control is appropriate for tangent Gaussian noise because the perturbation direction is random and does not have a natural physical unit like channel displacement.
 
 ---
 
@@ -144,13 +165,13 @@ When both are enabled, the output after each augmentation remains compatible wit
 
 For tangent Gaussian noise, the implementation constructs a perturbation direction in the tangent space of the sphere.
 
-At a spectrum $`\mathbf{x}`$ , the tangent space of the sphere is
+At a spectrum $`\mathbf{x}`$, the tangent space of the sphere is
 
 ```math
 T_{\mathbf{x}}\mathbb{S}^{L-1}(r)=\left\{\mathbf{v} \in \mathbb{R}^L\;\middle|\;\mathbf{v}^{\top}\mathbf{x}=0\right\}.
 ```
 
-Given an arbitrary direction $`d`$ , the projection onto this tangent space is
+Given an arbitrary direction $`\mathbf{d}`$, the projection onto this tangent space is
 
 ```math
 \mathbf{v}=\mathbf{d}-\frac{\mathbf{d}^{\top}\mathbf{x}}{\lVert \mathbf{x} \rVert_2^2}\mathbf{x}.
@@ -160,15 +181,17 @@ In this implementation, the random direction is first centered before tangent pr
 
 ---
 
-## Geodesic Rotation
+## Geodesic Rotation for Noise
 
-Given a unit tangent direction $`\mathbf{u}`$ , the spectrum is rotated along the sphere by angle $`\theta`$ :
+Given a unit tangent direction $`\mathbf{u}`$, the spectrum is rotated along the sphere by angle $`\theta`$:
 
 ```math
 \mathbf{x}_{\mathrm{aug}}=r\left(\cos(\theta)\frac{\mathbf{x}}{r}+\sin(\theta)\mathbf{u}\right),\qquad r = \lVert \mathbf{x} \rVert_2.
 ```
 
 This operation preserves the L2 norm before re-centering. Since re-centering may slightly change the norm, the implementation can re-normalize the result to the input norm afterward.
+
+This geodesic rotation is used for tangent Gaussian noise, not for fractional shift.
 
 ---
 
@@ -206,28 +229,13 @@ Boundary indices are clamped to the valid wavelength-index range.
 
 After the candidate shift is generated, $`\mathbf{x}_{\mathrm{shift}}`$ is reprojected to the SNV-compatible geometry.
 
-### Angle-Limited Movement Toward the Shifted Candidate
-
-The raw shifted candidate may be too far from the original spectrum. Therefore, the final augmented spectrum is not necessarily the full shifted candidate.
-
-Instead, the module moves from $`\mathbf{x}`$ toward $`\mathbf{x}_{\mathrm{shift}}`$ by a sampled angle:
+The final output of this augmentation is
 
 ```math
-\theta_{\mathrm{shift}}\sim\mathcal{U}(\theta_{\min}, \theta_{\max}).
+\mathbf{x}_{\mathrm{aug}}=\Pi_{\mathcal{M}}(\mathbf{x}_{\mathrm{shift}}),
 ```
 
-If the candidate is closer than the sampled angle, the movement is clipped at the candidate itself.
-
-This gives a controlled operation:
-
-```math
-\mathbf{x}_{\mathrm{aug}}=\mathrm{SLERP}(\mathbf{x},\mathbf{x}_{\mathrm{shift}},\theta_{\mathrm{shift}}).
-```
-
-This separates:
-
-* `shift_delta_range`: how far to shift the candidate,
-* `shift_angle_deg_range`: how far the final output is allowed to move from the original spectrum.
+where $`\Pi_{\mathcal{M}}`$ denotes the optional re-centering and re-normalization operation.
 
 ### Practical Role
 
@@ -264,7 +272,7 @@ the implementation:
 
 ### Construction
 
-For each selected spectrum $`\mathbf{x}`$ , sample
+For each selected spectrum $`\mathbf{x}`$, sample
 
 ```math
 \mathbf{g} \sim \mathcal{N}(\mathbf{0}, I_L).
@@ -388,13 +396,12 @@ Therefore, even with fixed operation order, the batch contains a mixture of:
 @dataclass(frozen=True)
 class SpectraAugmenterConfig:
     shift_prob: float = 0.5
-    shift_delta_range: tuple[float, float] = (-4.0, 4.0)
-    shift_angle_deg_range: tuple[float, float] = (1.0, 4.0)
+    shift_delta_range: tuple[float, float] = (-2.0, 2.0)
 
     noise_prob: float = 0.5
     noise_angle_deg_range: tuple[float, float] = (0.5, 3.0)
 
-    shuffle_order_per_batch: bool = True
+    shuffle_order_per_batch: bool = False
     recenter_after_each_op: bool = True
     renorm_to_input_norm: bool = True
     eps: float = 1.0e-8
@@ -402,17 +409,16 @@ class SpectraAugmenterConfig:
 
 ### Parameters
 
-| Name                      | Type                  | Description                                                                       |
-| ------------------------- | --------------------- | --------------------------------------------------------------------------------- |
-| `shift_prob`              | `float`               | Probability of applying fractional shift to each sample.                          |
-| `shift_delta_range`       | `tuple[float, float]` | Range of candidate fractional shift amounts in channel-index units.               |
-| `shift_angle_deg_range`   | `tuple[float, float]` | Range of movement angles from the original spectrum toward the shifted candidate. |
-| `noise_prob`              | `float`               | Probability of applying tangent Gaussian noise to each sample.                    |
-| `noise_angle_deg_range`   | `tuple[float, float]` | Range of geodesic rotation angles for tangent Gaussian noise.                     |
-| `shuffle_order_per_batch` | `bool`                | Whether to randomize the order of shift and noise once per batch.                 |
-| `recenter_after_each_op`  | `bool`                | Whether to re-center each spectrum to mean zero after each augmentation.          |
-| `renorm_to_input_norm`    | `bool`                | Whether to re-normalize each spectrum to the input norm after each augmentation.  |
-| `eps`                     | `float`               | Numerical stability constant used in normalization and projection.                |
+| Name                      | Type                  | Description                                                                      |
+| ------------------------- | --------------------- | -------------------------------------------------------------------------------- |
+| `shift_prob`              | `float`               | Probability of applying fractional shift to each sample.                         |
+| `shift_delta_range`       | `tuple[float, float]` | Range of fractional shift amounts in channel-index units.                        |
+| `noise_prob`              | `float`               | Probability of applying tangent Gaussian noise to each sample.                   |
+| `noise_angle_deg_range`   | `tuple[float, float]` | Range of geodesic rotation angles for tangent Gaussian noise.                    |
+| `shuffle_order_per_batch` | `bool`                | Whether to randomize the order of shift and noise once per batch.                |
+| `recenter_after_each_op`  | `bool`                | Whether to re-center each spectrum to mean zero after each augmentation.         |
+| `renorm_to_input_norm`    | `bool`                | Whether to re-normalize each spectrum to the input norm after each augmentation. |
+| `eps`                     | `float`               | Numerical stability constant used in normalization and projection.               |
 
 ---
 
@@ -420,7 +426,7 @@ class SpectraAugmenterConfig:
 
 * `shift_prob` and `noise_prob` must lie in `[0, 1]`.
 * `shift_delta_range` must satisfy `low <= high`.
-* `shift_angle_deg_range` and `noise_angle_deg_range` must satisfy:
+* `noise_angle_deg_range` must satisfy:
 
   * lower bound `>= 0`,
   * upper bound `<= 180`,
@@ -465,7 +471,6 @@ from chemomae.training.augmenter import SpectraAugmenter, SpectraAugmenterConfig
 cfg = SpectraAugmenterConfig(
     shift_prob=0.5,
     shift_delta_range=(-2.0, 2.0),
-    shift_angle_deg_range=(0.5, 3.0),
     noise_prob=0.5,
     noise_angle_deg_range=(0.5, 3.0),
     shuffle_order_per_batch=False,
@@ -478,7 +483,7 @@ augmenter.train()
 
 x = torch.randn(64, 256, dtype=torch.float32)
 x = x - x.mean(dim=1, keepdim=True)
-x = x / torch.linalg.norm(x, dim=1, keepdim=True).clamp_min(1.0e-8) # SNV preprocessing
+x = x / torch.linalg.norm(x, dim=1, keepdim=True).clamp_min(1.0e-8)
 
 x_aug = augmenter(x)
 ```
@@ -487,11 +492,36 @@ x_aug = augmenter(x)
 
 ## Design Notes
 
-### Why angle-based strength?
+### Why remove angle control from fractional shift?
 
-Earlier versions used cosine similarity ranges. While cosine similarity is mathematically equivalent to angle on the sphere, angle is often easier to tune directly.
+Fractional shift is naturally parameterized by the displacement amount $`\delta`$ along the wavelength axis.
 
-The relationship is:
+Earlier versions controlled shift in two stages:
+
+1. create a shifted candidate using `shift_delta_range`,
+2. move toward that candidate using `shift_angle_deg_range`.
+
+This made the final perturbation depend not only on the selected shift amount, but also on the angular distance between the original and shifted spectra.
+
+For spectra, this can be undesirable because the same channel shift may induce very different cosine or angular changes depending on spectral shape, local slope, peak sharpness, and boundary behavior. As a result, angle-limited shift can weaken the intended wavelength-axis perturbation in a data-dependent way.
+
+Therefore, the current design uses:
+
+```math
+\delta \sim \mathcal{U}(\delta_{\min}, \delta_{\max})
+```
+
+as the only shift-strength parameter.
+
+The shift operation is then followed only by SNV-compatible reprojection.
+
+---
+
+### Why keep angle control for tangent Gaussian noise?
+
+Tangent Gaussian noise does not have a natural physical unit like channel displacement.
+
+The random direction is sampled in the ambient feature space and then projected to the tangent space. Therefore, controlling its magnitude by geodesic angle is appropriate:
 
 ```math
 c = \cos(\theta).
@@ -564,7 +594,7 @@ augmenter.eval()
 x_out = augmenter(x)
 ```
 
-gives $`\mathbf{x}_{\mathrm{out}} = \mathbf{x}`$ .
+gives $`\mathbf{x}_{\mathrm{out}} = \mathbf{x}`$.
 
 ### Do not use for deterministic feature extraction
 
@@ -594,13 +624,13 @@ The recommended input geometry is:
 
 ## Common Pitfalls
 
-### Confusing `shift_delta_range` and `shift_angle_deg_range`
+### Confusing shift amount and noise angle
 
-`shift_delta_range` controls the candidate shift.
+`shift_delta_range` controls wavelength-axis displacement in channel-index units.
 
-`shift_angle_deg_range` controls how far the final output moves toward that candidate.
+`noise_angle_deg_range` controls the geodesic rotation angle for tangent Gaussian noise.
 
-A large candidate shift does not necessarily mean a large final perturbation if the angle range is small.
+These parameters should not be interpreted as the same kind of perturbation strength.
 
 ### Applying augmentation before SNV
 
@@ -636,7 +666,6 @@ x = x / torch.linalg.norm(x, dim=1, keepdim=True).clamp_min(1.0e-8)
 cfg = SpectraAugmenterConfig(
     shift_prob=1.0,
     shift_delta_range=(-4.0, 4.0),
-    shift_angle_deg_range=(2.0, 2.0),
     noise_prob=1.0,
     noise_angle_deg_range=(1.0, 1.0),
     shuffle_order_per_batch=False,
@@ -671,7 +700,7 @@ aug.eval()
 x_eval = aug(x)
 torch.testing.assert_close(x_eval, x)
 
-# angle from original should be small for weak settings
+# angle from original should remain moderate for weak settings
 cos = torch.sum(x * x_aug, dim=1) / (
     torch.linalg.norm(x, dim=1) * torch.linalg.norm(x_aug, dim=1) + 1.0e-8
 )
@@ -679,12 +708,12 @@ cos = cos.clamp(-1.0, 1.0)
 angle_deg = torch.rad2deg(torch.arccos(cos))
 
 assert torch.all(angle_deg >= 0.0)
-assert torch.all(angle_deg < 10.0)
+assert torch.all(angle_deg < 15.0)
 ```
 
 ---
 
-## Version (v0.1.9)
+## Version (v0.2.0)
 
-* Updated in `chemomae.training.augmenter` for angle-controlled `shift + noise` augmentation.
+* Updated `chemomae.training.augmenter` to use delta-controlled fractional shift and angle-controlled tangent Gaussian noise.
 * Replaces the previous `noise + tilt` cosine-controlled design.
