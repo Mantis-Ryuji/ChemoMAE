@@ -5,7 +5,7 @@
 This document describes **ChemoMAE**, a Transformer-based masked autoencoder specialized for **one-dimensional spectral data**.
 
 <p align="center">
-<img src="../../images/ChemoMAE.svg">
+<img src="../../images/chemomae.png">
 </p>
 
 ---
@@ -115,7 +115,7 @@ mae = ChemoMAE(
     seq_len=256,
     d_model=256,
     nhead=4,
-    num_layers=2,
+    num_layers=4,
     dim_feedforward=None,   # defaults to 4*d_model
     dropout=0.0,
     decoder_num_layers=2,
@@ -133,7 +133,7 @@ mae = ChemoMAE(
 | `seq_len`            | int    | 256     | Length of the input spectrum.                      |
 | `d_model`            | int    | 256     | Transformer embedding dimension.                   |
 | `nhead`              | int    | 4       | Number of attention heads.                         |
-| `num_layers`         | int    | 2       | Transformer encoder layers.                        |
+| `num_layers`         | int    | 4       | Transformer encoder layers.                        |
 | `dim_feedforward`    | int\|None | None  | FFN hidden dimension (`None` → `4*d_model`).       |
 | `dropout`            | float  | 0.0     | Dropout in encoder layers.                         |
 | `decoder_num_layers` | int    | 2       | MLP decoder layers.                                |

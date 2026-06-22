@@ -152,7 +152,7 @@ class ChemoEncoder(nn.Module):
         Transformer の埋め込み次元。
     nhead : int, default=4
         Multi-head attention のヘッド数。
-    num_layers : int, default=2
+    num_layers : int, default=4
         Transformer Encoder 層数。
     dim_feedforward : int | None, default=None
         FFN 隠れ次元。None の場合 `4*d_model`。
@@ -199,7 +199,7 @@ class ChemoEncoder(nn.Module):
         n_patches: int = 16,
         d_model: int = 256,
         nhead: int = 4,
-        num_layers: int = 2,
+        num_layers: int = 4,
         dim_feedforward: Optional[int] = None,
         dropout: float = 0.0,
         latent_dim: int = 16,
@@ -427,7 +427,7 @@ class ChemoMAE(nn.Module):
         Encoder の埋め込み次元。
     nhead : int, default=4
         Encoder attention のヘッド数。
-    num_layers : int, default=2
+    num_layers : int, default=4
         Encoder 層数。
     dim_feedforward : int | None, default=None
         Encoder FFN 隠れ次元（None は `4*d_model`）。
@@ -466,7 +466,7 @@ class ChemoMAE(nn.Module):
         n_patches: int = 16,
         d_model: int = 256,
         nhead: int = 4,
-        num_layers: int = 2,
+        num_layers: int = 4,
         dim_feedforward: Optional[int] = None,
         dropout: float = 0.0,
         latent_dim: int = 16,

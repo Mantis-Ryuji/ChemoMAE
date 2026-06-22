@@ -15,7 +15,11 @@
 Traditional chemometrics has long relied on **linear methods** such as PCA and PLS.
 While these methods remain foundational, they often struggle to capture the **nonlinear structures** and **high-dimensional variability** present in modern spectral datasets.
 
-ChemoMAE is built around a simple geometric observation: after **Standard Normal Variate (SNV)** preprocessing, each spectrum has zero mean and unit variance, which implies a **constant L2 norm** across samples. In other words, SNV maps spectra onto a **constant-radius hypersphere** . ChemoMAE is designed to learn representations that respect this geometry and preserve it across downstream tasks.
+ChemoMAE is motivated by the geometry induced by **Standard Normal Variate (SNV)** preprocessing. SNV centers each spectrum and scales it to unit variance, making the L2 norm essentially constant across samples. This means that sample-wise magnitude is no longer a meaningful degree of freedom after preprocessing; what remains informative is primarily the relative spectral shape, or direction, on the normalized spectral manifold. ChemoMAE is therefore designed to learn latent representations that emphasize directional structure while avoiding unnecessary dependence on latent norm.
+
+<p align="center">
+<img src="./images/chemomae.png">
+</p>
 
 ### 1. Extending Chemometrics with Deep Learning
 
