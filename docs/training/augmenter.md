@@ -349,14 +349,6 @@ the operations are applied in this fixed order:
 \text{fractional shift}\rightarrow\text{tangent Gaussian noise}.
 ```
 
-This is the recommended initial setting for ChemoMAE pretraining because it has a clear observation-process interpretation:
-
-```math
-\text{wavelength misalignment}
-\rightarrow
-\text{measurement noise}.
-```
-
 With reprojection enabled, the sequence becomes:
 
 ```math
@@ -379,13 +371,6 @@ the operation order is sampled once per batch. The possible orders are:
 
 The order is not sampled independently for each sample. However, each operation still has an independent per-sample application mask and independently sampled strength parameters.
 
-Therefore, even with fixed operation order, the batch contains a mixture of:
-
-* no augmentation,
-* shift only,
-* noise only,
-* shift + noise.
-
 ---
 
 ## API
@@ -401,7 +386,7 @@ class SpectraAugmenterConfig:
     noise_prob: float = 0.5
     noise_angle_deg_range: tuple[float, float] = (0.5, 3.0)
 
-    shuffle_order_per_batch: bool = False
+    shuffle_order_per_batch: bool = True
     recenter_after_each_op: bool = True
     renorm_to_input_norm: bool = True
     eps: float = 1.0e-8
@@ -473,7 +458,7 @@ cfg = SpectraAugmenterConfig(
     shift_delta_range=(-2.0, 2.0),
     noise_prob=0.5,
     noise_angle_deg_range=(0.5, 3.0),
-    shuffle_order_per_batch=False,
+    shuffle_order_per_batch=True,
     recenter_after_each_op=True,
     renorm_to_input_norm=True,
 )
@@ -668,7 +653,7 @@ cfg = SpectraAugmenterConfig(
     shift_delta_range=(-4.0, 4.0),
     noise_prob=1.0,
     noise_angle_deg_range=(1.0, 1.0),
-    shuffle_order_per_batch=False,
+    shuffle_order_per_batch=True,
     recenter_after_each_op=True,
     renorm_to_input_norm=True,
 )
@@ -713,7 +698,7 @@ assert torch.all(angle_deg < 15.0)
 
 ---
 
-## Version (v0.2.0)
+## Version v0.2.0
 
 * Updated `chemomae.training.augmenter` to use delta-controlled fractional shift and angle-controlled tangent Gaussian noise.
 * Replaces the previous `noise + tilt` cosine-controlled design.

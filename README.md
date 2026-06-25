@@ -176,7 +176,7 @@ aug_cfg = SpectraAugmenterConfig(
     shift_delta_range=(-2.0, 2.0),
     noise_prob=0.5,
     noise_angle_deg_range=(0.5, 3.0),
-    shuffle_order_per_batch=False,
+    shuffle_order_per_batch=True,
     recenter_after_each_op=True,
     renorm_to_input_norm=True,
 )
@@ -184,14 +184,7 @@ aug_cfg = SpectraAugmenterConfig(
 augmenter = SpectraAugmenter(aug_cfg)
 ```
 
-This augmenter is applied **only during training**.
 The model input is augmented, but the reconstruction target remains the **original** spectrum.
-
-With the configuration above, augmentation follows the fixed order:
-
-```
-fractional shift -> recenter/renorm -> tangent Gaussian noise -> recenter/renorm
-```
 
 This provides weak denoising-style regularization while preserving the SNV-compatible geometry of the input spectra.
 
@@ -273,6 +266,14 @@ runs/
 
 The `Tester` evaluates masked reconstruction loss on a dataset.
 
+It supports:
+
+* masked-only reconstruction loss
+* AMP (`bf16` / `fp16`)
+* optional fixed visible masks
+* optional `SpectraAugmenter`
+* JSON logging to a test-history file
+
 ```python
 from chemomae.training import TesterConfig, Tester
 
@@ -285,17 +286,36 @@ tester_cfg = TesterConfig(
     reduction="mean",
     fixed_visible=None,
     log_history=True,
-    history_filename="training_history.json",
+    history_filename="test_history.json",
 )
 
-tester = Tester(model, tester_cfg)
+tester = Tester(
+    model,
+    tester_cfg,
+    augmenter=None,
+)
+
 test_loss = tester(test_loader)
 print(f"Test Loss: {test_loss:.6f}")
 ```
 
+When `augmenter` is provided, the Tester applies augmentation to the model input while keeping the reconstruction target as the original spectrum:
+
+```python
+tester = Tester(
+    model,
+    tester_cfg,
+    augmenter=augmenter,
+)
+```
+
+This evaluates reconstruction robustness under input perturbations. 
+
 ### 7. Latent Extraction (Extractor + Config)
 
-Extract latent embeddings from a trained ChemoMAE **without masking**.
+Extract latent embeddings from a trained ChemoMAE using **all-visible encoding**.
+
+By default, `Extractor` does not use ChemoMAE masking. It directly calls the encoder with an all-visible mask, so the full spectrum is used for latent feature extraction.
 
 ```python
 from chemomae.training import ExtractorConfig, Extractor
@@ -308,9 +328,28 @@ extractor_cfg = ExtractorConfig(
     return_numpy=False,
 )
 
-extractor = Extractor(model, extractor_cfg)
+extractor = Extractor(
+    model,
+    extractor_cfg,
+    augmenter=None,
+)
+
 latent_test = extractor(test_loader)
 ```
+
+When `augmenter` is provided, the Extractor applies augmentation before encoder inference:
+
+```python id="lodtvq"
+extractor = Extractor(
+    model,
+    extractor_cfg,
+    augmenter=augmenter,
+)
+
+latent_test_aug = extractor(test_loader)
+```
+
+Without an augmenter, latent extraction is deterministic with respect to ChemoMAE masking because all positions are treated as visible. With an augmenter, extracted embeddings may vary due to stochastic spectral shift/noise augmentation.
 
 ### 8. Clustering with Cosine K-Means
 
@@ -379,8 +418,6 @@ labels = vmf.predict(latent_test, chunk=5_000_000)
 
 <details>
 <summary><b><code>chemomae.preprocessing</code></b></summary>
-
----
 
 ### `SNVScaler`
 
@@ -457,8 +494,6 @@ X_sub = cosine_fps_downsample(X, ratio=0.1, seed=42)
 <details>
 <summary><b><code>chemomae.models</code></b></summary>
 
----
-
 ### `ChemoMAE`
 
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/models/chemo_mae.md)
@@ -510,8 +545,6 @@ x_rec, z, visible = mae(x)
 <details>
 <summary><b><code>chemomae.training</code></b></summary>
 
----
-
 ### `build_optimizer` & `build_scheduler`
 
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/training/optim.md)
@@ -543,9 +576,10 @@ scheduler = build_scheduler(
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/training/augmenter.md)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/training/augmenter.py)
 
-`SpectraAugmenter` provides **hypersphere-aware augmentation** for **SNV-normalized spectra**.
+`SpectraAugmenter` provides **SNV-geometry-aware augmentation** for SNV-normalized spectra.
 
-Instead of applying unconstrained Euclidean perturbations, it applies weak spectral perturbations and optionally projects the result back to the SNV-compatible geometry by:
+After SNV preprocessing, each spectrum is approximately mean-centered and has a fixed per-spectrum norm.
+Instead of applying unconstrained Euclidean perturbations, `SpectraAugmenter` applies weak spectral perturbations and optionally projects the result back toward the SNV-compatible geometry by:
 
 * re-centering each spectrum to mean zero
 * re-normalizing each spectrum to the original per-spectrum L2 norm
@@ -553,9 +587,10 @@ Instead of applying unconstrained Euclidean perturbations, it applies weak spect
 The current implementation supports two augmentations:
 
 * **fractional shift**
-  small wavelength-axis perturbation using interpolation
+  A small wavelength-axis perturbation implemented by interpolation.
+
 * **tangent Gaussian noise**
-  random local perturbation constructed in the tangent space of the hypersphere
+  A random local perturbation constructed by projecting Gaussian noise onto the tangent space and rotating the spectrum by a sampled angle.
 
 Fractional shift is controlled by `shift_delta_range`, while tangent Gaussian noise is controlled by `noise_angle_deg_range`.
 
@@ -567,14 +602,15 @@ aug_cfg = SpectraAugmenterConfig(
     shift_delta_range=(-2.0, 2.0),
     noise_prob=0.5,
     noise_angle_deg_range=(0.5, 3.0),
-    shuffle_order_per_batch=False,
+    shuffle_order_per_batch=True,
     recenter_after_each_op=True,
     renorm_to_input_norm=True,
+    eps=1.0e-8,
 )
 
 augmenter = SpectraAugmenter(aug_cfg)
-augmenter.train()
 
+augmenter.train()
 x_aug = augmenter(x)
 ```
 
@@ -583,16 +619,36 @@ x_aug = augmenter(x)
 * SNV-compatible spectral augmentation
 * fractional wavelength-axis shift
 * tangent-space Gaussian perturbation
+* probability-controlled operation application
 * delta-controlled fractional shift
 * angle-controlled tangent Gaussian noise
-* optional re-centering to zero mean
-* optional re-normalization to the input L2 norm
+* optional random ordering of shift/noise operations
+* optional re-centering to zero mean after each operation
+* optional re-normalization to the input L2 norm after each operation
+* implemented as `nn.Module`, so it supports `.to(device)`
 * automatically inactive in `eval()` mode
+
+**Mode Behavior**
+
+`SpectraAugmenter` applies augmentation only in `train()` mode.
+
+```python
+augmenter.train()
+x_aug = augmenter(x)  # augmentation is applied
+
+augmenter.eval()
+x_same = augmenter(x)  # input is returned unchanged
+```
+
+This behavior is important when using the augmenter outside the Trainer.
+For example, `Extractor` and `Tester` temporarily set the augmenter to `train()` when augmentation is explicitly requested, while keeping the ChemoMAE model itself in `eval()` mode.
 
 **When to Use**
 
 * during ChemoMAE pretraining on SNV-normalized spectra
-* when you want weak denoising-style regularization beyond masking
+* when you want denoising-style pretraining, where the model receives weakly perturbed spectra but reconstructs the original spectra
+* when evaluating reconstruction robustness under controlled spectral perturbations
+* when extracting augmented latent representations for robustness checks or test-time augmentation style analysis
 * when perturbations should remain compatible with cosine-based or hyperspherical downstream analysis
 
 ---
@@ -650,7 +706,7 @@ aug_cfg = SpectraAugmenterConfig(
     shift_delta_range=(-2.0, 2.0),
     noise_prob=0.5,
     noise_angle_deg_range=(0.5, 3.0),
-    shuffle_order_per_batch=False,
+    shuffle_order_per_batch=True,
     recenter_after_each_op=True,
     renorm_to_input_norm=True,
 )
@@ -735,7 +791,7 @@ runs/
 
 `Tester` provides a lightweight evaluation loop for trained ChemoMAE models.
 
-It computes **masked reconstruction loss** (SSE/MSE) over a DataLoader, with AMP support, optional fixed visible masks, and JSON logging.
+It computes **masked reconstruction loss** (SSE/MSE) over a DataLoader, with AMP support, optional fixed visible masks, optional `SpectraAugmenter`, and JSON logging.
 
 ```python
 from chemomae.training import Tester, TesterConfig
@@ -747,12 +803,37 @@ cfg = TesterConfig(
     amp_dtype="bf16",
     loss_type="mse",
     reduction="mean",
+    fixed_visible=None,
+    log_history=True,
+    history_filename="test_history.json",
 )
 
-tester = Tester(model, cfg)
+tester = Tester(
+    model,
+    cfg,
+    augmenter=None,
+)
+
 avg_loss = tester(test_loader)
 print("Test loss:", avg_loss)
 ```
+
+When `augmenter` is provided, `Tester` evaluates reconstruction from augmented inputs while keeping the reconstruction target as the original spectrum.
+
+```python
+tester = Tester(
+    model,
+    cfg,
+    augmenter=augmenter,
+)
+```
+
+**When to Use**
+
+* evaluating masked reconstruction loss
+* comparing reconstruction behavior under fixed visible masks
+* evaluating robustness to weak spectral perturbations
+* logging test losses separately from training history
 
 ---
 
@@ -761,9 +842,11 @@ print("Test loss:", avg_loss)
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/training/extractor.md)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/training/extractor.py)
 
-`Extractor` provides a **deterministic latent extraction** pipeline from trained ChemoMAE models in **all-visible mode**.
+`Extractor` provides a latent extraction pipeline from trained ChemoMAE models in **all-visible mode**.
 
-It supports AMP inference, Torch/NumPy return types, and optional saving.
+It directly calls the encoder with an all-visible mask, so ChemoMAE masking is not used during extraction. Without an augmenter, this gives deterministic latent embeddings with respect to masking.
+
+It supports AMP inference, Torch/NumPy return types, optional saving, and optional `SpectraAugmenter`.
 
 ```python
 from chemomae.training import Extractor, ExtractorConfig
@@ -772,25 +855,44 @@ cfg = ExtractorConfig(
     device="cuda",
     amp=True,
     amp_dtype="bf16",
+    save_path=None,
     return_numpy=True,
 )
 
-extractor = Extractor(model, cfg)
+extractor = Extractor(
+    model,
+    cfg,
+    augmenter=None,
+)
+
 Z = extractor(loader)
 ```
+
+When `augmenter` is provided, `Extractor` applies augmentation before encoder inference.
+
+```python
+extractor = Extractor(
+    model,
+    cfg,
+    augmenter=augmenter,
+)
+
+Z_aug = extractor(loader)
+```
+
+With an augmenter, extracted embeddings may vary across calls because spectral shift/noise augmentation can be stochastic.
 
 **When to Use**
 
 * extracting latents for clustering
 * visualization
 * downstream analysis
+* robustness checks using augmented latent embeddings
 
 </details>
 
 <details>
 <summary><b><code>chemomae.clustering</code></b></summary>
-
----
 
 ### `CosineKMeans` & `elbow_ckmeans`
 
@@ -862,8 +964,6 @@ print(score)
 
 <details>
 <summary><b><code>chemomae.utils</code></b></summary>
-
----
 
 ### `set_global_seed`
 

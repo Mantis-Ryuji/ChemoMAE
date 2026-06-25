@@ -103,7 +103,7 @@ class SpectraAugmenterConfig:
     noise_angle_deg_range : tuple[float, float], default=(0.5, 3.0)
         noise 方向へ回転する角度範囲。
         単位は degree。
-    shuffle_order_per_batch : bool, default=False
+    shuffle_order_per_batch : bool, default=True
         shift と noise の適用順をバッチごとにランダム化するかどうか。
     recenter_after_each_op : bool, default=True
         各 augmentation 適用後にサンプル平均を 0 へ戻すかどうか。
@@ -124,7 +124,7 @@ class SpectraAugmenterConfig:
     noise_prob: float = 0.5
     noise_angle_deg_range: tuple[float, float] = (0.5, 3.0)
 
-    shuffle_order_per_batch: bool = False
+    shuffle_order_per_batch: bool = True
     recenter_after_each_op: bool = True
     renorm_to_input_norm: bool = True
     eps: float = 1.0e-8
