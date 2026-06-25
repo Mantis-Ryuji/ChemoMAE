@@ -150,7 +150,7 @@ model = ChemoMAE(
 
 opt = build_optimizer(
     model,
-    lr=1.5e-4,
+    lr=1.0e-3,
     weight_decay=0.05,
     betas=(0.9, 0.95),
 )
@@ -197,14 +197,18 @@ This provides weak denoising-style regularization while preserving the SNV-compa
 
 ### 5. Training Setup (Trainer + Config)
 
-`Trainer` orchestrates the full training loop with:
+`Trainer` orchestrates the fixed-budget self-supervised training loop with:
 
 * AMP (Automatic Mixed Precision)
 * EMA (Exponential Moving Average of model weights)
 * optional `SpectraAugmenter`
-* early stopping
+* gradient clipping
 * checkpointing / resume
 * JSON logging
+* final weights export
+
+ChemoMAE does **not** use validation-loss-based early stopping or best-checkpoint selection.
+Training is controlled by a predefined epoch / step budget, and the final model is selected by an explicit rule such as EMA-last weights.
 
 ```python
 from chemomae.training import TrainerConfig, Trainer
@@ -220,9 +224,6 @@ trainer_cfg = TrainerConfig(
     ema_decay=0.999,
     loss_type="mse",
     reduction="mean",
-    early_stop_patience=50,
-    early_stop_start_ratio=0.5,
-    early_stop_min_delta=0.0,
     resume_from="auto",
 )
 
@@ -230,13 +231,13 @@ trainer = Trainer(
     model,
     opt,
     train_loader,
-    val_loader,
     scheduler=sched,
     augmenter=augmenter,
     cfg=trainer_cfg,
 )
 
-_ = trainer.fit(epochs=500)
+result = trainer.fit(epochs=500)
+print(result["final_model"])  # "ema_last_model.pt" if EMA is enabled
 ```
 
 During training, ChemoMAE produces the following outputs under `out_dir`:
@@ -245,30 +246,27 @@ During training, ChemoMAE produces the following outputs under `out_dir`:
 runs/
 ├── training_history.json
 │    ↳ Per-epoch records:
-│       [{"epoch": 1, "train_loss": ..., "val_loss": ..., "lr": ...}, ...]
+│       [
+│         {
+│           "epoch": 1,
+│           "train_loss": ...,
+│           "lr": ...,
+│           "time_sec": ...
+│         },
+│         ...
+│       ]
 │
 ├── last_model.pt
 │    ↳ Final raw model weights at the end of training
 │
-├── last_model_ema.pt
+├── ema_last_model.pt
 │    ↳ Final EMA weights at the end of training
 │       (saved only when EMA is enabled)
 │
-├── best_model_ema.pt
-│    ↳ EMA weights at the best validation epoch
-│       (saved only when validation is available and EMA is enabled)
-│
-├── best_model.pt
-│    ↳ Raw weights at the best validation epoch
-│       (saved only when validation is available and EMA is disabled)
-│
 └── checkpoints/
-     ├── last.pt
-     │    ↳ Full checkpoint for resume:
-     │       model + optimizer + scheduler + scaler + EMA + history
-     │
-     └── best.pt
-          ↳ Full checkpoint at the best validation epoch
+     └── last.pt
+          ↳ Full checkpoint for resume:
+             model + optimizer + scheduler + scaler + EMA + history
 ```
 
 ### 6. Evaluation (Tester + Config)
@@ -529,10 +527,10 @@ from chemomae.models import ChemoMAE
 from chemomae.training import build_optimizer, build_scheduler
 
 model = ChemoMAE(seq_len=256)
-optimizer = build_optimizer(model, lr=1.5e-4, weight_decay=0.05)
+optimizer = build_optimizer(model, lr=1.0e-3, weight_decay=0.05)
 scheduler = build_scheduler(
     optimizer,
-    steps_per_epoch=1000,
+    steps_per_epoch=len(train_loader),
     epochs=100,
     warmup_epochs=5,
 )
@@ -606,7 +604,7 @@ x_aug = augmenter(x)
 
 `TrainerConfig` and `Trainer` form the **core training engine** of ChemoMAE.
 
-They provide a robust training loop for **masked reconstruction**, with support for:
+They provide a fixed-budget training loop for **masked reconstruction**, with support for:
 
 * AMP (`bf16` / `fp16`)
 * optional TF32
@@ -614,9 +612,11 @@ They provide a robust training loop for **masked reconstruction**, with support 
 * optional `SpectraAugmenter`
 * gradient clipping
 * checkpointing and resume
-* early stopping
-* weights-only export for final and best model variants
+* weights-only export for final model variants
 * JSON history logging
+
+ChemoMAE does **not** use validation-loss-based early stopping or best-checkpoint selection.
+Training is controlled by a predefined epoch / step budget, and the final model is selected by an explicit rule such as EMA-last weights.
 
 ```python
 from chemomae.models import ChemoMAE
@@ -642,9 +642,6 @@ cfg = TrainerConfig(
     ema_decay=0.999,
     loss_type="mse",
     reduction="mean",
-    early_stop_patience=20,
-    early_stop_start_ratio=0.5,
-    early_stop_min_delta=0.0,
     resume_from="auto",
 )
 
@@ -659,11 +656,13 @@ aug_cfg = SpectraAugmenterConfig(
 )
 augmenter = SpectraAugmenter(aug_cfg)
 
-optimizer = build_optimizer(model, lr=1.5e-4, weight_decay=0.05)
+optimizer = build_optimizer(model, lr=1.0e-3, weight_decay=0.05)
+
+epochs = 800
 scheduler = build_scheduler(
     optimizer,
     steps_per_epoch=len(train_loader),
-    epochs=800,
+    epochs=epochs,
     warmup_epochs=40,
 )
 
@@ -671,35 +670,61 @@ trainer = Trainer(
     model,
     optimizer,
     train_loader,
-    val_loader,
     scheduler=scheduler,
     augmenter=augmenter,
     cfg=cfg,
 )
 
-history = trainer.fit(epochs=800)
-print("Best validation:", history["best"])
+_ = trainer.fit(epochs=epochs)
 ```
 
 **Key Features**
 
 * automatic device and precision handling
+* fixed epoch / fixed step SSL pretraining
 * EMA tracking after each optimizer step
-* EMA-consistent export behavior:
-
+* EMA-consistent final export behavior:
   * final raw weights → `last_model.pt`
-  * final EMA weights → `last_model_ema.pt` (if EMA is enabled)
-  * best validation EMA weights → `best_model_ema.pt` (if validation is available and EMA is enabled)
-  * best validation raw weights → `best_model.pt` (if validation is available and EMA is disabled)
+  * final EMA weights → `ema_last_model.pt` if EMA is enabled
 * `checkpoints/last.pt` stores the full resumable training state
-* `checkpoints/best.pt` stores the full checkpoint at the best validation epoch
 * optional train-time spectral augmentation
+* batch-wise scheduler stepping
 * atomic JSON history logging
+
+**Outputs**
+
+```text
+runs/
+├── training_history.json
+│    ↳ Per-epoch records:
+│       [
+│         {
+│           "epoch": 1,
+│           "train_loss": ...,
+│           "lr": ...,
+│           "time_sec": ...
+│         },
+│         ...
+│       ]
+│
+├── last_model.pt
+│    ↳ Final raw model weights at the end of training
+│
+├── ema_last_model.pt
+│    ↳ Final EMA weights at the end of training
+│       (saved only when EMA is enabled)
+│
+└── checkpoints/
+     └── last.pt
+          ↳ Full checkpoint for resume:
+             model + optimizer + scheduler + scaler + EMA + history
+```
 
 **When to Use**
 
-* masked reconstruction training for ChemoMAE
-* both validation-based training and validation-free SSL pretraining
+* fixed-budget masked reconstruction pretraining for ChemoMAE
+* validation-free SSL pretraining
+* training runs where model selection is handled by an explicit final rule, such as EMA-last weights
 
 ---
 

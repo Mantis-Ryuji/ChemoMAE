@@ -62,7 +62,7 @@ from chemomae.models import ChemoMAE
 from chemomae.training.optim import build_optimizer
 
 model = ChemoMAE(seq_len=256)
-optimizer = build_optimizer(model, lr=1e-4, weight_decay=1e-4)
+optimizer = build_optimizer(model, lr=1e-3, weight_decay=1e-4)
 
 for i, g in enumerate(optimizer.param_groups):
     print(i, 'params=', len(g['params']), 'wd=', g['weight_decay'])
@@ -105,7 +105,7 @@ If `warmup_epochs=0`, the function still behaves safely due to `max(1, W)`.
 
 ```python
 from chemomae.training.optim import build_optimizer, build_scheduler
-optimizer = build_optimizer(model, lr=3e-4, weight_decay=1e-4)
+optimizer = build_optimizer(model, lr=1e-3, weight_decay=1e-4)
 scheduler = build_scheduler(
     optimizer,
     steps_per_epoch=len(train_loader),
@@ -143,7 +143,7 @@ Useful when training with **gradient accumulation** or custom step accounting.
 
 ```python
 from chemomae.training.optim import build_warmup_cosine
-opt = build_optimizer(model, lr=2e-4)
+opt = build_optimizer(model, lr=1e-3)
 sched = build_warmup_cosine(opt, warmup_steps=1000, total_steps=50000, min_lr_scale=0.2)
 
 for s in range(50000):

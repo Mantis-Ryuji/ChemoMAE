@@ -2,28 +2,61 @@
 
 > Module: `chemomae.training.trainer`
 
-This document describes the `Trainer` and its configuration (`TrainerConfig`), covering AMP/TF32 support, EMA, gradient clipping, optional spectral augmentation, masked loss computation, checkpointing/resume, and full training–validation management.
+This document describes the `Trainer` and its configuration (`TrainerConfig`) for ChemoMAE-style masked reconstruction pretraining.  
+The current Trainer is designed for **fixed epoch / fixed step self-supervised pretraining** and does **not** perform validation-loss-based model selection or early stopping.
 
 ---
 
 ## Overview
 
-The `Trainer` implements a robust training routine for **masked reconstruction** using ChemoMAE.  
-It integrates precision management, exponential moving averages, optional spectral augmentation, and fully resumable state tracking.
+The `Trainer` implements a fixed-budget training routine for **masked reconstruction** using ChemoMAE.
+
+It integrates precision management, exponential moving averages, optional spectral augmentation, checkpoint/resume, and final weights export.
+
+### Design principle
+
+ChemoMAE is primarily a self-supervised pretraining method.  
+In this setting, validation reconstruction loss is not necessarily a reliable proxy for:
+
+* downstream representation quality,
+* clustering quality,
+* segmentation usefulness,
+* out-of-domain generalization,
+* or downstream task performance.
+
+Therefore, the Trainer deliberately avoids:
+
+* `val_loader`,
+* validation loops,
+* early stopping,
+* validation-loss-based best checkpoint selection,
+* and artifact names such as `best_model.pt`.
+
+Instead, training is controlled by a fixed budget, such as a predefined number of epochs or optimizer update steps.  
+The final model is selected by an explicit rule:
+
+* use `ema_last_model.pt` when EMA is enabled,
+* use `last_model.pt` when EMA is disabled.
 
 ### Key features
 
-* **Automatic mixed precision (AMP)** — `torch.amp.autocast` (bf16/fp16)
-* **TF32 acceleration** on Ampere+ GPUs
+* **Automatic mixed precision (AMP)** — `torch.amp.autocast` with bf16/fp16 on CUDA
+* **TF32 acceleration** on Ampere+ CUDA GPUs
 * **EMA (Exponential Moving Average)** of model parameters
-* **Optional `SpectraAugmenter`** applied only during training
-* **Gradient clipping** (global-norm based)
-* **Masked losses** (`masked_mse`, `masked_sse`) consistent with the MAE principle
-* **Checkpointing and resume** — full training state (model, optimizer, scheduler, scaler, EMA, history)
-* **Weights-only export** for best and final model variants
+* **Optional `SpectraAugmenter`** applied during training
+* **Gradient clipping** using global norm
+* **Masked losses** (`masked_mse`, `masked_sse`) consistent with the MAE objective
+* **Batch-wise scheduler stepping**
+* **Checkpointing and resume** — model, optimizer, scheduler, scaler, EMA, and history
+* **Weights-only final export**
 * **JSON-based training history** for reproducibility and visualization
 
-The model must return `(x_recon, z, visible_mask)`, and the Trainer computes loss only on the **masked** tokens (`mask = ~visible_mask`).  
+The model must return `(x_recon, z, visible_mask)`, and the Trainer computes loss only on the **masked** tokens:
+
+```python
+mask = ~visible_mask
+```
+
 If an augmenter is provided, the model input is augmented, but the reconstruction target remains the **original** input spectrum.
 
 ---
@@ -34,39 +67,33 @@ If an augmenter is provided, the model input is augmented, but the reconstructio
 @dataclass
 class TrainerConfig:
     out_dir: str | Path = "runs"
-    device: Optional[str] = None   # {"cuda","mps","cpu"} or None (= auto-detect)
+    device: Optional[str] = None   # {"cuda", "mps", "cpu"} or None (= auto-detect)
     amp: bool = True
-    amp_dtype: str = "bf16"        # {"bf16","fp16"}
+    amp_dtype: str = "bf16"        # {"bf16", "fp16"}
     enable_tf32: bool = False
     grad_clip: float | None = 1.0
     use_ema: bool = True
     ema_decay: float = 0.999
-    loss_type: str = "mse"         # {"mse","sse"}
-    reduction: str = "mean"        # {"sum","mean","batch_mean"}
-    early_stop_patience: int | None = 20
-    early_stop_start_ratio: float = 0.5
-    early_stop_min_delta: float = 0.0
+    loss_type: str = "mse"         # {"mse", "sse"}
+    reduction: str = "mean"        # {"sum", "mean", "batch_mean"}
     resume_from: str | Path | None = "auto"
 ```
 
-#### Parameters
+### Parameters
 
-| Name                     | Type                      | Default  | Description                                                                  |
-| ------------------------ | ------------------------- | -------- | ---------------------------------------------------------------------------- |
-| `out_dir`                | `str` or `Path`           | `"runs"` | Output directory for checkpoints and logs.                                   |
-| `device`                 | `str` or `None`           | `None`   | `"cuda"`, `"mps"`, or `"cpu"`; if `None`, auto-detect in order CUDA→MPS→CPU. |
-| `amp`                    | `bool`                    | `True`   | Enable PyTorch autocast for mixed precision.                                 |
-| `amp_dtype`              | `str`                     | `"bf16"` | Precision type (`"bf16"` stable, `"fp16"` supported).                        |
-| `enable_tf32`            | `bool`                    | `False`  | Allow TF32 matmul/convolution acceleration (Ampere+).                        |
-| `grad_clip`              | `float` or `None`         | `1.0`    | Gradient norm clipping threshold; `None` disables.                           |
-| `use_ema`                | `bool`                    | `True`   | Track an exponential moving average of model weights.                        |
-| `ema_decay`              | `float`                   | `0.999`  | EMA decay rate.                                                              |
-| `loss_type`              | `str`                     | `"mse"`  | Loss type (`"mse"` or `"sse"`).                                              |
-| `reduction`              | `str`                     | `"mean"` | Reduction mode (`"sum"`, `"mean"`, `"batch_mean"`).                          |
-| `early_stop_patience`    | `int` or `None`           | `20`     | Stop if no improvement within this many epochs.                              |
-| `early_stop_start_ratio` | `float`                   | `0.5`    | Start monitoring after this fraction of total epochs.                        |
-| `early_stop_min_delta`   | `float`                   | `0.0`    | Minimum improvement threshold to reset patience.                             |
-| `resume_from`            | `str` or `Path` or `None` | `"auto"` | `"auto"` resumes from `out_dir/checkpoints/last.pt` if available.            |
+| Name | Type | Default | Description |
+| --- | --- | --- | --- |
+| `out_dir` | `str` or `Path` | `"runs"` | Output directory for checkpoints, history, and exported weights. |
+| `device` | `str` or `None` | `None` | `"cuda"`, `"mps"`, or `"cpu"`; if `None`, auto-detects in the order CUDA → MPS → CPU. |
+| `amp` | `bool` | `True` | Enables PyTorch autocast for mixed precision. |
+| `amp_dtype` | `str` | `"bf16"` | AMP dtype. Must be `"bf16"` or `"fp16"`. |
+| `enable_tf32` | `bool` | `False` | Allows TF32 matmul/convolution acceleration on supported CUDA GPUs. |
+| `grad_clip` | `float` or `None` | `1.0` | Gradient norm clipping threshold. `None` disables clipping. |
+| `use_ema` | `bool` | `True` | Tracks an exponential moving average of model weights. |
+| `ema_decay` | `float` | `0.999` | EMA decay rate. Larger values preserve longer history. |
+| `loss_type` | `str` | `"mse"` | Masked reconstruction loss type. Must be `"mse"` or `"sse"`. |
+| `reduction` | `str` | `"mean"` | Reduction passed to `masked_mse` / `masked_sse`. |
+| `resume_from` | `str`, `Path`, or `None` | `"auto"` | `"auto"` resumes from `{out_dir}/checkpoints/last.pt` if available. `None` always starts a fresh run. |
 
 ---
 
@@ -77,7 +104,6 @@ trainer = Trainer(
     model: nn.Module,
     optimizer: optim.Optimizer,
     train_loader: Iterable,
-    val_loader: Optional[Iterable] = None,
     *,
     scheduler: Optional[LambdaLR] = None,
     augmenter: SpectraAugmenter | None = None,
@@ -88,14 +114,15 @@ trainer = Trainer(
 ### Constructor behavior
 
 * `cfg=None` creates a fresh `TrainerConfig` instance internally.
-
-* If `cfg.device is None`, device is auto-resolved in the order:
+* If `cfg.device is None`, device is auto-resolved in this order:
 
   ```python
   "cuda" -> "mps" -> "cpu"
   ```
 
-* `augmenter` is optional and, if provided, is moved onto the same device as the model.
+* `model` is moved to the resolved device.
+* `augmenter` is optional. If provided, it is moved to the same device as the model.
+* `val_loader` is not accepted.
 
 ---
 
@@ -103,66 +130,83 @@ trainer = Trainer(
 
 ### `fit(epochs)` → `dict`
 
-Executes the full training loop with validation, checkpointing, early stopping, and final export.
+Executes training for a fixed number of epochs.
+
+```python
+result = trainer.fit(epochs=100)
+```
 
 Returns:
 
 ```python
-{"best": {"epoch": int, "val_loss": float}, "epochs": int}
+{
+    "epochs": int,
+    "completed": bool,
+    "final_model": str,
+}
 ```
+
+where:
+
+* `epochs` is the last completed epoch,
+* `completed` indicates whether the requested budget was reached,
+* `final_model` is:
+  * `"ema_last_model.pt"` if EMA is enabled,
+  * `"last_model.pt"` if EMA is disabled.
 
 Behavior:
 
-* **With validation**
+* resumes from `checkpoints/last.pt` when `resume_from="auto"` and the file exists,
+* trains until the requested final epoch,
+* saves a full resume checkpoint after every epoch,
+* saves final raw weights to `last_model.pt`,
+* saves final EMA weights to `ema_last_model.pt` when EMA is enabled.
 
-  * best selection is based on **EMA-applied validation loss**
-  * `best_model_ema.pt` is saved using **EMA weights** when EMA is enabled
-  * `best_model.pt` is saved using **raw weights** only when EMA is disabled
-  * `last_model.pt` is exported at the end
-  * `last_model_ema.pt` is exported at the end if EMA is enabled
-
-* **Without validation**
-
-  * no best model is selected
-  * `last_model.pt` is exported at the end
-  * `last_model_ema.pt` is exported at the end if EMA is enabled
+The Trainer does not compute validation loss and does not return `best` metadata.
 
 ### `train_one_epoch()` → `float`
 
 Runs one training epoch under `model.train()`.
 
-* Applies optional augmentation to the input
-* Computes masked reconstruction loss against the **original** input
-* Uses AMP, gradient clipping, scheduler stepping, and EMA update
+For each batch:
 
-Returns mean training loss.
+1. extracts `x` from the batch,
+2. applies optional augmentation to obtain `x_input`,
+3. forwards `x_input` through the model,
+4. computes masked reconstruction loss against the original `x`,
+5. runs backward,
+6. applies gradient clipping if configured,
+7. performs `optimizer.step()`,
+8. performs `scheduler.step()` if a scheduler is provided,
+9. updates EMA if enabled.
 
-### `validate()` → `float`
-
-Runs evaluation under `model.eval()`.
-
-If EMA is enabled:
-
-1. the current model weights are backed up,
-2. EMA weights are temporarily applied,
-3. validation loss is computed,
-4. original training weights are restored.
-
-Returns mean validation loss, or `nan` if `val_loader is None`.
+Returns the sample-weighted mean training loss over the epoch.
 
 ### Checkpoint / weight I/O
 
-* `save_checkpoint(epoch, is_best)`
-  Saves `last.pt` and optionally `best.pt`.
+#### `save_checkpoint(epoch)` → `None`
 
-* `save_weights_only(filename="last_model.pt")`
-  Saves current raw model weights only.
+Saves the latest full training checkpoint:
 
-* `_save_ema_weights_only(filename)`
-  Applies EMA weights temporarily, exports them, then restores the original model weights.
+```text
+{out_dir}/checkpoints/last.pt
+```
 
-* `load_checkpoint(path)` → `int`
-  Loads a full checkpoint and returns the next epoch index.
+This checkpoint is intended for resuming training.
+
+#### `save_weights_only(filename="last_model.pt")` → `None`
+
+Saves the current raw model weights only.
+
+#### `_save_ema_weights_only(filename="ema_last_model.pt")` → `None`
+
+Temporarily applies EMA weights to the model, saves them, then restores the raw model weights.
+
+#### `load_checkpoint(path)` → `int`
+
+Loads a full checkpoint and returns the next epoch index.
+
+For example, if the checkpoint stores `epoch=10`, this method returns `11`.
 
 ---
 
@@ -179,29 +223,104 @@ loss = self._compute_loss(x_recon, x, ~visible_mask)
 
 Thus:
 
-* **model input** = augmented spectrum
-* **reconstruction target** = original spectrum
+* **model input** = augmented spectrum,
+* **reconstruction target** = original spectrum.
 
-This makes the MAE objective behave as a **denoising-style regularizer** rather than reconstructing the augmented input itself. Augmentation is applied **only during training** and is disabled during validation.
+This makes the MAE objective behave as a denoising-style regularizer.
+
+If `augmenter` is not provided, the behavior is unchanged:
+
+```python
+x_input = x
+```
+
+---
+
+## Scheduler Handling
+
+The Trainer calls:
+
+```python
+scheduler.step()
+```
+
+after each optimizer update.
+
+Therefore, the scheduler should be designed in terms of **total optimizer update steps**, not epoch-level calls.
+
+Recommended pattern:
+
+```python
+from chemomae.training.optim import build_optimizer, build_scheduler
+
+epochs = 500
+
+optimizer = build_optimizer(
+    model,
+    lr=1e-3,
+    weight_decay=0.05,
+    betas=(0.9, 0.95),
+)
+
+scheduler = build_scheduler(
+    optimizer,
+    steps_per_epoch=len(train_loader),
+    epochs=epochs,
+    warmup_epochs=10,
+    min_lr_scale=0.1,
+)
+```
+
+This means:
+
+```python
+total_steps = len(train_loader) * epochs
+warmup_steps = len(train_loader) * warmup_epochs
+```
+
+So even though `warmup_epochs` is specified in epoch units, it is internally converted into update steps.
+
+### Incorrect usage
+
+Do not pass an epoch-level scheduler that expects `scheduler.step()` to be called once per epoch unless it is explicitly adapted.
+
+For example, a scheduler designed as:
+
+```python
+CosineAnnealingLR(optimizer, T_max=epochs)
+```
+
+would decay too quickly if stepped once per batch.
 
 ---
 
 ## Directory Layout & History
 
-| File                              | Description                                                              |
-| --------------------------------- | ------------------------------------------------------------------------ |
-| `{out_dir}/training_history.json` | Per-epoch JSON records (loss, lr, etc.)                                  |
-| `{out_dir}/checkpoints/last.pt`   | Full checkpoint (latest, resume target)                                  |
-| `{out_dir}/checkpoints/best.pt`   | Full checkpoint at best validation epoch                                 |
-| `{out_dir}/last_model.pt`         | Final raw model weights at the end of training                           |
-| `{out_dir}/last_model_ema.pt`     | Final EMA weights at the end of training (if EMA enabled)                |
-| `{out_dir}/best_model_ema.pt`     | Best-validation EMA weights (validation-enabled runs, if EMA enabled)    |
-| `{out_dir}/best_model.pt`         | Best-validation raw weights (validation-enabled runs, EMA disabled only) |
+| File | Description |
+| --- | --- |
+| `{out_dir}/training_history.json` | Per-epoch JSON records. |
+| `{out_dir}/checkpoints/last.pt` | Full latest checkpoint for resume. |
+| `{out_dir}/last_model.pt` | Final raw model weights. |
+| `{out_dir}/ema_last_model.pt` | Final EMA model weights, saved only when EMA is enabled. |
 
-Example record:
+The following artifacts are no longer produced:
+
+| Removed file | Reason |
+| --- | --- |
+| `{out_dir}/checkpoints/best.pt` | No validation-based best checkpoint selection. |
+| `{out_dir}/best_model.pt` | No validation-based best raw export. |
+| `{out_dir}/best_model_ema.pt` | No validation-based best EMA export. |
+| `{out_dir}/last_model_ema.pt` | Replaced by explicit `ema_last_model.pt`. |
+
+Example history record:
 
 ```json
-{"epoch": 12, "train_loss": 0.0231, "val_loss": 0.0219, "lr": 2.0e-4}
+{
+  "epoch": 12,
+  "train_loss": 0.0231,
+  "lr": 2.0e-4,
+  "time_sec": 18.7
+}
 ```
 
 History updates use atomic temp-file replacement to reduce the risk of corruption.
@@ -212,95 +331,122 @@ History updates use atomic temp-file replacement to reduce the risk of corruptio
 
 ### `checkpoints/last.pt`
 
-This is the **resume checkpoint**. It contains:
+This is the full **resume checkpoint**.
 
-* raw model weights
-* optimizer state
-* scheduler state
-* scaler state
-* EMA state
-* history
-* best metadata
+It contains:
 
-This file is intended for **continuing training**, not for direct inference export.
+* raw model weights,
+* optimizer state,
+* scheduler state,
+* scaler state,
+* EMA state,
+* AMP metadata,
+* training history,
+* device metadata,
+* final selection rule.
 
-### `checkpoints/best.pt`
+This file is intended for continuing training, not for direct inference/export.
 
-This is the **full checkpoint** at the best validation epoch.
-It includes the same full state as `last.pt`, but frozen at the best validation step.
+The checkpoint includes:
+
+```python
+"selection_rule": "ema_last"  # if EMA is enabled
+```
+
+or:
+
+```python
+"selection_rule": "raw_last"  # if EMA is disabled
+```
 
 ### `last_model.pt`
 
-This always stores the **final raw model weights** at the end of training.
+This stores the final **raw model weights** at the end of training.
 
-Use this when you want the exact last-step model without reconstructing it from `last.pt`.
+Use this when:
 
-### `last_model_ema.pt`
+* EMA is disabled,
+* or you explicitly want the raw last-step model.
 
-When EMA is enabled:
+### `ema_last_model.pt`
 
-* the final EMA weights are exported as `last_model_ema.pt`
+When EMA is enabled, this stores the final **EMA model weights** at the end of training.
 
-This is the canonical final EMA export, regardless of whether validation was used.
-
-### `best_model_ema.pt`
-
-When validation is available and EMA is enabled:
-
-* best epoch is selected based on **EMA validation**
-* `best_model_ema.pt` stores the **EMA weights** corresponding to that selection
-
-This is the recommended inference / extraction / downstream-export artifact for validation-based training under EMA.
-
-### `best_model.pt`
-
-When validation is available and EMA is disabled:
-
-* best epoch is selected using the raw validation model
-* `best_model.pt` stores the **raw weights** corresponding to that selection
+This is the canonical final export for downstream feature extraction / testing when EMA is used.
 
 ---
 
 ## Masked Loss Handling
 
-The Trainer computes losses **only on masked tokens**, using the inverted visibility mask:
+The Trainer computes losses only on masked tokens, using the inverted visibility mask:
 
 ```python
 mask = ~visible_mask
+
 if cfg.loss_type == "mse":
     loss = masked_mse(x_recon, x, mask, reduction=cfg.reduction)
 elif cfg.loss_type == "sse":
     loss = masked_sse(x_recon, x, mask, reduction=cfg.reduction)
 ```
 
-| Reduction      | Meaning                                                          |
-| -------------- | ---------------------------------------------------------------- |
-| `"mean"`       | Average over all masked elements.                                |
-| `"sum"`        | Total squared error over masked elements.                        |
+| Reduction | Meaning |
+| --- | --- |
+| `"mean"` | Average over masked elements. |
+| `"sum"` | Total squared error over masked elements. |
 | `"batch_mean"` | Batch-weighted mean style reduction defined by the loss utility. |
 
 ---
 
 ## Precision & Performance
 
-* **Autocast:** Uses `torch.amp.autocast("cuda", dtype=bf16|fp16)` when `amp=True`
-* **GradScaler:** Enabled automatically for `fp16` on CUDA
-* **TF32:** Activates TF32 matmul/cuDNN acceleration via `torch.backends.cuda.matmul.allow_tf32=True`
-* **Gradient clipping:** `clip_grad_norm_` applied after unscaling when GradScaler is active
-* **EMA:** Shadow weights are updated after every optimizer step and used only for evaluation/export, not for training forward/backward itself
+* **Autocast**: uses `torch.amp.autocast("cuda", dtype=bf16|fp16)` when `amp=True` and device is CUDA.
+* **GradScaler**: enabled automatically for fp16 on CUDA.
+* **TF32**: activates TF32 matmul/cuDNN acceleration when `enable_tf32=True` on CUDA.
+* **Gradient clipping**: `clip_grad_norm_` is applied after unscaling when GradScaler is active.
+* **EMA**: shadow weights are updated after every optimizer step. EMA is used for final export, not for training-time forward/backward.
 
 ---
 
 ## Usage Examples
 
-### Minimal training loop with validation
+### Fixed-budget SSL pretraining with EMA and augmentation
 
 ```python
 from chemomae.models import ChemoMAE
-from chemomae.training.trainer import Trainer, TrainerConfig
 from chemomae.training.augmenter import SpectraAugmenter, SpectraAugmenterConfig
+from chemomae.training.optim import build_optimizer, build_scheduler
+from chemomae.training.trainer import Trainer, TrainerConfig
 
-model = ChemoMAE(seq_len=256, latent_dim=64, n_patches=16, n_mask=12)
+epochs = 500
+
+model = ChemoMAE(
+    seq_len=256,
+    d_model=256,
+    nhead=4,
+    num_layers=4,
+    dim_feedforward=1024,
+    dropout=0.1,
+    latent_dim=16,
+    latent_normalize=True,
+    decoder_num_layers=2,
+    n_patches=32,
+    n_mask=16,
+)
+
+optimizer = build_optimizer(
+    model,
+    lr=1e-3,
+    weight_decay=0.05,
+    betas=(0.9, 0.95),
+)
+
+scheduler = build_scheduler(
+    optimizer,
+    steps_per_epoch=len(train_loader),
+    epochs=epochs,
+    warmup_epochs=10,
+    min_lr_scale=0.1,
+)
 
 aug_cfg = SpectraAugmenterConfig(
     noise_prob=0.5,
@@ -311,112 +457,96 @@ aug_cfg = SpectraAugmenterConfig(
 augmenter = SpectraAugmenter(aug_cfg)
 
 cfg = TrainerConfig(
-    out_dir="runs",
-    amp=True,
-    amp_dtype="bf16",
-    use_ema=True,
-    loss_type="mse",
-    reduction="mean",
-)
-
-trainer = Trainer(
-    model=model,
-    optimizer=opt,
-    train_loader=train_loader,
-    val_loader=val_loader,
-    scheduler=sched,
-    augmenter=augmenter,
-    cfg=cfg,
-)
-
-history = trainer.fit(epochs=100)
-print("Best:", history["best"])
-
-# Outputs:
-# - runs/checkpoints/last.pt
-# - runs/checkpoints/best.pt
-# - runs/last_model.pt
-# - runs/last_model_ema.pt   (if EMA enabled)
-# - runs/best_model_ema.pt   (if EMA enabled)
-# - runs/best_model.pt       (if EMA disabled)
-```
-
-### Validation-free SSL pretraining
-
-```python
-cfg = TrainerConfig(
     out_dir="runs_ssl",
     amp=True,
     amp_dtype="bf16",
     use_ema=True,
+    ema_decay=0.999,
+    loss_type="mse",
+    reduction="mean",
     resume_from="auto",
 )
 
 trainer = Trainer(
     model=model,
-    optimizer=opt,
+    optimizer=optimizer,
     train_loader=train_loader,
-    val_loader=None,
-    scheduler=sched,
+    scheduler=scheduler,
     augmenter=augmenter,
     cfg=cfg,
 )
 
-trainer.fit(epochs=100)
+result = trainer.fit(epochs=epochs)
+print(result["final_model"])
 
 # Outputs:
 # - runs_ssl/checkpoints/last.pt
+# - runs_ssl/training_history.json
 # - runs_ssl/last_model.pt
-# - runs_ssl/last_model_ema.pt   (if EMA enabled)
+# - runs_ssl/ema_last_model.pt
+```
+
+### Training without EMA
+
+```python
+cfg = TrainerConfig(
+    out_dir="runs_raw",
+    amp=True,
+    amp_dtype="bf16",
+    use_ema=False,
+    resume_from=None,
+)
+
+trainer = Trainer(
+    model=model,
+    optimizer=optimizer,
+    train_loader=train_loader,
+    scheduler=scheduler,
+    augmenter=None,
+    cfg=cfg,
+)
+
+result = trainer.fit(epochs=500)
+print(result["final_model"])  # "last_model.pt"
+
+# Outputs:
+# - runs_raw/checkpoints/last.pt
+# - runs_raw/training_history.json
+# - runs_raw/last_model.pt
 ```
 
 ### Resume training automatically
 
 ```python
-cfg = TrainerConfig(out_dir="runs", resume_from="auto")
+cfg = TrainerConfig(
+    out_dir="runs_ssl",
+    resume_from="auto",
+)
+
 trainer = Trainer(
     model=model,
-    optimizer=opt,
+    optimizer=optimizer,
     train_loader=train_loader,
-    val_loader=val_loader,
-    scheduler=sched,
+    scheduler=scheduler,
     augmenter=augmenter,
     cfg=cfg,
 )
-trainer.fit(epochs=100)
+
+trainer.fit(epochs=500)
 ```
 
----
-
-## Notes & Gotchas
-
-* **Data loader output**
-  If the loader yields `(x, meta)`, the Trainer automatically uses only `x`.
-
-* **Shape consistency**
-  `x.shape == visible_mask.shape == (B, L)` must hold.
-
-* **History persistence**
-  Existing `training_history.json` is read and appended to when continuing runs.
-
-* **EMA semantics**
-  EMA is **not** used for training-time forward/backward. It is used for:
-
-  * validation-time evaluation
-  * best-model EMA export
-  * final EMA export
-
-* **Checkpoint vs export**
-
-  * `last.pt` / `best.pt` are full checkpoints
-  * `last_model.pt` / `last_model_ema.pt` / `best_model_ema.pt` / `best_model.pt` are weights-only export files
-
-* **Reduction tip**
-  Prefer `"batch_mean"` when the number of masked tokens per sample may vary.
+If `{out_dir}/checkpoints/last.pt` exists, training resumes from the next epoch.  
+If it does not exist, training starts from epoch 1.
 
 ---
 
-## Version
+## Version v0.2.0
 
-* Updated for the Augmenter-enabled ChemoMAE training pipeline, with unified final export naming:
-  `last_model.pt`, `last_model_ema.pt`, and `best_model_ema.pt` / `best_model.pt`.
+Updated for the validation-free ChemoMAE Trainer:
+
+* removed `val_loader`,
+* removed early stopping,
+* removed validation-loss-based best checkpoint selection,
+* switched final EMA export from `last_model_ema.pt` to `ema_last_model.pt`,
+* clarified batch-wise scheduler stepping,
+* documented fixed-budget SSL pretraining semantics.

@@ -1,21 +1,21 @@
 from __future__ import annotations
 
 import json
-import math
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Dict, Iterable
-from tqdm import tqdm
+from typing import Dict, Iterable, Optional
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR
+from tqdm import tqdm
 
-from ..models.losses import masked_sse, masked_mse
-from .callbacks import EarlyStopping, EMACallback
+from ..models.losses import masked_mse, masked_sse
 from .augmenter import SpectraAugmenter
+from .callbacks import EMACallback
 
 
 @dataclass
@@ -25,48 +25,45 @@ class TrainerConfig:
 
     概要
     ----
-    学習ループでよく使う設定をひとまとめにしたクラス。
-    実体はただの名前付き属性（dataclass 風）なので、インスタンス化後に上書き可能。
+    ChemoMAE の自己教師あり事前学習に使う固定 epoch / 固定 step 型の
+    training loop 設定をまとめた dataclass。
+
+    Notes
+    -----
+    - validation loss による best checkpoint selection は行わない。
+    - early stopping は行わない。
+    - 最終モデルは fixed budget の終了時点で保存する。
+    - EMA は validation 用ではなく、任意の weight stabilization として扱う。
 
     Attributes
     ----------
     out_dir : str | Path, default="runs"
-        すべての出力（チェックポイント, 履歴, 可視化画像など）を保存するディレクトリ。
-    device : {"cuda","mps","cpu"} | None, default=None
+        すべての出力（checkpoint, history, exported weights など）を保存するディレクトリ。
+    device : {"cuda", "mps", "cpu"} | None, default=None
         使用デバイス。None の場合は自動判定（cuda → mps → cpu の優先順）。
     amp : bool, default=True
         AMP (Automatic Mixed Precision) を使用するかどうか。
     amp_dtype : {"bf16", "fp16"}, default="bf16"
         AMP の精度種別。
-        - "bf16" は近年の GPU (A100/H100 など) で安定。
-        - "fp16" はより古い GPU でも動作。
     enable_tf32 : bool, default=False
-        TensorFloat-32 を有効化するか。Ampere 以降の GPU で効果あり。
+        TensorFloat-32 を有効化するか。Ampere 以降の CUDA GPU で効果あり。
     grad_clip : float | None, default=1.0
         勾配クリッピングの最大ノルム。None の場合は無効。
     use_ema : bool, default=True
         EMA (Exponential Moving Average) によるモデルパラメータ追跡を有効化するか。
     ema_decay : float, default=0.999
-        EMA の減衰率。大きいほど履歴の影響が長く残る。
+        EMA の減衰率。大きいほど過去 step の影響が長く残る。
     loss_type : {"sse", "mse"}, default="mse"
         損失関数の種類。
-        - "sse" = masked_sse
-        - "mse" = masked_mse
     reduction : {"sum", "mean", "batch_mean"}, default="mean"
-        損失の集約方法。`masked_sse`/`masked_mse` に渡される。
-    early_stop_patience : int | None, default=20
-        EarlyStopping を使う場合の patience。
-        None の場合は無効。
-    early_stop_start_ratio : float, default=0.5
-        EarlyStopping の監視を開始する時期を総エポック数に対する割合で指定。
-    early_stop_min_delta : float, default=0.0
-        EarlyStopping 判定での改善幅の閾値。
+        `masked_sse` / `masked_mse` に渡す損失の集約方法。
     resume_from : str | Path | None, default="auto"
-        学習再開のチェックポイントパス。
-        - "auto" = `out_dir` 内の最新スナップショットを自動検出。
-        - str/Path を指定するとそのファイルから復元。
-        - None なら常に新規学習。
+        学習再開用 checkpoint。
+        - "auto" = `out_dir/checkpoints/last.pt` を自動検出。
+        - str/Path = 指定 checkpoint から復元。
+        - None = 常に新規学習。
     """
+
     out_dir: str | Path = "runs"
     device: Optional[str] = None
     amp: bool = True
@@ -77,9 +74,6 @@ class TrainerConfig:
     ema_decay: float = 0.999
     loss_type: str = "mse"
     reduction: str = "mean"
-    early_stop_patience: Optional[int] = 20
-    early_stop_start_ratio: float = 0.5
-    early_stop_min_delta: float = 0.0
     resume_from: Optional[str | Path] = "auto"
 
 
@@ -89,26 +83,28 @@ class Trainer:
 
     概要
     ----
-    ChemoMAE 系の reconstruction 学習を、次の機能込みで「1つの学習ループ」として提供する。
+    ChemoMAE 系の masked reconstruction pretraining を固定 epoch / 固定 step で実行する。
+    validation loss に基づく model selection や early stopping は行わない。
 
-    - AMP（bf16/fp16）+ fp16 の場合のみ GradScaler
+    主な機能
+    --------
+    - AMP（bf16/fp16）
+    - fp16 CUDA 時のみ GradScaler
     - optional TF32（CUDA）
-    - optional EMA（検証時に EMA を一時適用）
-    - optional SpectraAugmenter（学習時のみ入力に適用）
+    - optional EMA（最終重みの安定化用）
+    - optional SpectraAugmenter（学習入力にのみ適用）
     - gradient clipping
-    - scheduler.step()（**バッチごと**に呼ぶ実装）
-    - checkpoint（last/best）と履歴保存（JSON）
-    - resume（"auto" で last.pt を検出）
-    - early stopping
-    - 学習終了時の raw / EMA weights export
-    - val あり運用時の best EMA weights export
+    - batch-wise scheduler.step()
+    - resume 用 full checkpoint
+    - raw last / EMA last の weights export
+    - training history JSON の atomic write
 
-    モデルの入出力契約（最重要）
-    --------------------------
+    モデルの入出力契約
+    ------------------
     学習対象 `model` は `model(x)` が **(x_recon, z, visible_mask)** を返すこと。
 
     - `x_recon`: shape (B, L)
-    - `z`      : 任意（本 Trainer では損失計算に使用しない）
+    - `z`: 任意（本 Trainer では損失計算に使用しない）
     - `visible_mask`: bool, shape (B, L), **True=visible**
     - masked 領域は `~visible_mask` として損失計算に渡される。
 
@@ -118,38 +114,30 @@ class Trainer:
 
     - `x_input = augmenter(x)`
 
-    を用いてモデルへ入力する。一方で再構成ターゲットは **常に元の `x`** とする。
+    をモデルへ入力する。一方で reconstruction target は常に元の `x` とする。
     したがって損失は
 
     - `loss(x_recon, x, ~visible_mask)`
 
-    で計算される。これは denoising 的正則化として機能する。
+    で計算される。これは denoising 的な正則化として機能する。
 
-    保存物（out_dir）
-    ---------------
+    保存物
+    ------
     - `out_dir/training_history.json`
-      各 epoch の記録（train_loss / val_loss / lr）を append して保存（atomic write）。
+      各 epoch の `epoch`, `train_loss`, `lr`, `time_sec` を保存する。
     - `out_dir/checkpoints/last.pt`
-      最新の完全 checkpoint（生重み + optimizer/scaler/scheduler/ema state）。
-    - `out_dir/checkpoints/best.pt`
-      best（val 改善）時の完全 checkpoint。
+      resume 用 full checkpoint。
     - `out_dir/last_model.pt`
-      学習終了時の **生重み**。
-    - `out_dir/last_model_ema.pt`
-      学習終了時の **EMA 重み**（EMA 有効時）。
-    - `out_dir/best_model_ema.pt`
-      val あり運用時、best 判定時点の **EMA 重み**（EMA 有効時）。
-    - `out_dir/best_model.pt`
-      val あり運用時、best 判定時点の **生重み**（EMA 無効時のみ）。
+      fixed budget 終了時点の raw model weights。
+    - `out_dir/ema_last_model.pt`
+      fixed budget 終了時点の EMA model weights（EMA 有効時のみ）。
 
     Notes
     -----
-    - EMA は `validate()` の間だけ一時適用し、終了後にモデル重みを復元する。
-    - augmenter は train 時のみ適用し、validate では適用しない。
-    - scheduler を epoch 単位で step したい場合は、この Trainer の実装（バッチ step）に合わせて
-      スケジューラ側を設計すること（例: 総 step 数ベースの LambdaLR）。
-    - `last.pt` は resume 用の生重み checkpoint、`last_model.pt` / `last_model_ema.pt` /
-      `best_model_ema.pt` / `best_model.pt` は利用用の export として分離している。
+    - validation loop は持たない。
+    - best checkpoint は保存しない。
+    - `last.pt` は resume 用の full checkpoint、`last_model.pt` / `ema_last_model.pt` は
+      推論・抽出用の weights export として分離している。
     """
 
     def __init__(
@@ -157,7 +145,6 @@ class Trainer:
         model: nn.Module,
         optimizer: optim.Optimizer,
         train_loader: Iterable,
-        val_loader: Optional[Iterable] = None,
         *,
         scheduler: Optional[LambdaLR] = None,
         augmenter: SpectraAugmenter | None = None,
@@ -176,11 +163,9 @@ class Trainer:
             cfg.device = resolved_device
 
         self.device = torch.device(cfg.device)
-
         self.model = model.to(self.device)
         self.optimizer = optimizer
         self.train_loader = train_loader
-        self.val_loader = val_loader
         self.scheduler = scheduler
         self.augmenter = augmenter.to(self.device) if augmenter is not None else None
         self.cfg = cfg
@@ -194,6 +179,9 @@ class Trainer:
 
         self.amp = bool(cfg.amp)
         self.amp_dtype = cfg.amp_dtype.lower()
+        if self.amp_dtype not in {"bf16", "fp16"}:
+            raise ValueError(f"amp_dtype must be 'bf16' or 'fp16', got {cfg.amp_dtype!r}")
+
         if self.device.type == "cuda" and cfg.enable_tf32:
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
@@ -202,15 +190,15 @@ class Trainer:
             except Exception:
                 pass
 
-        use_scaler = self.amp and (self.amp_dtype == "fp16") and (self.device.type == "cuda")
+        use_scaler = self.amp and self.amp_dtype == "fp16" and self.device.type == "cuda"
         self.scaler = torch.amp.GradScaler("cuda", enabled=use_scaler)  # type: ignore[arg-type]
-
         self.ema = EMACallback(self.model, cfg.ema_decay) if cfg.use_ema else None
-        self.best = {"epoch": -1, "val_loss": float("inf")}
 
         try:
             if self.history_path.exists():
-                self.history = json.loads(self.history_path.read_text(encoding="utf-8"))
+                loaded_history = json.loads(self.history_path.read_text(encoding="utf-8"))
+                if isinstance(loaded_history, list):
+                    self.history = loaded_history
         except Exception:
             self.history = []
 
@@ -223,10 +211,14 @@ class Trainer:
 
     def _autocast_ctx(self):
         if not self.amp or self.device.type != "cuda":
-            from contextlib import nullcontext
             return nullcontext()
         dtype = torch.bfloat16 if self.amp_dtype == "bf16" else torch.float16
         return torch.amp.autocast("cuda", dtype=dtype)  # type: ignore[arg-type]
+
+    def _atomic_torch_save(self, obj: object, path: Path) -> None:
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        torch.save(obj, tmp.as_posix())
+        tmp.replace(path)
 
     def _save_history(self, rec: Dict) -> None:
         self.history.append(rec)
@@ -234,15 +226,15 @@ class Trainer:
         tmp.write_text(json.dumps(self.history, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(self.history_path)
 
-    def _save_ema_weights_only(self, filename: str) -> None:
+    def _save_ema_weights_only(self, filename: str = "ema_last_model.pt") -> None:
         """
         Save EMA weights only.
 
         Notes
         -----
-        - 現在の model 重みを backup し、
-          EMA を apply した状態の `state_dict()` を保存後、
-          元の重みに復元する。
+        - 現在の model weights を backup する。
+        - EMA weights を一時的に model へ apply して保存する。
+        - 保存後、元の raw weights に戻す。
         - EMA が無効な場合は何もしない。
         """
         if self.ema is None:
@@ -251,7 +243,7 @@ class Trainer:
         backup = {k: v.detach().clone() for k, v in self.model.state_dict().items()}
         try:
             self.ema.apply_to(self.model)
-            torch.save(self.model.state_dict(), (self.out_dir / filename).as_posix())
+            self._atomic_torch_save(self.model.state_dict(), self.out_dir / filename)
         finally:
             self.model.load_state_dict(backup, strict=True)
 
@@ -269,66 +261,64 @@ class Trainer:
             "epoch": epoch,
             "model": self.model.state_dict(),
             "optimizer": self.optimizer.state_dict(),
-            "scheduler": (self.scheduler.state_dict() if self.scheduler is not None else None),
-            "scaler": (self.scaler.state_dict() if self.scaler.is_enabled() else None),
-            "ema": (self.ema.state_dict() if self.ema is not None else None),
-            "ema_decay": (self.ema.decay if self.ema is not None else None),
+            "scheduler": self.scheduler.state_dict() if self.scheduler is not None else None,
+            "scaler": self.scaler.state_dict() if self.scaler.is_enabled() else None,
+            "ema": self.ema.state_dict() if self.ema is not None else None,
+            "ema_decay": self.ema.decay if self.ema is not None else None,
             "amp": {"enabled": self.amp, "dtype": self.amp_dtype},
-            "best": dict(self.best),
             "history": list(self.history),
             "device": self.device.type,
+            "selection_rule": "ema_last" if self.ema is not None else "raw_last",
         }
 
-    def save_checkpoint(self, epoch: int, *, is_best: bool) -> None:
+    def save_checkpoint(self, epoch: int) -> None:
         """
-        Save a full training checkpoint.
+        Save the latest full training checkpoint for resume.
 
         Parameters
         ----------
         epoch : int
             保存対象 epoch。
-        is_best : bool
-            True の場合 `best.pt` も更新する。常に `last.pt` は更新される。
         """
         state = self._checkpoint_state(epoch)
-        last = self.ckpt_dir / "last.pt"
-        tmp_last = last.with_suffix(".pt.tmp")
-        torch.save(state, tmp_last.as_posix())
-        tmp_last.replace(last)
-
-        if is_best:
-            best = self.ckpt_dir / "best.pt"
-            tmp_best = best.with_suffix(".pt.tmp")
-            torch.save(state, tmp_best.as_posix())
-            tmp_best.replace(best)
+        self._atomic_torch_save(state, self.ckpt_dir / "last.pt")
 
     def save_weights_only(self, filename: str = "last_model.pt") -> None:
         """
         Save current raw model weights only.
         """
-        torch.save(self.model.state_dict(), (self.out_dir / filename).as_posix())
+        self._atomic_torch_save(self.model.state_dict(), self.out_dir / filename)
 
     def load_checkpoint(self, path: str | Path) -> int:
         """
         Load a full training checkpoint and restore trainer state.
+
+        Returns
+        -------
+        int
+            次に開始すべき epoch。たとえば checkpoint が epoch=10 なら 11 を返す。
         """
         state = torch.load(Path(path).as_posix(), map_location=self.device, weights_only=False)
         self.model.load_state_dict(state["model"], strict=True)
         self.optimizer.load_state_dict(state["optimizer"])
+
         if self.scheduler is not None and state.get("scheduler") is not None:
             self.scheduler.load_state_dict(state["scheduler"])
+
         if state.get("scaler") is not None:
             try:
                 self.scaler.load_state_dict(state["scaler"])
             except Exception:
                 pass
+
         if state.get("ema") is not None:
             if self.ema is None:
                 self.ema = EMACallback(self.model, state.get("ema_decay", 0.999))
             self.ema.load_state_dict(state["ema"])
-        if "history" in state:
+
+        if "history" in state and isinstance(state["history"], list):
             self.history = list(state["history"])
-        self.best = dict(state.get("best", self.best))
+
         last_epoch = int(state.get("epoch", 0))
         return last_epoch + 1
 
@@ -344,7 +334,7 @@ class Trainer:
 
         meter_sum, meter_cnt = 0.0, 0
 
-        for batch in tqdm(self.train_loader, desc="Training  ", unit="batch"):
+        for batch in tqdm(self.train_loader, desc="Training", unit="batch"):
             x = self._to_x(batch)
             x_input = self.augmenter(x) if self.augmenter is not None else x
 
@@ -353,6 +343,7 @@ class Trainer:
                 loss = self._compute_loss(x_recon, x, ~visible_mask)
 
             self.optimizer.zero_grad(set_to_none=True)
+
             if self.scaler.is_enabled():
                 self.scaler.scale(loss).backward()
                 if self.cfg.grad_clip is not None:
@@ -368,71 +359,34 @@ class Trainer:
 
             if self.scheduler is not None:
                 self.scheduler.step()
+
             if self.ema is not None:
                 self.ema.update(self.model)
 
-            meter_sum += float(loss.item()) * x.size(0)
-            meter_cnt += x.size(0)
-
-        return meter_sum / max(1, meter_cnt)
-
-    def validate(self) -> float:
-        """
-        Run validation loop.
-
-        Notes
-        -----
-        - EMA が有効な場合、評価中のみ EMA 重みをモデルへ適用し、評価後に元へ戻す。
-        """
-        if self.val_loader is None:
-            return float("nan")
-
-        self.model.eval()
-        if self.augmenter is not None:
-            self.augmenter.eval()
-
-        backup = None
-        if self.ema is not None:
-            backup = {k: v.detach().clone() for k, v in self.model.state_dict().items()}
-            self.ema.apply_to(self.model)
-
-        meter_sum, meter_cnt = 0.0, 0
-
-        with torch.inference_mode():
-            for batch in tqdm(self.val_loader, desc="Validating", unit="batch"):
-                x = self._to_x(batch)
-                with self._autocast_ctx():
-                    x_recon, _, visible_mask = self.model(x)
-                    loss = self._compute_loss(x_recon, x, ~visible_mask)
-                meter_sum += float(loss.item()) * x.size(0)
-                meter_cnt += x.size(0)
-
-        if backup is not None:
-            self.model.load_state_dict(backup, strict=True)
+            batch_size = x.size(0)
+            meter_sum += float(loss.item()) * batch_size
+            meter_cnt += batch_size
 
         return meter_sum / max(1, meter_cnt)
 
     # ------------------------------ fit -------------------------------
     def fit(self, epochs: int) -> Dict:
         """
-        Fit the model for a given number of epochs.
+        Fit the model for a fixed number of epochs.
 
-        Notes
-        -----
-        - val あり:
-          - best 判定は EMA-val に基づく
-          - EMA 有効時は `best_model_ema.pt` を保存
-          - EMA 無効時は `best_model.pt` を保存
-        - 学習終了時:
-          - 常に `last_model.pt` を保存
-          - EMA 有効時は `last_model_ema.pt` を保存
+        Parameters
+        ----------
+        epochs : int
+            学習を終了する epoch 数。resume 時は checkpoint の次 epoch から再開し、
+            `epochs` まで到達したら終了する。
+
+        Returns
+        -------
+        dict
+            実行結果の概要。
         """
-        es = EarlyStopping(
-            patience=self.cfg.early_stop_patience if self.cfg.early_stop_patience is not None else 10**9,
-            min_delta=self.cfg.early_stop_min_delta,
-            start_epoch_ratio=self.cfg.early_stop_start_ratio,
-        )
-        es.setup(epochs)
+        if epochs < 1:
+            raise ValueError(f"epochs must be >= 1, got {epochs}")
 
         start_epoch = 1
         if self.cfg.resume_from is not None:
@@ -446,52 +400,44 @@ class Trainer:
         if start_epoch > epochs:
             self.save_weights_only("last_model.pt")
             if self.ema is not None:
-                self._save_ema_weights_only("last_model_ema.pt")
-            return {"best": self.best, "epochs": start_epoch - 1}
+                self._save_ema_weights_only("ema_last_model.pt")
+            return {
+                "epochs": start_epoch - 1,
+                "completed": True,
+                "final_model": "ema_last_model.pt" if self.ema is not None else "last_model.pt",
+            }
 
+        last_epoch = start_epoch - 1
         for epoch in range(start_epoch, epochs + 1):
             ep_t0 = time.time()
-            tr = self.train_one_epoch()
-            vl = self.validate()
+            train_loss = self.train_one_epoch()
+            time_sec = time.time() - ep_t0
+            lr = float(self.optimizer.param_groups[0]["lr"])
+
             rec = {
                 "epoch": epoch,
-                "train_loss": tr,
-                "val_loss": vl,
-                "lr": self.optimizer.param_groups[0]["lr"],
+                "train_loss": train_loss,
+                "lr": lr,
+                "time_sec": time_sec,
             }
             self._save_history(rec)
 
-            improved = (not math.isnan(vl)) and (self.best["val_loss"] - vl) > self.cfg.early_stop_min_delta
-            if improved:
-                self.best = {"epoch": epoch, "val_loss": vl}
-                if self.ema is not None:
-                    self._save_ema_weights_only("best_model_ema.pt")
-                else:
-                    self.save_weights_only("best_model.pt")
-
-            took = time.time() - ep_t0
-            tag = "  <-- BEST" if improved else ""
-            vl_str = f"{vl:.4f}" if not math.isnan(vl) else "nan"
             print(
                 f"[Epoch {epoch:03d}] "
-                f"train={tr:.4f}  val={vl_str}  "
-                f"lr={self.optimizer.param_groups[0]['lr']:.2e}  "
-                f"time={took:.1f}s{tag}"
+                f"train={train_loss:.4f}  "
+                f"lr={lr:.2e}  "
+                f"time={time_sec:.1f}s"
             )
 
-            self.save_checkpoint(epoch, is_best=improved)
-
-            if (not math.isnan(vl)) and es.step(epoch, vl):
-                print(
-                    f"[EarlyStop] best@{es.best_epoch:03d} "
-                    f"val={es.best:.4f} "
-                    f"(start={es._start_epoch}, patience={es.patience})"
-                )
-                self.save_checkpoint(epoch, is_best=False)
-                break
+            self.save_checkpoint(epoch)
+            last_epoch = epoch
 
         self.save_weights_only("last_model.pt")
         if self.ema is not None:
-            self._save_ema_weights_only("last_model_ema.pt")
+            self._save_ema_weights_only("ema_last_model.pt")
 
-        return {"best": self.best, "epochs": epoch}
+        return {
+            "epochs": last_epoch,
+            "completed": last_epoch >= epochs,
+            "final_model": "ema_last_model.pt" if self.ema is not None else "last_model.pt",
+        }
