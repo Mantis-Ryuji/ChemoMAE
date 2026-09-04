@@ -6,6 +6,8 @@ This document describes the `Tester` and its configuration (`TesterConfig`), a l
 
 `Tester` computes **masked reconstruction losses** (SSE/MSE) with AMP support, optional fixed masks, optional spectral augmentation, and optional JSON logging.
 
+> **Scope note:** v0.2.1 adds `loss_region="all"` to `TrainerConfig`. `TesterConfig` remains masked-only and does not expose this training option.
+
 ---
 
 ## Overview
@@ -478,7 +480,13 @@ assert loss >= 0
 
 ---
 
-## Version v0.2.0
+## Version
+
+### v0.2.1
+
+* Clarifies that full-region loss selection belongs to `TrainerConfig`; `TesterConfig` remains masked-only.
+
+### v0.2.0
 
 Updated for the optional augmenter-enabled ChemoMAE testing pipeline.
 

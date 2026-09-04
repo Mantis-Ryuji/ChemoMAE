@@ -2,8 +2,8 @@
 
 > Module: `chemomae.models.losses`
 
-This document describes **masked reconstruction losses** implemented in `losses.py`.
-These functions compute squared errors **only on masked (hidden) positions**, consistent with the **Masked Autoencoder (MAE)** training principle.
+This document describes the boolean-mask-based reconstruction losses implemented in `losses.py`.
+These functions compute squared errors wherever the supplied `mask` is `True`. The Trainer supplies either the hidden positions or an all-`True` mask according to `TrainerConfig.loss_region`.
 
 ---
 
@@ -87,14 +87,14 @@ loss_mse = masked_mse(x_recon, x, mask, reduction="mean")
 
 ## Design Notes
 
-* **Masked-only error:**
-  Enforces MAE behavior — model learns to infer missing content, not to replicate visible regions.
+* **Explicit selection mask:**
+  `loss_region="masked"` supplies `~visible_mask`; `loss_region="all"` supplies an all-`True` mask for full-spectrum reconstruction.
 
 * **Safe gradients:**
   Gradients propagate correctly through `x_recon`; typically `x` is treated as constant (`requires_grad=False`).
 
 * **Numerical safety:**
-  All reductions return finite results even when `mask.sum() == 0`.
+  The standalone loss functions return finite results even when `mask.sum() == 0`. The Trainer rejects an empty mask when `loss_region="masked"` so training cannot silently continue with zero loss.
 
 * **Consistency:**
   Compatible with ChemoMAE’s `visible` mask convention (`True=visible`, `False=masked` → invert before use).
@@ -121,4 +121,5 @@ assert masked_mse(x_recon, x, mask, reduction="mean").item() >= 0
 
 ## Version
 
+* v0.2.1 documents Trainer-driven masked/full-region selection; the loss function signatures are unchanged.
 * Introduced in `chemomae.models.losses` — initial public draft.

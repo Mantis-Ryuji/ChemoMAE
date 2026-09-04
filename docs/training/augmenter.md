@@ -11,7 +11,7 @@ The implementation provides two lightweight training-time augmentations:
 
 Both transformations are designed for spectra that have already been standardized by SNV. After each augmentation, the spectrum can be re-centered and re-normalized so that the augmented sample remains compatible with the SNV-induced geometry.
 
-The intended role of this module is **auxiliary regularization** for masked reconstruction. It is not designed as a strong multi-view augmentation pipeline for contrastive learning.
+The intended role of this module is **auxiliary regularization** for masked or full-spectrum reconstruction. It is not designed as a strong multi-view augmentation pipeline for contrastive learning.
 
 ---
 
@@ -59,9 +59,9 @@ generally violates this structure because it may change both the sample mean and
 
 ## Design Goal
 
-The main learning signal in ChemoMAE is **masked reconstruction**.
+The main learning signal in ChemoMAE is reconstruction over the region selected by `TrainerConfig.loss_region`.
 
-The model receives a partially visible spectrum and learns to reconstruct masked wavelength regions. Augmentation is used only as a secondary regularizer:
+In masked mode, the model receives a partially visible spectrum and learns to reconstruct masked wavelength regions. In all-region mode, every output element is compared with the clean spectrum. Augmentation is used only as a secondary regularizer, and the reconstruction target remains the unaugmented input in both modes:
 
 ```math
 A(\mathbf{x})_{\Omega_v}\longrightarrow\mathbf{x}_{\Omega_m},
@@ -554,12 +554,12 @@ Because it operates through tangent-space rotation, it avoids unconstrained addi
 
 ### Why keep augmentations weak?
 
-ChemoMAE already receives a strong learning signal from masked reconstruction. Augmentation should not dominate this task.
+ChemoMAE already receives a strong reconstruction learning signal. Augmentation should not dominate this task.
 
 The intended role is:
 
 ```math
-\text{masked reconstruction}+\text{weak denoising regularization}.
+\text{reconstruction}+\text{weak denoising regularization}.
 ```
 
 Strong augmentations may cause the model to reconstruct targets from overly distorted inputs and could suppress degradation-related structure.
@@ -633,7 +633,7 @@ Feature extraction and validation should remain deterministic unless stochastic 
 
 This module does not create paired views for contrastive learning.
 
-It is designed as weak input corruption for masked reconstruction. If later using view-consistency objectives, a separate two-view augmentation interface may be more appropriate.
+It is designed as weak input corruption for reconstruction training. If later using view-consistency objectives, a separate two-view augmentation interface may be more appropriate.
 
 ---
 
@@ -698,7 +698,13 @@ assert torch.all(angle_deg < 15.0)
 
 ---
 
-## Version v0.2.0
+## Version
+
+### v0.2.1
+
+* Documents use with masked and full-spectrum Trainer loss regions; augmentation behavior is unchanged.
+
+### v0.2.0
 
 * Updated `chemomae.training.augmenter` to use delta-controlled fractional shift and angle-controlled tangent Gaussian noise.
 * Replaces the previous `noise + tilt` cosine-controlled design.

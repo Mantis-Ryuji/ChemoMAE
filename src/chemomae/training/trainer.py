@@ -5,7 +5,7 @@ import time
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, Literal, Optional
 
 import torch
 import torch.nn as nn
@@ -55,6 +55,8 @@ class TrainerConfig:
         EMA の減衰率。大きいほど過去 step の影響が長く残る。
     loss_type : {"sse", "mse"}, default="mse"
         損失関数の種類。
+    loss_region : {"masked", "all"}, default="masked"
+        再構成損失の対象領域。"masked" は非可視要素のみ、"all" は全要素を対象とする。
     reduction : {"sum", "mean", "batch_mean"}, default="mean"
         `masked_sse` / `masked_mse` に渡す損失の集約方法。
     resume_from : str | Path | None, default="auto"
@@ -73,17 +75,26 @@ class TrainerConfig:
     use_ema: bool = True
     ema_decay: float = 0.999
     loss_type: str = "mse"
+    loss_region: Literal["masked", "all"] = "masked"
     reduction: str = "mean"
     resume_from: Optional[str | Path] = "auto"
+
+    def __post_init__(self) -> None:
+        if self.loss_region not in {"masked", "all"}:
+            raise ValueError(
+                "loss_region must be 'masked' or 'all', "
+                f"got {self.loss_region!r}"
+            )
 
 
 class Trainer:
     r"""
-    Trainer for ChemoMAE-style masked reconstruction with AMP/EMA/checkpointing.
+    Trainer for ChemoMAE-style reconstruction with AMP/EMA/checkpointing.
 
     概要
     ----
-    ChemoMAE 系の masked reconstruction pretraining を固定 epoch / 固定 step で実行する。
+    ChemoMAE 系の reconstruction pretraining を固定 epoch / 固定 step で実行する。
+    損失対象は `cfg.loss_region` により masked 領域または全領域から選択する。
     validation loss に基づく model selection や early stopping は行わない。
 
     主な機能
@@ -106,7 +117,8 @@ class Trainer:
     - `x_recon`: shape (B, L)
     - `z`: 任意（本 Trainer では損失計算に使用しない）
     - `visible_mask`: bool, shape (B, L), **True=visible**
-    - masked 領域は `~visible_mask` として損失計算に渡される。
+    - `loss_region="masked"` では `~visible_mask`、`loss_region="all"` では全要素を
+      損失計算に使用する。
 
     Augmenter の扱い
     ----------------
@@ -117,14 +129,14 @@ class Trainer:
     をモデルへ入力する。一方で reconstruction target は常に元の `x` とする。
     したがって損失は
 
-    - `loss(x_recon, x, ~visible_mask)`
+    - `loss(x_recon, x, selected_region)`
 
     で計算される。これは denoising 的な正則化として機能する。
 
     保存物
     ------
     - `out_dir/training_history.json`
-      各 epoch の `epoch`, `train_loss`, `lr`, `time_sec` を保存する。
+      各 epoch の `epoch`, `train_loss`, `lr`, `time_sec`, `loss_region`, `n_mask` を保存する。
     - `out_dir/checkpoints/last.pt`
       resume 用 full checkpoint。
     - `out_dir/last_model.pt`
@@ -248,11 +260,26 @@ class Trainer:
             self.model.load_state_dict(backup, strict=True)
 
     # ------------------------------ loss -------------------------------
-    def _compute_loss(self, x_recon: torch.Tensor, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    def _compute_loss(
+        self,
+        x_recon: torch.Tensor,
+        x: torch.Tensor,
+        visible_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        if self.cfg.loss_region == "masked":
+            loss_mask = ~visible_mask
+            if not bool(torch.any(loss_mask).item()):
+                raise ValueError(
+                    "loss_region='masked' requires at least one masked element, "
+                    "but visible_mask contains no masked elements"
+                )
+        else:
+            loss_mask = torch.ones_like(visible_mask, dtype=torch.bool)
+
         if self.cfg.loss_type == "sse":
-            return masked_sse(x_recon, x, mask, reduction=self.cfg.reduction)
+            return masked_sse(x_recon, x, loss_mask, reduction=self.cfg.reduction)
         if self.cfg.loss_type == "mse":
-            return masked_mse(x_recon, x, mask, reduction=self.cfg.reduction)
+            return masked_mse(x_recon, x, loss_mask, reduction=self.cfg.reduction)
         raise ValueError(f"unknown loss_type: {self.cfg.loss_type}")
 
     # ----------------------------- checkpoint --------------------------
@@ -266,6 +293,7 @@ class Trainer:
             "ema": self.ema.state_dict() if self.ema is not None else None,
             "ema_decay": self.ema.decay if self.ema is not None else None,
             "amp": {"enabled": self.amp, "dtype": self.amp_dtype},
+            "loss_region": self.cfg.loss_region,
             "history": list(self.history),
             "device": self.device.type,
             "selection_rule": "ema_last" if self.ema is not None else "raw_last",
@@ -299,6 +327,20 @@ class Trainer:
             次に開始すべき epoch。たとえば checkpoint が epoch=10 なら 11 を返す。
         """
         state = torch.load(Path(path).as_posix(), map_location=self.device, weights_only=False)
+
+        checkpoint_loss_region = state.get("loss_region", "masked")
+        if checkpoint_loss_region not in {"masked", "all"}:
+            raise ValueError(
+                "checkpoint contains invalid loss_region: "
+                f"{checkpoint_loss_region!r}"
+            )
+        if checkpoint_loss_region != self.cfg.loss_region:
+            raise ValueError(
+                "checkpoint loss_region mismatch: "
+                f"checkpoint={checkpoint_loss_region!r}, "
+                f"current={self.cfg.loss_region!r}"
+            )
+
         self.model.load_state_dict(state["model"], strict=True)
         self.optimizer.load_state_dict(state["optimizer"])
 
@@ -340,7 +382,7 @@ class Trainer:
 
             with self._autocast_ctx():
                 x_recon, _, visible_mask = self.model(x_input)
-                loss = self._compute_loss(x_recon, x, ~visible_mask)
+                loss = self._compute_loss(x_recon, x, visible_mask)
 
             self.optimizer.zero_grad(set_to_none=True)
 
@@ -388,6 +430,10 @@ class Trainer:
         if epochs < 1:
             raise ValueError(f"epochs must be >= 1, got {epochs}")
 
+        model_n_mask = getattr(self.model, "n_mask", None)
+        n_mask = int(model_n_mask) if isinstance(model_n_mask, int) else None
+        print(f"[Trainer] loss_region={self.cfg.loss_region}  n_mask={n_mask}")
+
         start_epoch = 1
         if self.cfg.resume_from is not None:
             if str(self.cfg.resume_from).lower() == "auto":
@@ -419,6 +465,8 @@ class Trainer:
                 "train_loss": train_loss,
                 "lr": lr,
                 "time_sec": time_sec,
+                "loss_region": self.cfg.loss_region,
+                "n_mask": n_mask,
             }
             self._save_history(rec)
 

@@ -6,3 +6,4 @@ build/
 *.whl
 .venv/
 .pytest_cache/
+AGENTS.md

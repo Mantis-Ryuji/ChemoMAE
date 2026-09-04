@@ -27,7 +27,7 @@ ChemoMAE introduces a **Transformer-based Masked Autoencoder (MAE)** specialized
 
 * spectra are divided into contiguous **patches**
 * masking is applied **patch-wise**
-* reconstruction loss is computed only on the **masked spectral regions**
+* training loss can target the **masked spectral regions** (default) or the **full spectrum**
 * the encoder produces latent representations `z` that are naturally compatible with **cosine similarity**
 
 > [!NOTE]
@@ -50,7 +50,7 @@ The current implementation supports:
 
 Fractional shift is controlled by the shift amount in channel-index units, while tangent Gaussian noise is controlled by a geodesic angle range in degrees.
 
-These augmentations are intended as **auxiliary regularization** for masked reconstruction, not as a strong contrastive multi-view augmentation pipeline.
+These augmentations are intended as **auxiliary regularization** for reconstruction training, not as a strong contrastive multi-view augmentation pipeline.
 
 ### 3. Hyperspherical Geometry Toolkit
 
@@ -195,6 +195,7 @@ This provides weak denoising-style regularization while preserving the SNV-compa
 * AMP (Automatic Mixed Precision)
 * EMA (Exponential Moving Average of model weights)
 * optional `SpectraAugmenter`
+* selectable masked-only or full-spectrum reconstruction loss
 * gradient clipping
 * checkpointing / resume
 * JSON logging
@@ -216,6 +217,7 @@ trainer_cfg = TrainerConfig(
     use_ema=True,
     ema_decay=0.999,
     loss_type="mse",
+    loss_region="masked",
     reduction="mean",
     resume_from="auto",
 )
@@ -233,6 +235,8 @@ result = trainer.fit(epochs=500)
 print(result["final_model"])  # "ema_last_model.pt" if EMA is enabled
 ```
 
+`loss_region="masked"` preserves the original masked-only objective. For an ordinary autoencoder objective, construct `ChemoMAE` with `n_mask=0` and set `loss_region="all"` explicitly; this mode computes loss against the full clean target spectrum. `loss_region="masked"` with no masked elements raises `ValueError` instead of producing a silent zero loss.
+
 During training, ChemoMAE produces the following outputs under `out_dir`:
 
 ```text
@@ -244,7 +248,9 @@ runs/
 │           "epoch": 1,
 │           "train_loss": ...,
 │           "lr": ...,
-│           "time_sec": ...
+│           "time_sec": ...,
+│           "loss_region": "masked",
+│           "n_mask": 16
 │         },
 │         ...
 │       ]
@@ -259,7 +265,7 @@ runs/
 └── checkpoints/
      └── last.pt
           ↳ Full checkpoint for resume:
-             model + optimizer + scheduler + scaler + EMA + history
+             model + optimizer + scheduler + scaler + EMA + loss region + history
 ```
 
 ### 6. Evaluation (Tester + Config)
@@ -660,12 +666,13 @@ For example, `Extractor` and `Tester` temporarily set the augmenter to `train()`
 
 `TrainerConfig` and `Trainer` form the **core training engine** of ChemoMAE.
 
-They provide a fixed-budget training loop for **masked reconstruction**, with support for:
+They provide a fixed-budget training loop with an explicit choice between **masked-only** and **full-spectrum** reconstruction loss, with support for:
 
 * AMP (`bf16` / `fp16`)
 * optional TF32
 * EMA parameter tracking
 * optional `SpectraAugmenter`
+* `loss_region="masked"` (default) or `loss_region="all"`
 * gradient clipping
 * checkpointing and resume
 * weights-only export for final model variants
@@ -697,6 +704,7 @@ cfg = TrainerConfig(
     use_ema=True,
     ema_decay=0.999,
     loss_type="mse",
+    loss_region="masked",
     reduction="mean",
     resume_from="auto",
 )
@@ -734,6 +742,8 @@ trainer = Trainer(
 _ = trainer.fit(epochs=epochs)
 ```
 
+For full-spectrum autoencoder training, use `n_mask=0` together with `loss_region="all"`. The loss region is never inferred from `n_mask`.
+
 **Key Features**
 
 * automatic device and precision handling
@@ -758,7 +768,9 @@ runs/
 │           "epoch": 1,
 │           "train_loss": ...,
 │           "lr": ...,
-│           "time_sec": ...
+│           "time_sec": ...,
+│           "loss_region": "masked",
+│           "n_mask": 24
 │         },
 │         ...
 │       ]
@@ -773,12 +785,13 @@ runs/
 └── checkpoints/
      └── last.pt
           ↳ Full checkpoint for resume:
-             model + optimizer + scheduler + scaler + EMA + history
+             model + optimizer + scheduler + scaler + EMA + loss region + history
 ```
 
 **When to Use**
 
 * fixed-budget masked reconstruction pretraining for ChemoMAE
+* full-spectrum autoencoder training with `n_mask=0` and `loss_region="all"`
 * validation-free SSL pretraining
 * training runs where model selection is handled by an explicit final rule, such as EMA-last weights
 

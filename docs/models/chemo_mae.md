@@ -16,7 +16,7 @@ This document describes **ChemoMAE**, a Transformer-based masked autoencoder spe
 Each spectrum of length `L` is divided into **`n_patches` contiguous patches**, and a subset of them is randomly masked at training time.
 
 Only **visible patches** are passed to the Transformer encoder, while the decoder reconstructs the **entire sequence** from the latent embedding.
-The reconstruction loss is computed **only on masked regions**, encouraging the encoder to learn chemically meaningful and context-aware structure.
+The Trainer computes reconstruction loss on masked regions by default, or on the full spectrum when configured with `loss_region="all"`. The model's forward return value is unchanged.
 
 ---
 
@@ -169,6 +169,8 @@ loss = sqerr[~visible].mean()
 loss.backward()
 ```
 
+For full-spectrum autoencoder training, use `n_mask=0` and `TrainerConfig(loss_region="all")`. Loss-region selection belongs to the Trainer rather than `ChemoMAE.forward()`.
+
 ---
 
 ## Downstream Applications
@@ -234,4 +236,5 @@ assert torch.isfinite(loss)
 
 ## Version
 
+* v0.2.1 adds Trainer support for explicit masked or full-spectrum loss; the model API is unchanged.
 * v0.1.6

@@ -2,14 +2,14 @@
 
 > Module: `chemomae.training.trainer`
 
-This document describes the `Trainer` and its configuration (`TrainerConfig`) for ChemoMAE-style masked reconstruction pretraining.  
+This document describes the `Trainer` and its configuration (`TrainerConfig`) for ChemoMAE-style reconstruction pretraining.
 The current Trainer is designed for **fixed epoch / fixed step self-supervised pretraining** and does **not** perform validation-loss-based model selection or early stopping.
 
 ---
 
 ## Overview
 
-The `Trainer` implements a fixed-budget training routine for **masked reconstruction** using ChemoMAE.
+The `Trainer` implements a fixed-budget training routine using ChemoMAE. The reconstruction loss can target masked positions or the full spectrum.
 
 It integrates precision management, exponential moving averages, optional spectral augmentation, checkpoint/resume, and final weights export.
 
@@ -45,19 +45,21 @@ The final model is selected by an explicit rule:
 * **EMA (Exponential Moving Average)** of model parameters
 * **Optional `SpectraAugmenter`** applied during training
 * **Gradient clipping** using global norm
-* **Masked losses** (`masked_mse`, `masked_sse`) consistent with the MAE objective
+* **Selectable loss region** — masked positions (default) or all spectral positions
+* **SSE/MSE losses** with `sum`, `mean`, or `batch_mean` reduction
 * **Batch-wise scheduler stepping**
 * **Checkpointing and resume** — model, optimizer, scheduler, scaler, EMA, and history
 * **Weights-only final export**
 * **JSON-based training history** for reproducibility and visualization
 
-The model must return `(x_recon, z, visible_mask)`, and the Trainer computes loss only on the **masked** tokens:
+The model must return `(x_recon, z, visible_mask)`. `TrainerConfig.loss_region` selects the loss mask:
 
 ```python
-mask = ~visible_mask
+loss_mask = ~visible_mask  # loss_region="masked"
+loss_mask = torch.ones_like(visible_mask, dtype=torch.bool)  # loss_region="all"
 ```
 
-If an augmenter is provided, the model input is augmented, but the reconstruction target remains the **original** input spectrum.
+The default is `loss_region="masked"`, preserving the v0.2.0 behavior. `loss_region="all"` must be explicit and allows `n_mask=0`. If an augmenter is provided, the model input is augmented, but the reconstruction target remains the **original** input spectrum in both modes.
 
 ---
 
@@ -75,6 +77,7 @@ class TrainerConfig:
     use_ema: bool = True
     ema_decay: float = 0.999
     loss_type: str = "mse"         # {"mse", "sse"}
+    loss_region: Literal["masked", "all"] = "masked"
     reduction: str = "mean"        # {"sum", "mean", "batch_mean"}
     resume_from: str | Path | None = "auto"
 ```
@@ -91,7 +94,8 @@ class TrainerConfig:
 | `grad_clip` | `float` or `None` | `1.0` | Gradient norm clipping threshold. `None` disables clipping. |
 | `use_ema` | `bool` | `True` | Tracks an exponential moving average of model weights. |
 | `ema_decay` | `float` | `0.999` | EMA decay rate. Larger values preserve longer history. |
-| `loss_type` | `str` | `"mse"` | Masked reconstruction loss type. Must be `"mse"` or `"sse"`. |
+| `loss_type` | `str` | `"mse"` | Reconstruction loss type. Must be `"mse"` or `"sse"`. |
+| `loss_region` | `Literal["masked", "all"]` | `"masked"` | Positions included in reconstruction loss. `"masked"` uses `~visible_mask`; `"all"` uses every element. |
 | `reduction` | `str` | `"mean"` | Reduction passed to `masked_mse` / `masked_sse`. |
 | `resume_from` | `str`, `Path`, or `None` | `"auto"` | `"auto"` resumes from `{out_dir}/checkpoints/last.pt` if available. `None` always starts a fresh run. |
 
@@ -122,6 +126,7 @@ trainer = Trainer(
 
 * `model` is moved to the resolved device.
 * `augmenter` is optional. If provided, it is moved to the same device as the model.
+* An unsupported `loss_region` raises `ValueError` during `TrainerConfig` construction.
 * `val_loader` is not accepted.
 
 ---
@@ -173,7 +178,7 @@ For each batch:
 1. extracts `x` from the batch,
 2. applies optional augmentation to obtain `x_input`,
 3. forwards `x_input` through the model,
-4. computes masked reconstruction loss against the original `x`,
+4. computes reconstruction loss over the configured region against the original `x`,
 5. runs backward,
 6. applies gradient clipping if configured,
 7. performs `optimizer.step()`,
@@ -218,7 +223,7 @@ If `augmenter` is provided, the training loop uses:
 x = self._to_x(batch)
 x_input = self.augmenter(x)
 x_recon, _, visible_mask = self.model(x_input)
-loss = self._compute_loss(x_recon, x, ~visible_mask)
+loss = self._compute_loss(x_recon, x, visible_mask)
 ```
 
 Thus:
@@ -319,11 +324,14 @@ Example history record:
   "epoch": 12,
   "train_loss": 0.0231,
   "lr": 2.0e-4,
-  "time_sec": 18.7
+  "time_sec": 18.7,
+  "loss_region": "masked",
+  "n_mask": 16
 }
 ```
 
 History updates use atomic temp-file replacement to reduce the risk of corruption.
+At the start of `fit`, the Trainer also prints `loss_region` and the model's `n_mask`, so an `n_mask=0`, `loss_region="all"` run is identifiable in the console log.
 
 ---
 
@@ -341,6 +349,7 @@ It contains:
 * scaler state,
 * EMA state,
 * AMP metadata,
+* loss region,
 * training history,
 * device metadata,
 * final selection rule.
@@ -376,18 +385,25 @@ This is the canonical final export for downstream feature extraction / testing w
 
 ---
 
-## Masked Loss Handling
+## Reconstruction Loss Region Handling
 
-The Trainer computes losses only on masked tokens, using the inverted visibility mask:
+The Trainer builds the boolean mask passed to `masked_mse` or `masked_sse` from `loss_region`:
 
 ```python
-mask = ~visible_mask
+if cfg.loss_region == "masked":
+    loss_mask = ~visible_mask
+elif cfg.loss_region == "all":
+    loss_mask = torch.ones_like(visible_mask, dtype=torch.bool)
 
 if cfg.loss_type == "mse":
-    loss = masked_mse(x_recon, x, mask, reduction=cfg.reduction)
+    loss = masked_mse(x_recon, x, loss_mask, reduction=cfg.reduction)
 elif cfg.loss_type == "sse":
-    loss = masked_sse(x_recon, x, mask, reduction=cfg.reduction)
+    loss = masked_sse(x_recon, x, loss_mask, reduction=cfg.reduction)
 ```
+
+With `reduction="mean"`, the selected elements are averaged. Consequently, `loss_region="all"` with `reduction="mean"` is ordinary full-spectrum MSE over `B * L` elements. `sum` and `batch_mean` keep their existing definitions and only change which elements are selected.
+
+`loss_region="masked"` requires at least one masked element in every processed batch. An all-visible mask, including the mask generated by `n_mask=0`, raises `ValueError` rather than returning a silent zero loss. `loss_region="all"` is valid for any mask count.
 
 | Reduction | Meaning |
 | --- | --- |
@@ -463,6 +479,7 @@ cfg = TrainerConfig(
     use_ema=True,
     ema_decay=0.999,
     loss_type="mse",
+    loss_region="masked",
     reduction="mean",
     resume_from="auto",
 )
@@ -515,6 +532,27 @@ print(result["final_model"])  # "last_model.pt"
 # - runs_raw/last_model.pt
 ```
 
+### Full-spectrum autoencoder training
+
+```python
+model = ChemoMAE(
+    seq_len=256,
+    latent_dim=16,
+    n_patches=32,
+    n_mask=0,
+)
+
+cfg = TrainerConfig(
+    out_dir="runs_autoencoder",
+    loss_type="mse",
+    loss_region="all",
+    reduction="mean",
+    resume_from=None,
+)
+```
+
+This keeps every patch visible to the encoder and computes reconstruction loss over the full clean spectrum. The Trainer does not infer `loss_region="all"` from `n_mask=0`.
+
 ### Resume training automatically
 
 ```python
@@ -538,9 +576,18 @@ trainer.fit(epochs=500)
 If `{out_dir}/checkpoints/last.pt` exists, training resumes from the next epoch.  
 If it does not exist, training starts from epoch 1.
 
+The checkpoint stores `loss_region`. Resume raises `ValueError` if the saved value differs from the current configuration. A v0.2.0 checkpoint without this field is interpreted as `loss_region="masked"` for backward compatibility.
+
 ---
 
-## Version v0.2.0
+## Version v0.2.1
+
+* added explicit `loss_region="masked" | "all"` selection,
+* added full-spectrum loss support for `n_mask=0`,
+* added fail-fast handling for an empty masked loss region,
+* persisted and validated the loss region across history and checkpoint/resume.
+
+### v0.2.0
 
 Updated for the validation-free ChemoMAE Trainer:
 
