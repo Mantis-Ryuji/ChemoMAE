@@ -4,6 +4,8 @@ import gc
 import math
 from typing import Optional, Tuple, List, Union, Dict, Any, Callable
 
+import numpy as np
+from scipy import special
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,86 +13,103 @@ import torch.nn.functional as F
 __all__ = ["VMFMixture", "elbow_vmf", "vmf_logC", "vmf_bessel_ratio"]
 
 
-def _logIv_small(nu: torch.Tensor, k: torch.Tensor) -> torch.Tensor:
-    """Small-κ expansion of log I_ν(κ).
-    I_ν(κ) = (κ/2)^ν / Γ(ν+1) * [1 + κ^2/(4(ν+1)) + κ^4/(32(ν+1)(ν+2)) + ...]
-    We keep up to κ^4 term and compute log safely.
+def _log_bessel_series(nu: np.ndarray, k: np.ndarray) -> np.ndarray:
+    """Log of the positive series after factoring out (k/2)^nu / Gamma(nu+1).
+
+    Used for small k and scaled-Bessel underflow. Log-space summation avoids
+    underflow in high dimensions; the decreasing-term tail bounds truncation.
+    See https://dlmf.nist.gov/10.25.E2.
     """
-    eps = 1e-12
-    t = (k * 0.5).clamp_min(eps)
-    base = nu * torch.log(t) - torch.lgamma(nu + 1.0)
-    a1 = (k * k) / (4.0 * (nu + 1.0))
-    a2 = (k**4) / (32.0 * (nu + 1.0) * (nu + 2.0))
-    series = 1.0 + a1 + a2
-    return base + torch.log(series.clamp_min(eps))
+    log_term = np.zeros_like(k)
+    log_sum = np.zeros_like(k)
+    log_z = 2.0 * (np.log(k) - math.log(2.0))
+    log_eps = math.log(np.finfo(np.float64).eps)
+    for m in range(1, 10_001):
+        log_term += log_z - math.log(m) - np.log(nu + m)
+        log_sum = np.logaddexp(log_sum, log_term)
+        log_next_ratio = log_z - math.log(m + 1) - np.log(nu + m + 1)
+        if np.all(log_next_ratio < 0):
+            log_tail = log_term + log_next_ratio - np.log(-np.expm1(log_next_ratio))
+            if np.all(log_tail - log_sum <= log_eps):
+                return log_sum
+    raise FloatingPointError("Bessel series did not converge within 10000 terms")
 
 
-def _logIv_large(nu: torch.Tensor, k: torch.Tensor) -> torch.Tensor:
-    """Large-κ asymptotic for log I_ν(κ).
-    I_ν(κ) ~ e^κ / sqrt(2πκ) * (1 - (μ-1)/(8κ) + (μ-1)(μ-9)/(2!(8κ)^2) - ...)
-    with μ = 4ν^2.
-    We keep two correction terms inside log for stability.
-    """
-    eps = 1e-12
-    mu = 4.0 * (nu * nu)
-    invk = 1.0 / k.clamp_min(1e-6)
-    c1 = -(mu - 1.0) * 0.125 * invk
-    c2 = (mu - 1.0) * (mu - 9.0) * (invk * invk) / (2.0 * (8.0**2))
-    corr = 1.0 + c1 + c2
-    return k - 0.5 * (torch.log(2.0 * math.pi * k.clamp_min(1e-6))) + torch.log(
-        corr.clamp_min(eps)
+def _bessel_inputs(nu: torch.Tensor, k: torch.Tensor) -> Tuple[np.ndarray, np.ndarray]:
+    """Validate the vMF domain and broadcast in CPU float64."""
+    if not k.is_floating_point() or nu.is_complex():
+        raise ValueError("Bessel inputs must be real, with floating-point kappa")
+    orders, values = np.broadcast_arrays(
+        nu.detach().to(device="cpu", dtype=torch.float64).numpy(),
+        k.detach().to(device="cpu", dtype=torch.float64).numpy(),
     )
-
-
-def _blend(a: torch.Tensor, b: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
-    # smoothstep-like blend: w in [0,1]
-    w = w.clamp(0.0, 1.0)
-    return (1.0 - w) * a + w * b
-
-
-def _logIv_piecewise(nu: torch.Tensor, k: torch.Tensor) -> torch.Tensor:
-    # thresholds: small < K1, large > K2, blend in between
-    K1 = 2.0
-    K2 = 12.0
-    small = _logIv_small(nu, k)
-    large = _logIv_large(nu, k)
-    w = ((k - K1) / (K2 - K1))
-    return torch.where(k <= K1, small, torch.where(k >= K2, large, _blend(small, large, w)))
+    if not np.all(np.isfinite(orders) & (orders >= 0)):
+        raise ValueError("nu must be finite and nonnegative (d >= 2)")
+    if not np.all(np.isfinite(values) & (values >= 0)):
+        raise ValueError("kappa must be finite and nonnegative")
+    return orders, values
 
 
 def vmf_bessel_ratio(nu: torch.Tensor, k: torch.Tensor) -> torch.Tensor:
-    """Approximate R_ν(κ) = I_{ν+1}(κ)/I_ν(κ).
-    - small κ: R ~ κ/(2ν+2) * [1 - κ^2/(2(2ν+2)(2ν+4))]
-    - large κ: R ~ 1 - (2ν+1)/(2κ) + (4ν^2 - 1)/(8κ^2)
-    - mid κ: smooth blend.
+    """Compute I_{nu+1}(k)/I_nu(k), including the exact zero limit.
+
+    SciPy scaled Bessel functions and a convergent-series fallback are evaluated
+    on CPU in float64. The result has k's dtype/device and the broadcast shape.
+    This numerical helper does not build an autograd graph.
     """
-    k_cl = k.clamp_min(1e-6)
-    two_nu = 2.0 * nu
-
-    a = two_nu + 2.0
-    b = two_nu + 4.0
-    R_small = (k_cl / a) * (1.0 - (k_cl * k_cl) / (2.0 * a * b))
-
-    R_large = 1.0 - (two_nu + 1.0) / (2.0 * k_cl) + (4.0 * nu * nu - 1.0) / (
-        8.0 * (k_cl * k_cl)
+    orders, values = _bessel_inputs(nu, k)
+    result = np.zeros_like(values)
+    positive = values > 0
+    v, x = orders[positive], values[positive]
+    denominator = special.ive(v, x)
+    numerator = special.ive(v + 1.0, x)
+    regular = (x > 1.0) & (denominator > np.finfo(np.float64).tiny) & (
+        numerator > np.finfo(np.float64).tiny
     )
-
-    K1 = 2.0
-    K2 = 12.0
-    w = ((k - K1) / (K2 - K1)).clamp(0.0, 1.0)
-    R = torch.where(k <= K1, R_small, torch.where(k >= K2, R_large, _blend(R_small, R_large, w)))
-    return R.clamp(1e-6, 1.0 - 1e-6)
+    ratio = np.empty_like(x)
+    ratio[regular] = numerator[regular] / denominator[regular]
+    fallback = ~regular
+    if np.any(fallback):
+        vf, xf = v[fallback], x[fallback]
+        ratio[fallback] = (xf / (2.0 * (vf + 1.0))) * np.exp(
+            _log_bessel_series(vf + 1.0, xf) - _log_bessel_series(vf, xf)
+        )
+    if not np.all(np.isfinite(ratio)):
+        raise FloatingPointError("Bessel ratio is not finite for the supplied inputs")
+    result[positive] = np.clip(ratio, 0.0, 1.0)
+    return torch.as_tensor(result, dtype=k.dtype, device=k.device)
 
 
 def vmf_logC(d: int, kappa: torch.Tensor) -> torch.Tensor:
-    """Compute log C_d(kappa) with approximated log I_ν.
+    """Compute log C_d(kappa), including the uniform-sphere limit at zero.
     C_d(κ) = κ^ν / [(2π)^{ν+1} I_ν(κ)],   ν = d/2 - 1
-    Returns tensor with the same shape as kappa.
+
+    CPU float64 scaled Bessel evaluation falls back to a convergent positive
+    series for small kappa or underflow. Returns kappa's shape, dtype and device;
+    this numerical helper does not build an autograd graph.
     """
+    if not isinstance(d, int) or isinstance(d, bool) or d < 2:
+        raise ValueError("d must be an integer >= 2")
     nu = 0.5 * float(d) - 1.0
-    nu_t = torch.as_tensor(nu, dtype=kappa.dtype, device=kappa.device)
-    logIv = _logIv_piecewise(nu_t, kappa)
-    return nu_t * torch.log(kappa.clamp_min(1e-12)) - (nu_t + 1.0) * math.log(2.0 * math.pi) - logIv
+    orders, values = _bessel_inputs(torch.tensor(nu, dtype=torch.float64), kappa)
+    uniform = special.gammaln(0.5 * d) - math.log(2.0) - 0.5 * d * math.log(math.pi)
+    result = np.full_like(values, uniform)
+    positive = values > 0
+    x = values[positive]
+    scaled = special.ive(nu, x)
+    regular = (x > 1.0) & (scaled > np.finfo(np.float64).tiny)
+    logc = np.empty_like(x)
+    logc[regular] = (
+        nu * np.log(x[regular]) - (nu + 1.0) * math.log(2.0 * math.pi)
+        - np.log(scaled[regular]) - x[regular]
+    )
+    fallback = ~regular
+    if np.any(fallback):
+        logc[fallback] = uniform - _log_bessel_series(orders[positive][fallback], x[fallback])
+    if not np.all(np.isfinite(logc)):
+        raise FloatingPointError("log C_d is not finite for the supplied inputs")
+    result[positive] = logc
+    return torch.as_tensor(result, dtype=kappa.dtype, device=kappa.device)
 
 
 class VMFMixture(nn.Module):
@@ -124,12 +143,11 @@ class VMFMixture(nn.Module):
       - 方向:   `s_k = Σ_i γ_{ik} x_i`,  `μ_k = s_k / ||s_k||`
       - 集中度: `R̄_k = ||s_k|| / Σ_i γ_{ik}` から近似更新（本実装は closed-form 近似）
 
-    近似（torch-only）
-    -----------------
-    vMF の正規化定数や κ 更新に必要なベッセル関数比を、
-    小 κ / 大 κ の級数・漸近展開を **滑らかに接続**する近似で実装する。
-    - `log I_ν(κ)` の近似（piecewise + blend）
-    - `R_ν(κ)=I_{ν+1}(κ)/I_ν(κ)` の近似（piecewise + blend）
+    数値計算
+    --------
+    正規化定数は CPU float64 の SciPy scaled Bessel 関数で計算する。
+    小 κ または underflow 時は収束する定義級数へ切り替える。
+    log density と尤度の集計も float64 とし、方向・十分統計は指定 dtype を使う。
 
     ストリーミング（chunked E-step）
     -------------------------------
@@ -146,9 +164,10 @@ class VMFMixture(nn.Module):
     device : str | torch.device, default="cuda"
         計算デバイス。chunk を使う場合でも十分統計の集約はこの device 上で行う。
     random_state : int | None, default=42
-        初期化やサンプリングに用いる乱数シード（CPU Generator 固定）。
+        初期化に用いる乱数シード（CPU Generator 固定）。
     tol : float, default=1e-4
-        収束判定閾値（相対改善 `|lb_t-lb_{t-1}|/(|lb_{t-1}|+eps)` が tol 未満で停止）。
+        非負の相対改善が tol 未満、または非負の絶対改善が 1e-6 未満で収束。
+        尤度減少は収束と区別して停止する。
     max_iter : int, default=200
         EM 反復回数の上限。
     init : {"kmeans++", "random"}, default="kmeans++"
@@ -156,9 +175,9 @@ class VMFMixture(nn.Module):
     kappa_init : float, default=10.0
         κ の初期値（全成分共通）。
     kappa_min : float, default=1e-6
-        κ の下限（数値安定のため）。
+        κ の正の下限。ゼロ resultant の成分にも使用する。
     dtype : torch.dtype, default=torch.float32
-        内部計算 dtype。入力が bf16/fp16 でもこの dtype に変換して計算する想定。
+        方向・十分統計の dtype（float32 または float64）。入力はこの dtype に変換する。
 
     Attributes
     ----------
@@ -177,13 +196,17 @@ class VMFMixture(nn.Module):
     n_iter_ : int
         実行された EM 反復回数。
     lower_bound_ : float
-        最終反復の（近似）対数尤度（E-step の `logsumexp` を総和した値）。
+        最終パラメータで再計算した総対数尤度。旧版 checkpoint からの復元時は NaN。
+    converged_ : bool
+        非負の改善が収束基準を満たして停止したか。
+    stop_reason_ : str | None
+        "tol", "likelihood_decreased", "max_iter"、または fit 前・旧版復元時の None。
     _fitted : bool
         学習済みフラグ。
 
     Notes
     -----
-    - **入力は球面前提**：本実装は `X` を `F.normalize(X, dim=1)` して扱う。
+    - **入力は球面前提**：本実装は `X` を行ごとに L2 正規化して扱う。
       したがって、ユーザーが事前正規化していても動作は同じ（再正規化される）。
     - κ 更新は厳密な Newton 解ではなく、`R̄` からの近似式を用いる。
       高次元・高 κ 領域では近似誤差が出る可能性があるため、必要なら κ 更新を差し替える。
@@ -209,12 +232,28 @@ class VMFMixture(nn.Module):
         super().__init__()
         if n_components <= 0:
             raise ValueError("n_components must be positive")
+        if int(n_components) != n_components:
+            raise ValueError("n_components must be an integer")
+        if d is not None and (int(d) != d or d < 2):
+            raise ValueError("d must be an integer >= 2")
+        if int(max_iter) != max_iter or max_iter <= 0:
+            raise ValueError("max_iter must be a positive integer")
+        if not math.isfinite(tol) or tol < 0:
+            raise ValueError("tol must be finite and nonnegative")
+        if dtype not in (torch.float32, torch.float64):
+            raise ValueError("dtype must be torch.float32 or torch.float64")
 
         if init not in ("kmeans++", "random"):
             raise ValueError("init must be 'kmeans++' or 'random'")
 
-        if not (kappa_init > 0):
-            raise ValueError("kappa_init must be > 0")
+        if not math.isfinite(kappa_min) or kappa_min <= 0:
+            raise ValueError("kappa_min must be finite and > 0")
+        if kappa_min < torch.finfo(dtype).tiny * torch.finfo(dtype).eps:
+            raise ValueError("kappa_min must be representable as a positive value in dtype")
+        if not math.isfinite(kappa_init) or kappa_init < kappa_min:
+            raise ValueError("kappa_init must be finite and >= kappa_min")
+        if kappa_init > torch.finfo(dtype).max:
+            raise ValueError("kappa_init must be representable in dtype")
 
         self.K = int(n_components)
         self.d: Optional[int] = int(d) if d is not None else None
@@ -238,6 +277,8 @@ class VMFMixture(nn.Module):
         self._fitted: bool = False
         self.n_iter_: int = 0
         self.lower_bound_: float = float("-inf")
+        self.converged_: bool = False
+        self.stop_reason_: Optional[str] = None
 
         # rng (CPU固定: deviceに依存させない)
         self._g = torch.Generator(device="cpu")
@@ -262,8 +303,8 @@ class VMFMixture(nn.Module):
         if self.logpi.numel() != K or self.logpi.device != dev or self.logpi.dtype != dt:
             self.logpi = torch.zeros(K, device=dev, dtype=dt)
 
-        if self._logC.numel() != K or self._logC.device != dev or self._logC.dtype != dt:
-            self._logC = torch.empty(K, device=dev, dtype=dt)
+        if self._logC.numel() != K or self._logC.device != dev or self._logC.dtype != torch.float64:
+            self._logC = torch.empty(K, device=dev, dtype=torch.float64)
 
     @torch.no_grad()
     def _allocate_buffers(self) -> None:
@@ -273,7 +314,36 @@ class VMFMixture(nn.Module):
     @torch.no_grad()
     def _refresh_logC(self) -> None:
         assert self.d is not None
-        self._logC.copy_(vmf_logC(int(self.d), self.kappas))
+        self._logC.copy_(vmf_logC(int(self.d), self.kappas.to(torch.float64)))
+
+    def _validate_X(self, X: torch.Tensor) -> None:
+        """Validate shape without making a full-size converted copy."""
+        if X.ndim != 2 or X.size(0) == 0 or X.size(1) < 2:
+            raise ValueError(f"X must be nonempty (N, d) with d >= 2, got {tuple(X.shape)}")
+        if self.d is not None and X.size(1) != self.d:
+            raise ValueError(f"X dim mismatch: expected {self.d}, got {X.size(1)}")
+        if X.is_complex():
+            raise ValueError("X must be real")
+
+    def _normalize_block(self, X: torch.Tensor) -> torch.Tensor:
+        """Reject invalid rows and normalize without overflow or epsilon clipping."""
+        xb = X.to(self.device, dtype=self.dtype)
+        if not torch.isfinite(xb).all():
+            raise ValueError("X contains NaN/Inf or overflows the model dtype")
+        scale = xb.abs().amax(dim=1, keepdim=True)
+        if (scale == 0).any():
+            raise ValueError("X contains a zero-norm row in the model dtype")
+        xb = xb / scale
+        return xb / torch.linalg.vector_norm(xb, dim=1, keepdim=True)
+
+    def _logpost(self, xb: torch.Tensor) -> torch.Tensor:
+        """Evaluate component log densities in float64 before cancellation."""
+        dot = (xb @ self.mus.T).to(torch.float64).clamp(-1.0, 1.0)
+        return (
+            dot * self.kappas.to(torch.float64).unsqueeze(0)
+            + self._logC.unsqueeze(0)
+            + self.logpi.to(torch.float64).log_softmax(dim=0).unsqueeze(0)
+        )
 
     # ------------------------- initialization -------------------------
     @torch.no_grad()
@@ -285,8 +355,8 @@ class VMFMixture(nn.Module):
         If ``chunk`` is provided and ``X`` is very large, initialization uses a
         random subset to avoid moving the full dataset to GPU.
         """
-        if X.ndim != 2:
-            raise ValueError(f"X must be 2D, got {tuple(X.shape)}")
+        chunk = self._validate_chunk(chunk)
+        self._validate_X(X)
 
         N, D = int(X.size(0)), int(X.size(1))
         if self.d is None:
@@ -308,7 +378,7 @@ class VMFMixture(nn.Module):
             idx = perm[:m].to(X.device)
             X_src = X.index_select(0, idx)
 
-        Xn = F.normalize(X_src.to(self.device, dtype=self.dtype), dim=1)
+        Xn = self._normalize_block(X_src)
         Nn = int(Xn.size(0))
 
         if self.init == "random":
@@ -325,7 +395,8 @@ class VMFMixture(nn.Module):
             for k in range(1, self.K):
                 probs = dmin.clamp_min(1e-8)
                 probs = probs / probs.sum()
-                idxk = int(torch.multinomial(probs, 1, generator=self._g).item())  # multinomial is device-safe here
+                # Sampling always uses the CPU generator, including CUDA fits.
+                idxk = int(torch.multinomial(probs.cpu(), 1, generator=self._g).item())
                 C[k] = Xn[idxk]
                 d = 1.0 - (Xn @ C[k:k + 1].T).squeeze(1)
                 dmin = torch.minimum(dmin, d)
@@ -357,9 +428,9 @@ class VMFMixture(nn.Module):
     ) -> Tuple[Optional[torch.Tensor], float, torch.Tensor, torch.Tensor]:
         """Chunked E-step (streaming)."""
         chunk = self._validate_chunk(chunk)
+        self._validate_X(X)
         N = int(X.size(0))
         K = self.K
-        logpi = self.logpi.log_softmax(dim=0)  # (K,)
 
         gam = torch.empty(N, K, device=self.device, dtype=self.dtype) if return_gamma else None
         Nk = torch.zeros(K, device=self.device, dtype=self.dtype)
@@ -368,14 +439,10 @@ class VMFMixture(nn.Module):
         lb_total = 0.0
 
         def block(s: int, e: int) -> float:
-            xb = X[s:e].to(self.device, dtype=self.dtype)
-            xb = F.normalize(xb, dim=1)
+            xb = self._normalize_block(X[s:e])
+            logpost = self._logpost(xb)
 
-            dot = xb @ self.mus.T  # (b,K)
-            loglik_components = dot * self.kappas.unsqueeze(0) + self._logC.unsqueeze(0)  # (b,K)
-            logpost = loglik_components + logpi.unsqueeze(0)  # (b,K)
-
-            gb = torch.softmax(logpost, dim=1)  # (b,K)
+            gb = torch.softmax(logpost, dim=1).to(self.dtype)  # (b,K)
             if return_gamma:
                 gam[s:e] = gb
 
@@ -396,21 +463,33 @@ class VMFMixture(nn.Module):
     @torch.no_grad()
     def _m_step_from_stats(self, Nk: torch.Tensor, Sk: torch.Tensor, eps: float = 1e-8) -> None:
         """M-step using sufficient statistics."""
-        Nk = Nk.to(self.device, dtype=self.dtype).clamp_min(eps)
-        Sk = Sk.to(self.device, dtype=self.dtype)
+        # Preserve true zeros and tiny positive masses; epsilon must not turn an
+        # empty component into a maximally concentrated one.
+        Nk = Nk.to(self.device, dtype=torch.float64)
+        Sk = Sk.to(self.device, dtype=torch.float64)
+        if not torch.isfinite(Nk).all() or not torch.isfinite(Sk).all():
+            raise FloatingPointError("Non-finite vMF sufficient statistics")
+        if (Nk < 0).any() or Nk.sum() <= 0:
+            raise ValueError("Component masses must be nonnegative with positive total")
 
         pi = Nk / Nk.sum()
         self.logpi.copy_(torch.log(pi.clamp_min(1e-20)))
 
-        Sk_norm = torch.linalg.vector_norm(Sk, dim=1).clamp_min(eps)  # (K,)
-        mu = Sk / Sk_norm.unsqueeze(1)
-        self.mus.copy_(F.normalize(mu, dim=1))
+        Sk_scale = Sk.abs().amax(dim=1)
+        scaled = Sk / torch.where(Sk_scale > 0, Sk_scale, 1.0).unsqueeze(1)
+        scaled_norm = torch.linalg.vector_norm(scaled, dim=1)
+        Sk_norm = Sk_scale * scaled_norm
+        occupied = Nk > 0
+        directed = occupied & (Sk_scale > 0)
+        self.mus[directed] = (scaled[directed] / scaled_norm[directed, None]).to(self.dtype)
 
-        # kappa update
-        Rbar = (Sk_norm / Nk).clamp(1e-6, 1.0 - 1e-6)
+        # Keep the existing closed-form approximation and upper resultant guard.
+        Rbar = (Sk_norm[occupied] / Nk[occupied]).clamp(0.0, 1.0 - 1e-6)
         Df = float(self.d)
-        kappa = (Rbar * (Df - Rbar**2)) / (1.0 - Rbar**2 + 1e-8)
-        self.kappas.copy_(kappa.clamp_min(self.kappa_min))
+        kappa = (Rbar * (Df - Rbar**2)) / (1.0 - Rbar**2 + eps)
+        self.kappas[occupied] = kappa.clamp_min(self.kappa_min).to(self.dtype)
+        # Zero resultant: keep the previous unit direction, kappa = kappa_min.
+        # Zero mass: keep both direction and concentration; retain the weight floor.
         self._refresh_logC()
 
     # ------------------------- Public API -------------------------
@@ -423,8 +502,8 @@ class VMFMixture(nn.Module):
         ----------
         X : torch.Tensor, shape (N, d)
             入力特徴行列。`N` はサンプル数、`d` は特徴次元。
-            NaN/Inf を含んではならない。内部で `F.normalize(X, dim=1)` を適用するため、
-            入力はゼロベクトルを含まないことが望ましい。
+            NaN/Inf を含んではならない。内部で行ごとに L2 正規化する。
+            空データ・ゼロベクトルは ValueError とする。
         chunk : int | None, default=None
             E-step のチャンクサイズ。None の場合は全量を一括処理。
             int の場合は `X` を `chunk` 行ごとに device に転送して責務を計算し、
@@ -440,30 +519,37 @@ class VMFMixture(nn.Module):
         - `d` が None の場合は `X.shape[1]` で自動決定し、以後固定される。
         - 収束判定は lower bound（E-step での `logsumexp` 総和）の改善に基づく。
         """
-        if X.ndim != 2:
-            raise ValueError(f"X must be 2D, got {tuple(X.shape)}")
-        if not torch.isfinite(X).all():
-            raise ValueError("X contains NaN/Inf")
-
+        chunk = self._validate_chunk(chunk)
+        self._validate_X(X)
+        self._fitted = False
+        self.n_iter_ = 0
+        self.lower_bound_ = -float("inf")
+        self.converged_ = False
+        self.stop_reason_ = None
         self._init_params(X, chunk=chunk)
-
-        prev: Optional[float] = None
-        last_lb: float = -float("inf")
+        _, lb, Nk, Sk = self._e_step_chunk(X, chunk, return_gamma=False)
+        if not math.isfinite(lb):
+            raise FloatingPointError("Non-finite initial vMF log-likelihood")
 
         for t in range(self.max_iter):
-            _, lb, Nk, Sk = self._e_step_chunk(X, chunk, return_gamma=False)
             self._m_step_from_stats(Nk, Sk)
-
+            _, updated_lb, Nk, Sk = self._e_step_chunk(X, chunk, return_gamma=False)
+            if not math.isfinite(updated_lb):
+                raise FloatingPointError("Non-finite vMF log-likelihood after M-step")
             self.n_iter_ = t + 1
-            last_lb = float(lb)
+            self.lower_bound_ = updated_lb
+            improvement = updated_lb - lb
+            if improvement < 0:
+                self.stop_reason_ = "likelihood_decreased"
+                break
+            if improvement / (abs(lb) + 1e-12) < self.tol or improvement < 1e-6:
+                self.converged_ = True
+                self.stop_reason_ = "tol"
+                break
+            lb = updated_lb
+        else:
+            self.stop_reason_ = "max_iter"
 
-            if prev is not None:
-                rel = abs(last_lb - prev) / (abs(prev) + 1e-12)
-                if (rel < self.tol) or (abs(last_lb - prev) < 1e-6):
-                    break
-            prev = last_lb
-
-        self.lower_bound_ = float(last_lb)
         self._fitted = True
         return self
 
@@ -476,7 +562,7 @@ class VMFMixture(nn.Module):
         ----------
         X : torch.Tensor, shape (N, d)
             入力特徴。`fit()` と同じ次元 d が必要。
-            内部で `F.normalize(X, dim=1)` を適用する。
+            内部で行ごとに L2 正規化する。
         chunk : int | None, default=None
             E-step と同様のチャンク処理。大規模 `X` に対して VRAM を節約できる。
 
@@ -541,32 +627,28 @@ class VMFMixture(nn.Module):
         Notes
         -----
         - `logpi` は `log_softmax` を通した混合比として扱う（数値安定）。
-        - 内部で `_logC` を用いる（ベッセル近似の影響を受ける）。
+        - 内部で float64 の `_logC` を用いる。
         """
         if not self._fitted:
             raise RuntimeError("Model not fitted")
 
         chunk = self._validate_chunk(chunk)
+        self._validate_X(X)
         N = int(X.size(0))
-        logpi = self.logpi.log_softmax(dim=0).unsqueeze(0)  # (1,K)
 
-        def block(s: int, e: int) -> torch.Tensor:
-            xb = X[s:e].to(self.device, dtype=self.dtype)
-            xb = F.normalize(xb, dim=1)
-            dot = xb @ self.mus.T
-            loglik_components = dot * self.kappas.unsqueeze(0) + self._logC.unsqueeze(0)
-            return torch.logsumexp(loglik_components + logpi, dim=1).sum()
+        def block(s: int, e: int) -> float:
+            xb = self._normalize_block(X[s:e])
+            return float(torch.logsumexp(self._logpost(xb), dim=1).sum().item())
 
         if chunk is None or N <= chunk:
             total = block(0, N)
         else:
-            total = torch.tensor(0.0, device=self.device, dtype=self.dtype)
+            total = 0.0
             for s in range(0, N, chunk):
                 e = min(s + chunk, N)
                 total = total + block(s, e)
 
-        total_val = float(total.item())
-        return (total_val / N) if average else total_val
+        return (total / N) if average else total
 
     @torch.inference_mode()
     def num_params(self) -> int:
@@ -594,8 +676,7 @@ class VMFMixture(nn.Module):
 
         Notes
         -----
-        - パラメータ数 `p` は簡易的に `K*d + (K-1)` を用いる（本実装の `num_params()`）。
-        厳密には κ の自由度や制約（||μ||=1）を考慮した有効自由度の定義もあり得る。
+        - `p = K*d + (K-1)` は方向の K*(d-1)、集中度の K、混合比の K-1 を数える。
         """
         if self.d is None:
             raise RuntimeError("Model not fitted (d is None)")
@@ -617,7 +698,7 @@ class VMFMixture(nn.Module):
             次を含む辞書（CPU tensor とメタ情報）:
             - K, d, device, dtype
             - mus, kappas, logpi, _logC （すべて CPU clone）
-            - n_iter_, lower_bound_, _fitted
+            - numerics_version, n_iter_, lower_bound_, converged_, stop_reason_, _fitted
             - random_state, rng_state
             - tol, max_iter, init, kappa_init, kappa_min
 
@@ -627,6 +708,7 @@ class VMFMixture(nn.Module):
         - 返り値は `torch.save()` でそのまま保存可能。
         """
         return {
+            "numerics_version": 2,
             "K": self.K,
             "d": int(self.d) if self.d is not None else None,
             "device": str(self.device),
@@ -637,6 +719,8 @@ class VMFMixture(nn.Module):
             "_logC": self._logC.detach().clone().cpu(),
             "n_iter_": self.n_iter_,
             "lower_bound_": self.lower_bound_,
+            "converged_": self.converged_,
+            "stop_reason_": self.stop_reason_,
             "_fitted": self._fitted,
             "random_state": self.random_state,
             "rng_state": self._g.get_state(),
@@ -674,7 +758,7 @@ class VMFMixture(nn.Module):
         path : str
             `save()` で保存したファイルパス。
         map_location : str | torch.device | None, default=None
-            `torch.load` の `map_location`。CPU でロードしたい場合は "cpu" を指定。
+            復元後の計算 device。None なら保存時の device。CPU 復元は "cpu" を指定。
 
         Returns
         -------
@@ -688,13 +772,16 @@ class VMFMixture(nn.Module):
 
         Notes
         -----
-        - `device` と `dtype` は保存データの値を優先する（ただし map_location により tensor の実体は変わり得る）。
+        - 明示的な map_location を保存 device より優先し、dtype は保存値を使う。
+        - `_logC` は現行の数値計算で再構築する。旧版の尤度・収束情報は再利用しない。
         - `rng_state` が保存されていれば CPU Generator の状態も復元する。
         """
-        sd = torch.load(path, map_location=map_location)
+        # The serialized tensors and generator state are CPU data. Move only
+        # model buffers to the requested computation device after deserialization.
+        sd = torch.load(path, map_location="cpu", weights_only=True)
         K = int(sd["K"])
         d = sd["d"]
-        device = sd.get("device", "cpu")
+        device = map_location if map_location is not None else sd.get("device", "cpu")
         dtype_str = sd.get("dtype", "float32")
         dtype = getattr(torch, dtype_str, torch.float32)
 
@@ -718,15 +805,27 @@ class VMFMixture(nn.Module):
         obj.mus.copy_(sd["mus"].to(obj.device, dtype=obj.dtype))
         obj.kappas.copy_(sd["kappas"].to(obj.device, dtype=obj.dtype))
         obj.logpi.copy_(sd["logpi"].to(obj.device, dtype=obj.dtype))
-        obj._logC.copy_(sd["_logC"].to(obj.device, dtype=obj.dtype))
+        norms = torch.linalg.vector_norm(obj.mus.to(torch.float64), dim=1)
+        if not torch.isfinite(obj.mus).all() or not torch.allclose(
+            norms, torch.ones_like(norms), rtol=1e-5, atol=1e-5
+        ):
+            raise ValueError("Saved vMF directions must be finite unit vectors; refit invalid models")
+        if not torch.isfinite(obj.kappas).all() or (obj.kappas < obj.kappa_min).any():
+            raise ValueError("Saved vMF concentrations must be finite and >= kappa_min")
+        if not torch.isfinite(obj.logpi).all():
+            raise ValueError("Saved vMF log weights must be finite")
+        obj._refresh_logC()
         obj._nu = 0.5 * float(obj.d) - 1.0
         obj.n_iter_ = int(sd.get("n_iter_", 0))
-        obj.lower_bound_ = float(sd.get("lower_bound_", float("-inf")))
+        current_numerics = sd.get("numerics_version") == 2
+        obj.lower_bound_ = float(sd.get("lower_bound_", float("nan"))) if current_numerics else float("nan")
+        obj.converged_ = bool(sd.get("converged_", False)) if current_numerics else False
+        obj.stop_reason_ = sd.get("stop_reason_", None) if current_numerics else None
         obj._fitted = bool(sd.get("_fitted", True))
 
         rng_state = sd.get("rng_state", None)
         if rng_state is not None:
-            obj._g.set_state(rng_state)
+            obj._g.set_state(rng_state.cpu())
         return obj
 
 

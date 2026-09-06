@@ -938,6 +938,14 @@ labels = ckm.predict(X)
 
 `VMFMixture` fits a **von Mises–Fisher mixture model** on the unit hypersphere.
 
+In **v0.2.2**, vMF uses CPU float64 scaled Bessel calculations with an underflow-safe
+series fallback, fixes CUDA k-means++ seeding and CPU checkpoint restoration, and
+keeps valid unit directions for degenerate components. `lower_bound_` describes the
+final model; `converged_` and `stop_reason_` distinguish tolerance, likelihood decrease
+and iteration limit. The concentration update remains approximate. See the
+[vMF documentation](docs/clustering/vmf_mixture.md) for precision, persistence and
+regression-test details.
+
 ```python
 import torch
 from chemomae.clustering import VMFMixture, elbow_vmf
