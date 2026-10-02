@@ -84,398 +84,77 @@ your chosen environment instead:
 pip install -e .
 ```
 
-The [real-data notebook](notebooks/nir_hsi_tutorial.ipynb) installs GitHub source;
-its matching source and notebook must be published and pinned before release use.
-
 ---
 
 ## ChemoMAE Example
 
-The real-data tutorial uses the SWIR reflectance hyperspectral images from
-[Minerals in the Wild](https://github.com/EleftheriaTtl/minerals-in-the-wild),
-with specimen-level splits, 273-to-256 wavelength interpolation before per-pixel SNV,
-representation learning, fixed-center clustering, and spatial LLA:
+The [step-by-step workflow tutorial](docs/tutorials/workflow.md) explains
+preprocessing, augmentation, epoch resume, clean evaluation, representations,
+streaming extraction, clustering, spatial maps, LLA, and saved artifacts. It uses
+small synthetic inputs. Settings illustrate API usage and are not a scientific
+benchmark protocol.
 
-- [English notebook](notebooks/nir_hsi_tutorial.ipynb)
-- [Data and experimental protocol](docs/tutorials/nir_hsi.md)
-- [API documentation index](docs/README.md)
-
-The separate specimen-level XRF elemental-composition table is not used in this
-tutorial; SNV applies to the image spectra.
-
-The notebook is a development draft. Fresh-Colab execution, direct data downloads,
-release-ref pinning, and publication are pending. The **Open in Colab** badge will
-be activated once the notebook is available at its documented GitHub ref.
-
-<details>
-<summary><b>Example</b></summary>
-
-### 1. SNV Preprocessing
-
-Import `SNVScaler`.
-
-SNV centers each nonconstant spectrum and scales it by its sample standard
-deviation plus `eps`. When `eps` is negligible relative to that deviation,
-variance is approximately one and the L2 norm is approximately:
-
-$$
-\lVert x_{\mathrm{snv}} \rVert_2 \approx \sqrt{L - 1}
-$$
-
-For example, for 256-dimensional spectra,
-
-$$
-\lVert x_{\mathrm{snv}} \rVert_2 \approx \sqrt{255} \approx 15.97
-$$
-
-Constant spectra become zero vectors; the exact norm includes the factor
-$s/(s+\varepsilon)$. See the [SNV numerical contract](docs/preprocessing/snv.md).
+This compact CPU example defines all inputs and reloads the selected inference
+artifact before extracting features:
 
 ```python
-from chemomae.preprocessing import SNVScaler
+import tempfile
+from pathlib import Path
 
-# X_*: reflectance data (np.ndarray)
-# Expected shape: (N, 256)
-preprocessed = []
-for X in [X_train, X_val, X_test]:
-    sc = SNVScaler()
-    X_snv = sc.transform(X)
-    preprocessed.append(X_snv)
-
-X_train_snv, X_val_snv, X_test_snv = preprocessed
-```
-
-### 2. Dataset and DataLoader Preparation
-
-Convert NumPy arrays into PyTorch tensors and build DataLoaders.
-
-```python
-from chemomae.utils import set_global_seed
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-set_global_seed(42)
-
-train_ds = TensorDataset(torch.as_tensor(X_train_snv, dtype=torch.float32))
-val_ds   = TensorDataset(torch.as_tensor(X_val_snv,   dtype=torch.float32))
-test_ds  = TensorDataset(torch.as_tensor(X_test_snv,  dtype=torch.float32))
-
-train_loader = DataLoader(train_ds, batch_size=1024, shuffle=True,  drop_last=False)
-val_loader   = DataLoader(val_ds,   batch_size=1024, shuffle=False, drop_last=False)
-test_loader  = DataLoader(test_ds,  batch_size=1024, shuffle=False, drop_last=False)
-```
-
-### 3. Model, Optimizer, and Scheduler Setup
-
-Define ChemoMAE and a standard optimization pipeline.
-
-```python
+from chemomae.preprocessing import snv
 from chemomae.models import ChemoMAE
-from chemomae.training import build_optimizer, build_scheduler
+from chemomae.training import Trainer, TrainerConfig, Extractor, ExtractorConfig
+from chemomae.clustering import CosineKMeans
 
-device = torch.device("cpu")  # CUDA is an explicit choice.
+torch.manual_seed(42)
+data_stream = torch.Generator().manual_seed(7)
+spectra = snv(torch.randn(80, 64, generator=data_stream))
+train_x, test_x = spectra[:64], spectra[64:]
+
+def loader(x: torch.Tensor) -> DataLoader:
+    return DataLoader(TensorDataset(x), batch_size=16, shuffle=False)
+
+device = torch.device("cpu")
+run_dir = Path(tempfile.mkdtemp(prefix="chemomae-"))
 model = ChemoMAE(
-    seq_len=256,
-    d_model=256,
-    nhead=4,
-    num_layers=4,
-    dim_feedforward=1024,
-    dropout=0.1,
-    latent_dim=16,
-    latent_normalize=True,
-    decoder_num_layers=2,
-    n_patches=32,
-    n_mask=16,
+    seq_len=64, n_patches=8, n_mask=4, d_model=16,
+    nhead=4, num_layers=1, latent_dim=8,
 ).to(device)
-
-opt = build_optimizer(
-    model,
-    lr=1.0e-3,
-    weight_decay=0.05,
-    betas=(0.9, 0.95),
-)
-
-sched = build_scheduler(
-    opt,
-    steps_per_epoch=max(1, len(train_loader)),
-    epochs=500,
-    warmup_epochs=10,
-    min_lr_scale=0.1,
-)
-```
-
-### 4. Optional Spectral Augmentation
-
-Define a hypersphere-aware augmenter for SNV-normalized spectra.
-
-```python
-from chemomae.training import SpectraAugmenter, SpectraAugmenterConfig
-
-aug_cfg = SpectraAugmenterConfig(
-    shift_prob=0.5,
-    shift_delta_range=(-2.0, 2.0),
-    noise_prob=0.5,
-    noise_angle_deg_range=(0.5, 3.0),
-    shuffle_order_per_batch=True,
-    recenter_after_each_op=True,
-    renorm_to_input_norm=True,
-)
-
-augmenter = SpectraAugmenter(aug_cfg)
-```
-
-The model input is augmented, but the reconstruction target remains the **original** spectrum.
-
-This provides weak denoising-style regularization while preserving the SNV-compatible geometry of the input spectra.
-
-### 5. Training Setup (Trainer + Config)
-
-`Trainer` orchestrates the fixed-budget self-supervised training loop with:
-
-* AMP (Automatic Mixed Precision)
-* EMA (Exponential Moving Average of model weights)
-* optional `SpectraAugmenter`
-* selectable masked-only or full-spectrum reconstruction loss
-* gradient clipping
-* checkpointing / resume
-* JSON logging
-* final weights export
-
-ChemoMAE does **not** use validation-loss-based early stopping or best-checkpoint selection.
-`fit(epochs=...)` uses an absolute epoch budget, including completed epochs on
-resume. A direct step-budget API remains pending. Select the final raw or EMA
-export explicitly before downstream inference.
-
-```python
-from chemomae.training import TrainerConfig, Trainer
-
-trainer_cfg = TrainerConfig(
-    out_dir="runs",
-    device=str(device),
-    amp=False,
-    amp_dtype="bf16",
-    enable_tf32=False,
-    grad_clip=1.0,
-    use_ema=True,
-    ema_decay=0.999,
-    loss_type="mse",
-    loss_region="masked",
-    reduction="mean",
-    resume_from=None,  # Use a fresh output directory; explicit resume is separate.
-)
-
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
 trainer = Trainer(
-    model,
-    opt,
-    train_loader,
-    scheduler=sched,
-    augmenter=augmenter,
-    cfg=trainer_cfg,
+    model, optimizer, loader(train_x),
+    cfg=TrainerConfig(
+        out_dir=run_dir, device=device, resume_from=None, use_ema=False,
+        progress=False, verbose=False,
+    ),
 )
+trainer.fit(epochs=2)
 
-result = trainer.fit(epochs=500)
-print(result["final_model"])  # "ema_last_model.pt" if EMA is enabled
-model.load_state_dict(torch.load(
-    "runs/" + result["final_model"], map_location=device, weights_only=True,
-))
-model.eval()
-```
-
-Trainer exposes `PreparedBatch`, batch/step/epoch hooks, and checkpoint extension
-hooks for caller-owned masks, augmentation, ordering, LR timing, and RNG state.
-The [customization guide](docs/training/trainer.md) shows these APIs and a plain
-PyTorch alternative. Scheduler and EMA advance after successful optimizer updates;
-history records attempted steps, updates, and AMP skips separately.
-
-`loss_region="masked"` preserves the original masked-only objective. For an ordinary autoencoder objective, construct `ChemoMAE` with `n_mask=0` and set `loss_region="all"` explicitly; this mode computes loss against the full clean target spectrum. `loss_region="masked"` with no masked elements raises `ValueError` instead of producing a silent zero loss.
-
-During training, ChemoMAE produces the following outputs under `out_dir`:
-
-```text
-runs/
-├── training_history.json
-│    ↳ Per-epoch records:
-│       [
-│         {
-│           "epoch": 1,
-│           "train_loss": ...,
-│           "lr": ...,
-│           "time_sec": ...,
-│           "loss_region": "masked",
-│           "n_mask": 16
-│         },
-│         ...
-│       ]
-│
-├── last_model.pt
-│    ↳ Final raw model weights at the end of training
-│
-├── ema_last_model.pt
-│    ↳ Final EMA weights at the end of training
-│       (saved only when EMA is enabled)
-│
-└── checkpoints/
-     └── last.pt
-          ↳ Full checkpoint for resume:
-             model + optimizer + scheduler + scaler + EMA + loss region + history
-```
-
-### 6. Evaluation (Tester + Config)
-
-The `Tester` evaluates masked or full-spectrum reconstruction loss on a dataset.
-
-It supports:
-
-* explicit masked or full-spectrum reconstruction loss
-* AMP (`bf16` / `fp16`)
-* optional fixed visible masks
-* optional `SpectraAugmenter`
-* JSON logging to a test-history file
-
-```python
-from chemomae.training import TesterConfig, Tester
-
-tester_cfg = TesterConfig(
-    out_dir="runs",
-    device=str(device),
-    amp=False,
-    amp_dtype="bf16",
-    loss_type="mse",
-    loss_region="masked",
-    reduction="mean",
-    fixed_visible=None,
-    log_history=True,
-    history_filename="test_history.json",
-)
-
-tester = Tester(
-    model,
-    tester_cfg,
-    augmenter=None,
-)
-
-test_loss = tester(test_loader)
-print(f"Test Loss: {test_loss:.6f}")
-```
-
-When `augmenter` is provided, the Tester applies augmentation to the model input while keeping the reconstruction target as the original spectrum:
-
-```python
-tester = Tester(
-    model,
-    tester_cfg,
-    augmenter=augmenter,
-)
-```
-
-This evaluates reconstruction robustness under input perturbations. 
-
-### 7. Latent Extraction (Extractor + Config)
-
-Extract latent embeddings from a trained ChemoMAE using **all-visible encoding**.
-
-By default, `Extractor` does not use ChemoMAE masking. It directly calls the encoder with an all-visible mask, so the full spectrum is used for latent feature extraction.
-
-```python
-from chemomae.training import ExtractorConfig, Extractor
-
-extractor_cfg = ExtractorConfig(
-    device=str(device),
-    amp=False,
-    amp_dtype="bf16",
-    save_path=None,
-    representation="normalized_latent",
-    output_type="tensor",
-    output_device="cpu",
-)
-
+inference_model = ChemoMAE.load(run_dir / "last_model.artifact.pt", device=device)
 extractor = Extractor(
-    model,
-    extractor_cfg,
-    augmenter=None,
+    inference_model,
+    ExtractorConfig(representation="normalized_latent", output_device="cpu"),
 )
+train_features = extractor(loader(train_x))
+test_features = extractor(loader(test_x))
 
-latent_train = extractor(train_loader)
-latent_test = extractor(test_loader)
+clusterer = CosineKMeans(n_components=3, max_iter=30, device=device, random_state=42)
+clusterer.fit(train_features)
+test_labels = clusterer.predict(test_features)
+clusterer.save_centroids(run_dir / "clusters.pt")
+print(test_labels, clusterer.converged_, clusterer.stop_reason_)
 ```
 
-When `augmenter` is provided, the Extractor applies augmentation before encoder inference:
+For custom masks, batch ordering, schedules, and caller-owned RNG state, use
+the [public Trainer hooks or plain PyTorch loop](docs/training/trainer.md).
+[Model persistence](docs/models/persistence.md) explains inference artifacts and
+training checkpoints. [API documentation](docs/README.md) covers the full library.
 
-```python id="lodtvq"
-extractor = Extractor(
-    model,
-    extractor_cfg,
-    augmenter=augmenter,
-)
-
-latent_test_aug = extractor(test_loader)
-```
-
-Without an augmenter, latent extraction is deterministic with respect to ChemoMAE masking because all positions are treated as visible. With an augmenter, extracted embeddings may vary due to stochastic spectral shift/noise augmentation.
-
-### 8. Clustering with Cosine K-Means
-
-Choose K and fit centers using clean training features, then predict held-out
-features with those centers fixed. Use the nonaugmented extractor above for this
-path. The K sweep is optional and can be expensive; the real-data notebook uses
-a declared K instead.
-
-```python
-from chemomae.clustering import CosineKMeans, elbow_ckmeans
-
-k_list, inertias, K, idx, kappa = elbow_ckmeans(
-    CosineKMeans,
-    latent_train,
-    device=device,
-    k_max=50,
-    chunk=5_000_000,
-    random_state=42,
-)
-
-ckm = CosineKMeans(
-    n_components=K,
-    tol=1e-4,
-    max_iter=500,
-    device=device,
-    random_state=42,
-)
-
-ckm.fit(latent_train, chunk=5_000_000)
-ckm.save_centroids("runs/ckm.pt")
-labels = ckm.predict(latent_test, chunk=5_000_000)
-```
-
-### 9. Clustering with vMF Mixture
-
-Probabilistic hyperspherical clustering.
-
-```python
-from chemomae.clustering import VMFMixture, elbow_vmf
-
-k_list, scores, K, idx, kappa = elbow_vmf(
-    VMFMixture,
-    latent_train,
-    device=device,
-    k_max=50,
-    chunk=5_000_000,
-    random_state=42,
-    criterion="bic",
-)
-
-vmf = VMFMixture(
-    n_components=K,
-    tol=1e-4,
-    max_iter=500,
-    device=device,
-    random_state=42,
-)
-
-vmf.fit(latent_train, chunk=5_000_000)
-vmf.save("runs/vmf.pt")
-labels = vmf.predict(latent_test, chunk=5_000_000)
-```
-
-</details>
+Examples and focused regression tests are written; execution and release
+validation remain pending.
 
 ---
 
@@ -760,6 +439,10 @@ ChemoMAE does **not** use validation-loss-based early stopping or best-checkpoin
 successful optimizer updates; the Trainer does not provide a direct step budget.
 Select and reload the final raw or EMA export before downstream inference.
 
+The following feature snippet assumes the caller supplies `train_loader` with
+spectra of length 256. The complete synthetic workflow appears above and in the
+linked tutorial.
+
 ```python
 from chemomae.models import ChemoMAE
 from chemomae.training import (
@@ -838,7 +521,9 @@ For full-spectrum autoencoder training, use `n_mask=0` together with `loss_regio
 * EMA-consistent final export behavior:
   * final raw weights → `last_model.pt`
   * final EMA weights → `ema_last_model.pt` if EMA is enabled
-* `checkpoints/last.pt` stores the full resumable training state
+  * config-and-weights bundles → `last_model.artifact.pt` and `ema_last_model.artifact.pt`
+* `checkpoints/last.pt` stores versioned training state and standard global RNG
+* independently configurable history/checkpoint/export paths and progress/summary controls
 * optional train-time spectral augmentation
 * scheduler stepping after successful optimizer updates
 * public preparation/event/checkpoint hooks and separate update/skip counters
@@ -864,16 +549,25 @@ runs/
 │
 ├── last_model.pt
 │    ↳ Final raw model weights at the end of training
+├── last_model.artifact.pt
+│    ↳ Full constructor configuration and selected raw weights
 │
 ├── ema_last_model.pt
 │    ↳ Final EMA weights at the end of training
 │       (saved only when EMA is enabled)
+├── ema_last_model.artifact.pt
+│    ↳ Full constructor configuration and selected EMA weights
 │
 └── checkpoints/
      └── last.pt
           ↳ Full checkpoint for resume:
-             model + optimizer + scheduler + scaler + EMA + loss region + history
+             config + model + optimizer + scheduler + scaler + EMA
+             + loss policy + history + progress + global RNG + extension state
 ```
+
+These are the default paths. Each output can be relocated or disabled through
+`TrainerConfig`; setting `model_artifacts=False` disables the inference bundles.
+See the [artifact guide](docs/models/persistence.md) for loading and resume rules.
 
 **When to Use**
 

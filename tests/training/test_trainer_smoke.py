@@ -537,6 +537,148 @@ def test_public_hooks_cover_preparation_order_events_and_namespaced_resume(tmp_p
     ]
 
 
+def _stochastic_trainer(directory: Path, *, resume_from: Path | None = None, nhead: int = 2) -> Trainer:
+    model = ChemoMAE(
+        seq_len=16, n_patches=4, n_mask=2, d_model=8, nhead=nhead,
+        num_layers=1, dropout=0.25, latent_dim=4,
+    )
+    spectra = torch.arange(128, dtype=torch.float32).reshape(8, 16) / 128
+    loader = DataLoader(TensorDataset(spectra), batch_size=4, shuffle=True, num_workers=0)
+    return Trainer(
+        model, torch.optim.AdamW(model.parameters(), lr=1e-3), loader,
+        cfg=TrainerConfig(
+            out_dir=directory, device="cpu", resume_from=resume_from,
+            use_ema=True, ema_decay=0.9, progress=False, verbose=False,
+        ),
+    )
+
+
+def test_global_rng_resume_matches_uninterrupted_mask_dropout_and_shuffle(tmp_path: Path) -> None:
+    from chemomae.utils import capture_rng_state, restore_rng_state
+
+    original = capture_rng_state()
+    try:
+        torch.manual_seed(123)
+        reference = _stochastic_trainer(tmp_path / "reference")
+        expected_result = reference.fit(epochs=2)
+        expected_rng = torch.get_rng_state().clone()
+        torch.manual_seed(123)
+        partial = _stochastic_trainer(tmp_path / "resumed")
+        partial.fit(epochs=1)
+        checkpoint = partial.ckpt_dir / "last.pt"
+        torch.randn(17)
+        resumed = _stochastic_trainer(tmp_path / "resumed", resume_from=checkpoint)
+        assert resumed.fit(epochs=2) == expected_result
+        assert torch.equal(torch.get_rng_state(), expected_rng)
+        for name, value in reference.model.state_dict().items():
+            torch.testing.assert_close(value, resumed.model.state_dict()[name], rtol=0, atol=0)
+        for name, value in reference.ema.shadow.items():
+            torch.testing.assert_close(value, resumed.ema.shadow[name], rtol=0, atol=0)
+    finally:
+        restore_rng_state(original, restore_cuda=False)
+
+
+def test_resume_rejects_changed_head_count_before_loading_weights(tmp_path: Path) -> None:
+    source = _stochastic_trainer(tmp_path / "source", nhead=2)
+    source.save_checkpoint(epoch=0)
+    target = _stochastic_trainer(tmp_path / "target", nhead=1)
+    original = {name: value.clone() for name, value in target.model.state_dict().items()}
+    with pytest.raises(ValueError, match="configuration mismatch"):
+        target.load_checkpoint(source.ckpt_dir / "last.pt")
+    for name, value in original.items():
+        torch.testing.assert_close(target.model.state_dict()[name], value, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("corruption", ["schema", "missing_optimizer", "rng", "ema"])
+def test_checkpoint_schema_and_required_states_are_validated(tmp_path: Path, corruption: str) -> None:
+    source = _stochastic_trainer(tmp_path / "source")
+    source.save_checkpoint(epoch=0)
+    path = source.ckpt_dir / "last.pt"
+    state = torch.load(path, map_location="cpu", weights_only=False)
+    if corruption == "schema":
+        state["format_version"] = 99
+    elif corruption == "missing_optimizer":
+        del state["optimizer"]
+    elif corruption == "rng":
+        state["rng_state"]["torch_cpu"] = torch.zeros(3, dtype=torch.uint8)
+    else:
+        state["ema"]["shadow"] = {}
+    torch.save(state, path)
+    target = _stochastic_trainer(tmp_path / "target")
+    with pytest.raises(ValueError):
+        target.load_checkpoint(path)
+
+
+def test_outputs_and_logging_can_be_disabled(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    model = _PreparedEchoModel()
+    directory = tmp_path / "no_files"
+    trainer = Trainer(
+        model, torch.optim.SGD(model.parameters(), lr=0.1), [torch.ones(2, 4)],
+        cfg=TrainerConfig(
+            out_dir=directory, resume_from=None, use_ema=False,
+            history_file=None, checkpoint_dir=None, raw_weights_file=None,
+            ema_weights_file=None, progress=False, verbose=False,
+        ),
+    )
+    result = trainer.fit(epochs=1)
+    assert result["final_model"] is None
+    assert len(trainer.history) == 1
+    assert not directory.exists()
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
+
+
+@pytest.mark.parametrize("use_ema,raw_export,ema_export,selected", [
+    (False, True, True, "raw.pt"),
+    (True, True, False, "raw.pt"),
+    (True, False, True, "ema.pt"),
+    (True, True, True, "ema.pt"),
+    (True, False, False, None),
+    (False, False, True, None),
+])
+def test_enabled_exports_define_selection_in_result_and_checkpoint(
+    tmp_path: Path, use_ema: bool, raw_export: bool,
+    ema_export: bool, selected: str | None,
+) -> None:
+    model = _PreparedEchoModel()
+    trainer = Trainer(
+        model, torch.optim.SGD(model.parameters(), lr=0.1), [torch.ones(2, 4)],
+        cfg=TrainerConfig(
+            out_dir=tmp_path, resume_from=None, use_ema=use_ema,
+            raw_weights_file="raw.pt" if raw_export else None,
+            ema_weights_file="ema.pt" if ema_export else None,
+            progress=False, verbose=False,
+        ),
+    )
+    result = trainer.fit(epochs=1)
+    checkpoint = torch.load(tmp_path / "checkpoints/last.pt", weights_only=False)
+    assert result["final_model"] == selected
+    expected_rule = "ema_last" if selected == "ema.pt" else "raw_last" if selected else None
+    assert checkpoint["selection_rule"] == expected_rule
+    assert (tmp_path / "raw.pt").exists() == raw_export
+    assert (tmp_path / "ema.pt").exists() == (use_ema and ema_export)
+
+
+def test_custom_output_paths_and_model_bundle_reload(tmp_path: Path) -> None:
+    model = _tiny_model()
+    trainer = Trainer(
+        model, torch.optim.SGD(model.parameters(), lr=0.01), [torch.ones(2, 16)],
+        cfg=TrainerConfig(
+            out_dir=tmp_path, resume_from=None, use_ema=False,
+            history_file="logs/history.json", checkpoint_dir="state",
+            raw_weights_file="exports/raw.pt", progress=False, verbose=False,
+        ),
+    )
+    result = trainer.fit(epochs=1)
+    assert result["final_model"] == "exports/raw.pt"
+    assert (tmp_path / "logs/history.json").exists()
+    assert (tmp_path / "state/last.pt").exists()
+    restored = ChemoMAE.load(tmp_path / "exports/raw.artifact.pt")
+    assert restored.get_config() == model.get_config()
+    for name, value in model.state_dict().items():
+        torch.testing.assert_close(value, restored.state_dict()[name], rtol=0, atol=0)
+
+
 class _SkipFirstScaler:
     """CPU test double for the documented standard GradScaler overflow policy."""
 

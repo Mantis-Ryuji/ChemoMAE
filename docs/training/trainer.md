@@ -27,6 +27,13 @@ when resuming. It is not a budget of successful optimizer updates.
 | `loss_region` | `"masked"` | `"masked"` or `"all"` |
 | `reduction` | `"mean"` | `"mean"`, `"sum"`, or `"batch_mean"` |
 | `resume_from` | `"auto"` | Auto, explicit epoch-checkpoint path, or fresh `None` |
+| `history_file` | `"training_history.json"` | Relative to out_dir, absolute, or None to disable JSON history |
+| `checkpoint_dir` | `"checkpoints"` | Relative/absolute directory; None disables checkpointing and requires fresh resume_from=None |
+| `raw_weights_file` | `"last_model.pt"` | Relative/absolute filename, or None to disable raw export |
+| `ema_weights_file` | `"ema_last_model.pt"` | Relative/absolute filename, or None to disable EMA export |
+| `model_artifacts` | `True` | Add .artifact.pt config-and-weights bundles for ChemoMAE |
+| `progress`, `verbose` | `True` | Batch progress and printed epoch summaries, independently |
+| `restore_rng` | `True` | Restore standard global RNG on resume; independent streams use hooks |
 
 Move the model before constructing its optimizer. The following uses small
 synthetic CPU data for demonstrating the API, rather than an experimental recipe.
@@ -262,28 +269,38 @@ MSE. Applications needing a different summary should add a clearly named metric.
 
 ## Epoch checkpoints, export selection, and resume
 
-After each completed epoch, fit saves `training_history.json` and
-`checkpoints/last.pt`. At completion it exports `last_model.pt` and, when enabled,
-`ema_last_model.pt`. `result["final_model"]` selects EMA-last if EMA is enabled,
-otherwise raw-last. The in-memory model remains raw; load the chosen export
-explicitly before evaluation/extraction.
+After each completed epoch, fit retains in-memory history and writes the enabled
+history/checkpoint outputs. At completion it writes enabled raw/EMA exports.
+For ChemoMAE, model_artifacts=True also creates sibling `.artifact.pt` files
+containing configuration and weights. `result["final_model"]` selects an enabled
+EMA export, otherwise an enabled raw export, otherwise None. The in-memory model
+remains raw; load the chosen export before evaluation/extraction. Default paths
+are training_history.json, checkpoints/last.pt, last_model.pt, and ema_last_model.pt.
+
+Relative paths use out_dir, while absolute paths are retained. Each output path
+may be None to disable that output; checkpoints disabled requires resume_from=None.
+In-memory history remains available when JSON output is disabled. Identical output
+destinations are rejected. Set progress=False and verbose=False for silent training.
 
 To resume, build a new model, optimizer, optional scheduler, and Trainer with
 matching settings, specify `resume_from=out_dir / "checkpoints/last.pt"`, and call
 `fit(epochs=final_epoch)`. A checkpoint after epoch one resumes at epoch two;
 an interrupted epoch is replayed from the last completed boundary.
 
-Loss settings, AMP/scheduler/scaler/EMA presence, successful-update policy, and
-progress consistency are checked. Scaler restoration errors propagate rather
-than being ignored. Configuration/model/data identity beyond these checks remains
-the caller's responsibility; full versioned model/training artifacts are separate
-work. Load only checkpoints you trust: the current full checkpoint uses Torch
+The versioned checkpoint checks the full ChemoMAE config, model/optimizer/scheduler
+types, augmentation config, clipping/TF32/EMA settings, loss/precision settings,
+component presence, successful-update policy, progress, and model/EMA tensors.
+Scaler restoration errors propagate. Data identities, the scheduler's callable
+recipe, and custom model configuration remain the caller's responsibility.
+See [artifact formats](../models/persistence.md). Load only checkpoints you trust:
+the current full checkpoint uses Torch
 serialization with `weights_only=False`.
 
-Neither the core loader nor the default Trainer captures arbitrary loader worker,
-global RNG, or external application state. Use the public state hooks for owned
-streams and validate matching conditions. Do not claim exact continuation from
-weights and epoch counters alone.
+Standard Python, NumPy global, Torch CPU, and initialized CUDA RNG streams are
+captured and restored after extension loading when restore_rng=True. CPU transfer
+restores CPU streams only. Independent generators, loader worker state, MPS RNG,
+and external application state require public hooks. Exact continuation requires
+matching data, device, software, and execution conditions.
 
 ## Focused verification
 

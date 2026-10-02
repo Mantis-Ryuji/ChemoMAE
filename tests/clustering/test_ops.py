@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import torch
 import matplotlib
 matplotlib.use("Agg")  # ヘッドレス環境向け
@@ -42,3 +43,35 @@ def test_find_elbow_curvature_and_plot_elbow(tmp_path):
     out = tmp_path / "elbow.png"
     plt.gcf().savefig(out)
     assert out.exists() and out.stat().st_size > 0
+
+
+@pytest.mark.parametrize("length", [5, 6, 8])
+def test_smoothing_window_is_bounded_for_even_and_odd_curves(length: int) -> None:
+    k = list(range(1, length + 1))
+    values = [1 / value for value in k]
+    chosen, index, curvature = find_elbow_curvature(k, values, window_length=99)
+    assert chosen == k[index]
+    assert 0 < index < length - 1
+    assert np.isfinite(curvature)
+
+
+def test_nonuniform_spacing_uses_coordinate_aware_gradients() -> None:
+    k = [1, 2, 4, 7, 11, 16]
+    values = [0.9, 0.7, 0.5, 0.4, 0.35, 0.34]
+    assert find_elbow_curvature(k, values, smooth=True) == find_elbow_curvature(k, values, smooth=False)
+
+
+@pytest.mark.parametrize("k, values", [
+    ([1, 2, 3], [0.9, 0.8]), ([1, 1, 3], [0.9, 0.8, 0.7]),
+    ([3, 2, 1], [0.9, 0.8, 0.7]), ([1, 2, 3], [0.9, np.nan, 0.7]),
+    ([1, 2.5, 3], [0.9, 0.8, 0.7]), ([0, 1, 2], [0.9, 0.8, 0.7]),
+])
+def test_invalid_elbow_curves_are_rejected(k: list[float], values: list[float]) -> None:
+    with pytest.raises(ValueError):
+        find_elbow_curvature(k, values)
+
+
+@pytest.mark.parametrize("settings", [{"window_length": 4}, {"window_length": 0}, {"polyorder": 1}, {"polyorder": 5}])
+def test_invalid_smoothing_settings_are_rejected(settings: dict[str, int]) -> None:
+    with pytest.raises(ValueError):
+        find_elbow_curvature([1, 2, 3, 4, 5], [0.9, 0.8, 0.7, 0.6, 0.5], **settings)

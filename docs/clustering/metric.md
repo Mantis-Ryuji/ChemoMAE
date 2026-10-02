@@ -29,7 +29,7 @@ $$
 * **Cosine distance:** $d(x,y) = 1 - \cos(x,y)$.
   Internally, all rows are L2-normalized; zero vectors remain zeros (`cos=0 → distance=1`).
 
-* **GPU accelerated:** Vectorized with PyTorch, complexity **O(NK)**.
+* **CPU/CUDA implementation:** Vectorized cluster-sum arithmetic with time **O(NKD)**.
 
 * **Chunked evaluation:** Supports block-wise computation of $b_i$ to reduce memory usage.
 
@@ -51,7 +51,7 @@ Compute the silhouette coefficient for each sample.
 | `labels`       | `(N,)` `np.ndarray` or `torch.Tensor[int]` | —               | Cluster assignments. Non-consecutive labels are remapped internally to `0..K-1`.  |
 | `device`       | `str`                                      | `"cuda"`        | Target device for computation (`"cuda"` or `"cpu"`).                              |
 | `chunk`        | `int` or `None`                            | `1_000_000`     | Block size for inter-cluster distance computation (smaller → lower memory).       |
-| `dtype`        | `torch.dtype`                              | `torch.float32` | Precision (`float16`, `bfloat16`, or `float32`).                                  |
+| `dtype`        | `torch.dtype`                              | `torch.float32` | Input/output precision: float16, bfloat16, float32, or float64. Half intermediates use float32. |
 | `return_numpy` | `bool`                                     | `True`          | Return type (`np.ndarray` if True, else `torch.Tensor`).                          |
 | `eps`          | `float`                                    | `1e-12`         | Small constant for numerical stability.                                           |
 
@@ -63,8 +63,16 @@ Compute the silhouette coefficient for each sample.
 
 #### Notes
 
-* Complexity: $O(ND + KD + N K_{\text{chunk}})$ (approximately linear in both $N$ and $K$).
-* Memory: Depends on `chunk` size; smaller `chunk` lowers peak memory usage.
+* Time: $O(NKD)$; no full pairwise sample-distance matrix is constructed.
+* Chunking bounds the `(B, K)` similarity temporary. Full input features, labels,
+  class sums, within-class work arrays, and output remain resident.
+* Features must be finite real values of shape `(N,D)`. Integer labels must have
+  shape `(N,)`; floating labels are rejected before any truncation.
+* Require `2 <= K < N`, positive integer chunks (or None), and finite positive eps.
+  One-class/all-singleton assignments have undefined silhouette and raise ValueError.
+* A singleton's score and a zero-distance denominator are assigned zero.
+* Requested arithmetic overrides ambient AMP. Tensor output retains requested
+  dtype; NumPy output is always float32.
 
 ---
 
@@ -72,7 +80,8 @@ Compute the silhouette coefficient for each sample.
 
 Convenience function returning the **mean silhouette coefficient** (scalar).
 
-* Calls `silhouette_samples_cosine_gpu` and returns `float(s.mean())`.
+* Reduces per-sample values in float32. Returns a Python float by default, or a
+  scalar float32 tensor when `return_numpy=False`.
 * Same arguments as above (`**kwargs` are forwarded).
 
 ---
@@ -131,8 +140,10 @@ s = silhouette_samples_cosine_gpu(X, labels, device="cuda", chunk=5_000_000)
 * **Zero vectors:** Treated as cosine=0 vs. any vector → distance=1.
 * **Singleton clusters:** Assigned silhouette=0, consistent with sklearn.
 * **Non-consecutive labels:** Automatically remapped; results unaffected.
-* **Precision:** Supports `float16` / `bfloat16` for speed (minor numerical drift).
-* **Performance:** On GPU, `O(NK)` evaluation is scalable; chunking prevents OOM.
+* **Precision:** Supports float16/bfloat16 input/output with float32 intermediates,
+  plus float32/float64 arithmetic. Quantized inputs can differ from full precision.
+* **Memory:** Similarity chunking reduces one temporary; it does not bound full
+  input/output or every work array. Runtime and GPU memory are unmeasured.
 
 ---
 
@@ -149,13 +160,18 @@ s = silhouette_samples_cosine_gpu(X, labels, device="cuda", chunk=5_000_000)
 * Works **only with cosine distance** — other metrics are unsupported.
 * Input normalization is handled internally; external L2 normalization is optional.
 * Very small clusters may yield unstable values (same behavior as sklearn).
+* Empty/mismatched arrays, invalid class counts, nonfinite values, unsupported
+  precision, and nonpositive chunks fail before computation.
 
 ---
 
 ## Minimal Test Snippets
 
+The reference snippet additionally requires scikit-learn from the development extras.
+
 ```python
 import numpy as np
+import torch
 from sklearn.metrics import silhouette_samples as sk_silhouette_samples
 from chemomae.clustering.metric import silhouette_samples_cosine_gpu
 

@@ -6,7 +6,7 @@ import json
 import math
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable, Iterator, Literal
 
@@ -17,6 +17,9 @@ from torch.optim.lr_scheduler import LRScheduler
 from tqdm import tqdm
 
 from ..models.losses import masked_mse, masked_sse
+from ..models.chemo_mae import ChemoMAE, _validate_model_state
+from ..utils.seed import capture_rng_state, restore_rng_state, _validate_rng_state
+from .._version import __version__
 from .augmenter import SpectraAugmenter
 from .callbacks import EMACallback
 
@@ -102,6 +105,18 @@ class TrainerConfig:
     resume_from : str, pathlib.Path, or None, default="auto"
         Auto selects ``checkpoints/last.pt``; None starts a fresh run and rejects
         existing standard artifacts. An explicit path resumes that checkpoint.
+    history_file, checkpoint_dir, raw_weights_file, ema_weights_file : str, pathlib.Path, or None
+        Relative paths are resolved below out_dir; absolute paths are retained.
+        Defaults are training_history.json, checkpoints, last_model.pt, and
+        ema_last_model.pt. None disables that output. Disabling checkpoints
+        requires resume_from=None. In-memory history is always retained.
+    model_artifacts : bool, default=True
+        Also export config-and-weights .artifact.pt files for ChemoMAE.
+    progress, verbose : bool, default=True
+        Show batch progress and print epoch summaries, respectively.
+    restore_rng : bool, default=True
+        Restore standard global RNG state when resuming. CPU transfer restores
+        CPU streams only; independent generators require extension hooks.
 
     Notes
     -----
@@ -122,8 +137,25 @@ class TrainerConfig:
     loss_region: Literal["masked", "all"] = "masked"
     reduction: str = "mean"
     resume_from: str | Path | None = "auto"
+    history_file: str | Path | None = "training_history.json"
+    checkpoint_dir: str | Path | None = "checkpoints"
+    raw_weights_file: str | Path | None = "last_model.pt"
+    ema_weights_file: str | Path | None = "ema_last_model.pt"
+    model_artifacts: bool = True
+    progress: bool = True
+    verbose: bool = True
+    restore_rng: bool = True
 
     def __post_init__(self) -> None:
+        for name in ("model_artifacts", "progress", "verbose", "restore_rng"):
+            if type(getattr(self, name)) is not bool:
+                raise TypeError(f"{name} must be a boolean.")
+        for name in ("history_file", "checkpoint_dir", "raw_weights_file", "ema_weights_file"):
+            value = getattr(self, name)
+            if value is not None and (not isinstance(value, (str, Path)) or not str(value).strip() or str(value) == "."):
+                raise ValueError(f"{name} must be a nonempty path or None.")
+        if self.checkpoint_dir is None and self.resume_from is not None:
+            raise ValueError("Disabling checkpoints requires resume_from=None.")
         if self.loss_region not in {"masked", "all"}:
             raise ValueError(f"loss_region must be 'masked' or 'all', got {self.loss_region!r}")
         if self.loss_type not in {"mse", "sse"}:
@@ -172,6 +204,7 @@ class Trainer:
     """
 
     STEP_POLICY = "successful_optimizer_update"
+    CHECKPOINT_FORMAT_VERSION = 1
 
     def __init__(
         self,
@@ -209,18 +242,21 @@ class Trainer:
         self.augmenter = augmenter.to(self.device) if augmenter is not None else None
         self.cfg = cfg
         self.out_dir = Path(cfg.out_dir)
-        self.ckpt_dir = self.out_dir / "checkpoints"
-        self.history_path = self.out_dir / "training_history.json"
-        standard_artifacts = (
-            self.history_path, self.ckpt_dir / "last.pt",
-            self.out_dir / "last_model.pt", self.out_dir / "ema_last_model.pt",
-        )
-        if cfg.resume_from is None and any(path.exists() for path in standard_artifacts):
+        self.ckpt_dir = self._output_path(cfg.checkpoint_dir)
+        self.history_path = self._output_path(cfg.history_file)
+        self.raw_weights_path = self._output_path(cfg.raw_weights_file)
+        self.ema_weights_path = self._output_path(cfg.ema_weights_file) if cfg.use_ema else None
+        standard_artifacts = self._standard_artifacts()
+        if len({path.resolve() for path in standard_artifacts}) != len(standard_artifacts):
+            raise ValueError("Trainer output paths must be distinct.")
+        if cfg.resume_from is None and any(
+            path.exists() for path in self._standard_artifacts(include_inactive=True)
+        ):
             raise FileExistsError(
                 "Training artifacts already exist; resume explicitly or choose a new out_dir."
             )
-        self.out_dir.mkdir(parents=True, exist_ok=True)
-        self.ckpt_dir.mkdir(parents=True, exist_ok=True)
+        for path in standard_artifacts:
+            path.parent.mkdir(parents=True, exist_ok=True)
         # The checkpoint is authoritative; do not load an independently newer JSON history.
         self.history: list[dict[str, object]] = []
         self.current_epoch = 0
@@ -241,6 +277,38 @@ class Trainer:
         else:
             self.scaler = torch.cuda.amp.GradScaler(enabled=use_scaler)
         self.ema = EMACallback(self.model, cfg.ema_decay) if cfg.use_ema else None
+
+    def _output_path(self, path: str | Path | None) -> Path | None:
+        if path is None:
+            return None
+        path = Path(path)
+        return path if path.is_absolute() else self.out_dir / path
+
+    @staticmethod
+    def _artifact_path(weights_path: Path) -> Path:
+        return weights_path.with_name(weights_path.stem + ".artifact" + weights_path.suffix)
+
+    def _standard_artifacts(self, *, include_inactive: bool = False) -> tuple[Path, ...]:
+        # A prior EMA export still identifies a run when this run disables EMA.
+        ema_path = self._output_path(self.cfg.ema_weights_file) if include_inactive else self.ema_weights_path
+        paths = [self.history_path, self.raw_weights_path, ema_path]
+        if self.ckpt_dir is not None:
+            paths.append(self.ckpt_dir / "last.pt")
+        if self.cfg.model_artifacts and type(self.model) is ChemoMAE:
+            paths.extend(self._artifact_path(path) for path in (self.raw_weights_path, ema_path) if path is not None)
+        return tuple(path for path in paths if path is not None)
+
+    def _resume_contract(self) -> dict[str, object]:
+        """Describe semantic settings; output paths/display flags can change on resume."""
+        return {
+            "model_type": type(self.model).__module__ + "." + type(self.model).__qualname__,
+            "model_config": self.model.get_config() if type(self.model) is ChemoMAE else None,
+            "optimizer_type": type(self.optimizer).__module__ + "." + type(self.optimizer).__qualname__,
+            "scheduler_type": None if self.scheduler is None else type(self.scheduler).__module__ + "." + type(self.scheduler).__qualname__,
+            "augmenter_config": None if self.augmenter is None else asdict(self.augmenter.config),
+            "grad_clip": self.cfg.grad_clip, "enable_tf32": self.cfg.enable_tf32,
+            "ema_decay": self.cfg.ema_decay if self.ema is not None else None,
+        }
 
     def train_batches(self, epoch: int) -> Iterable[object]:
         """Return batches for the one-based epoch; override to control ordering."""
@@ -345,31 +413,40 @@ class Trainer:
             yield
 
     def _atomic_torch_save(self, obj: object, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
-        torch.save(obj, tmp)
-        tmp.replace(path)
+        try:
+            torch.save(obj, tmp)
+            tmp.replace(path)
+        finally:
+            tmp.unlink(missing_ok=True)
 
     def _save_history(self, record: dict[str, object]) -> None:
         self.history.append(record)
+        if self.history_path is None:
+            return
         tmp = self.history_path.with_suffix(self.history_path.suffix + ".tmp")
         tmp.write_text(json.dumps(self.history, indent=2, allow_nan=False), encoding="utf-8")
         tmp.replace(self.history_path)
 
-    def _save_ema_weights_only(self, filename: str = "ema_last_model.pt") -> None:
-        if self.ema is None:
+    def _save_ema_weights_only(self, filename: str | Path | None = None) -> None:
+        path = self.ema_weights_path if filename is None else self._output_path(filename)
+        if self.ema is None or path is None:
             return
-        backup = {key: value.detach().clone() for key, value in self.model.state_dict().items()}
-        try:
-            self.ema.apply_to(self.model)
-            self._atomic_torch_save(self.model.state_dict(), self.out_dir / filename)
-        finally:
-            self.model.load_state_dict(backup, strict=True)
+        selected = {**self.model.state_dict(), **self.ema.shadow}
+        _validate_model_state(selected, self.model.state_dict())
+        self._atomic_torch_save(selected, path)
+        if self.cfg.model_artifacts and type(self.model) is ChemoMAE:
+            self.model.save(self._artifact_path(path), state_dict=selected)
 
     def _checkpoint_state(self, epoch: int) -> dict[str, object]:
         extension = self.checkpoint_extra_state()
         if not isinstance(extension, dict) or not all(isinstance(key, str) for key in extension):
             raise TypeError("checkpoint_extra_state must return a dictionary with string keys.")
         return {
+            "artifact": "chemomae.training", "format_version": self.CHECKPOINT_FORMAT_VERSION,
+            "package_version": __version__, "resume_contract": self._resume_contract(),
+            "rng_state": capture_rng_state(),
             "epoch": epoch, "model": self.model.state_dict(),
             "optimizer": self.optimizer.state_dict(),
             "scheduler": self.scheduler.state_dict() if self.scheduler is not None else None,
@@ -380,7 +457,10 @@ class Trainer:
             "loss_region": self.cfg.loss_region, "loss_type": self.cfg.loss_type,
             "reduction": self.cfg.reduction, "history": list(self.history),
             "device": self.device.type,
-            "selection_rule": "ema_last" if self.ema is not None else "raw_last",
+            "selection_rule": (
+                "ema_last" if self.ema_weights_path is not None else
+                "raw_last" if self.raw_weights_path is not None else None
+            ),
             "step_policy": self.STEP_POLICY,
             "progress": {
                 "attempted_steps": self.attempted_steps,
@@ -389,26 +469,58 @@ class Trainer:
             "extension_state": extension,
         }
 
-    def save_checkpoint(self, epoch: int) -> None:
-        """Save last.pt; callers outside fit must save only completed epoch boundaries."""
+    def save_checkpoint(self, epoch: int, *, path: str | Path | None = None) -> None:
+        """Save a versioned epoch checkpoint; explicit path overrides checkpoint_dir.
+
+        Callers outside fit must save only completed epoch boundaries. Global
+        RNG state is included; independent generators require extension hooks.
+        """
         if type(epoch) is not int or epoch < 0:
             raise ValueError("Checkpoint epoch must be a nonnegative integer.")
-        self._atomic_torch_save(self._checkpoint_state(epoch), self.ckpt_dir / "last.pt")
+        if path is None and self.ckpt_dir is None:
+            raise ValueError("Checkpoints are disabled; supply an explicit path to save_checkpoint.")
+        destination = Path(path) if path is not None else self.ckpt_dir / "last.pt"
+        self._atomic_torch_save(self._checkpoint_state(epoch), destination)
 
-    def save_weights_only(self, filename: str = "last_model.pt") -> None:
-        """Save current raw weights. Full model configuration artifacts are separate work."""
-        self._atomic_torch_save(self.model.state_dict(), self.out_dir / filename)
+    def save_weights_only(self, filename: str | Path | None = None) -> None:
+        """Export raw weights and, when enabled for ChemoMAE, a .artifact.pt bundle."""
+        path = self.raw_weights_path if filename is None else self._output_path(filename)
+        if path is None:
+            raise ValueError("Raw export is disabled; supply an explicit output filename.")
+        state = self.model.state_dict()
+        _validate_model_state(state, state)
+        self._atomic_torch_save(state, path)
+        if self.cfg.model_artifacts and type(self.model) is ChemoMAE:
+            self.model.save(self._artifact_path(path), state_dict=state)
 
     def load_checkpoint(self, path: str | Path) -> int:
         """Restore a trusted epoch checkpoint and return the next one-based epoch.
 
         Extension tensors are loaded on CPU; the extension hook owns any device
-        transfer. Scaler failures propagate. Broader portable/versioned artifact
-        and arbitrary loader/RNG restoration are not supplied by this increment.
+        transfer. Schema, semantic model/training config, and tensor entries are
+        checked before loading weights. Standard global RNG is restored after
+        extension hooks when restore_rng=True. Owned generators and arbitrary
+        loader state remain the extension hook's responsibility.
         """
         state = torch.load(Path(path), map_location="cpu", weights_only=False)
         if not isinstance(state, dict):
             raise ValueError("Training checkpoint must be a dictionary.")
+        if state.get("artifact") != "chemomae.training" or type(state.get("format_version")) is not int or state["format_version"] != self.CHECKPOINT_FORMAT_VERSION:
+            raise ValueError("Unsupported training checkpoint format_version; expected 1.")
+        saved_contract = state.get("resume_contract")
+        current_contract = self._resume_contract()
+        if not isinstance(saved_contract, dict) or set(saved_contract) != set(current_contract):
+            raise ValueError("Checkpoint model/training resume configuration mismatch.")
+        try:
+            saved_json = json.dumps(saved_contract, sort_keys=True, allow_nan=False)
+            current_json = json.dumps(current_contract, sort_keys=True, allow_nan=False)
+        except (TypeError, ValueError) as error:
+            raise ValueError("Checkpoint model/training resume configuration is invalid.") from error
+        if saved_json != current_json:
+            raise ValueError("Checkpoint model/training resume configuration mismatch.")
+        required = {"model", "optimizer", "scheduler", "scaler", "ema", "rng_state"}
+        if not required.issubset(state):
+            raise ValueError("Training checkpoint is missing required state.")
         for key, expected in (
             ("loss_region", self.cfg.loss_region), ("loss_type", self.cfg.loss_type),
             ("reduction", self.cfg.reduction), ("step_policy", self.STEP_POLICY),
@@ -439,9 +551,22 @@ class Trainer:
             raise ValueError("Checkpoint progress counters are inconsistent.")
         if not all(isinstance(record, dict) for record in history):
             raise ValueError("Checkpoint history records must be dictionaries.")
+        try:
+            json.dumps(history, allow_nan=False)
+        except (TypeError, ValueError) as error:
+            raise ValueError("Checkpoint history must contain finite JSON-serializable records.") from error
         if not all(isinstance(key, str) for key in extension):
             raise ValueError("Checkpoint extension-state keys must be strings.")
-        self.model.load_state_dict(state["model"], strict=True)
+        checked_model = _validate_model_state(state["model"], self.model.state_dict())
+        if not isinstance(state["optimizer"], dict) or not {"state", "param_groups"}.issubset(state["optimizer"]):
+            raise ValueError("Checkpoint optimizer state is invalid.")
+        if self.ema is not None:
+            ema_state = state["ema"]
+            if not isinstance(ema_state, dict) or ema_state.get("decay") != self.ema.decay:
+                raise ValueError("Checkpoint EMA decay/state mismatch.")
+            _validate_model_state(ema_state.get("shadow"), self.ema.shadow)
+        _validate_rng_state(state["rng_state"], restore_cuda=self.cfg.restore_rng and self.device.type == "cuda")
+        self.model.load_state_dict(checked_model, strict=True)
         self.optimizer.load_state_dict(state["optimizer"])
         if self.scheduler is not None:
             self.scheduler.load_state_dict(state["scheduler"])
@@ -455,9 +580,13 @@ class Trainer:
         self.attempted_steps, self.optimizer_updates, self.amp_skips = attempted, updates, skips
         self.current_epoch = epoch
         self.load_checkpoint_extra_state(extension)
+        if self.cfg.restore_rng:
+            restore_rng_state(state["rng_state"], restore_cuda=self.device.type == "cuda")
         return epoch + 1
 
     def _latest_checkpoint(self) -> Path | None:
+        if self.ckpt_dir is None:
+            return None
         path = self.ckpt_dir / "last.pt"
         return path if path.exists() else None
 
@@ -475,55 +604,58 @@ class Trainer:
         if self.augmenter is not None:
             self.augmenter.train()
         meter_sum, meter_count = 0.0, 0
-        batches = tqdm(self.train_batches(epoch), desc="Training", unit="batch")
-        for batch_index, raw_batch in enumerate(batches):
-            with self._autocast_ctx():
-                batch = self.prepare_batch(raw_batch)
-                if not isinstance(batch, PreparedBatch):
-                    raise TypeError("prepare_batch must return PreparedBatch.")
-                batch = batch.to(self.device)
-                self.before_step(epoch, batch_index, batch)
-                self.optimizer.zero_grad(set_to_none=True)
-                reconstructed, visible_mask = self.forward_batch(batch)
-                loss = self.compute_loss(reconstructed, batch.target, visible_mask)
-            if not isinstance(loss, torch.Tensor) or loss.ndim != 0 or not loss.is_floating_point():
-                raise TypeError("compute_loss must return a scalar floating tensor.")
-            if not bool(torch.isfinite(loss)):
-                raise ValueError(f"Nonfinite training loss at epoch {epoch}, batch {batch_index}.")
-            if self.scaler.is_enabled():
-                previous_scale = self.scaler.get_scale()
-                if not math.isfinite(previous_scale) or previous_scale <= 0:
-                    raise ValueError("GradScaler scale must remain finite and positive.")
-                self.scaler.scale(loss).backward()
-                if self.cfg.grad_clip is not None:
-                    self.scaler.unscale_(self.optimizer)
-                    nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.grad_clip)
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-                # Standard GradScaler decreases its scale on overflow, including
-                # fused optimizers that handle the skipped update internally.
-                optimizer_updated = self.scaler.get_scale() >= previous_scale
-            else:
-                loss.backward()
-                if self.cfg.grad_clip is not None:
-                    nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.grad_clip)
-                self.optimizer.step()
-                optimizer_updated = True
-            self.attempted_steps += 1
-            self.optimizer_updates += int(optimizer_updated)
-            self.amp_skips += int(not optimizer_updated)
-            if optimizer_updated:
-                if self.scheduler is not None:
-                    self.scheduler.step()
-                if self.ema is not None:
-                    self.ema.update(self.model)
-            scalar_loss = float(loss.detach())
-            self.after_step(
-                epoch, batch_index, batch, loss=scalar_loss, optimizer_updated=optimizer_updated
-            )
-            batch_size = batch.target.shape[0]
-            meter_sum += scalar_loss * batch_size
-            meter_count += batch_size
+        batches = tqdm(self.train_batches(epoch), desc="Training", unit="batch", disable=not self.cfg.progress)
+        try:
+            for batch_index, raw_batch in enumerate(batches):
+                with self._autocast_ctx():
+                    batch = self.prepare_batch(raw_batch)
+                    if not isinstance(batch, PreparedBatch):
+                        raise TypeError("prepare_batch must return PreparedBatch.")
+                    batch = batch.to(self.device)
+                    self.before_step(epoch, batch_index, batch)
+                    self.optimizer.zero_grad(set_to_none=True)
+                    reconstructed, visible_mask = self.forward_batch(batch)
+                    loss = self.compute_loss(reconstructed, batch.target, visible_mask)
+                if not isinstance(loss, torch.Tensor) or loss.ndim != 0 or not loss.is_floating_point():
+                    raise TypeError("compute_loss must return a scalar floating tensor.")
+                if not bool(torch.isfinite(loss)):
+                    raise ValueError(f"Nonfinite training loss at epoch {epoch}, batch {batch_index}.")
+                if self.scaler.is_enabled():
+                    previous_scale = self.scaler.get_scale()
+                    if not math.isfinite(previous_scale) or previous_scale <= 0:
+                        raise ValueError("GradScaler scale must remain finite and positive.")
+                    self.scaler.scale(loss).backward()
+                    if self.cfg.grad_clip is not None:
+                        self.scaler.unscale_(self.optimizer)
+                        nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.grad_clip)
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                    # Standard GradScaler decreases its scale on overflow, including
+                    # fused optimizers that handle the skipped update internally.
+                    optimizer_updated = self.scaler.get_scale() >= previous_scale
+                else:
+                    loss.backward()
+                    if self.cfg.grad_clip is not None:
+                        nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.grad_clip)
+                    self.optimizer.step()
+                    optimizer_updated = True
+                self.attempted_steps += 1
+                self.optimizer_updates += int(optimizer_updated)
+                self.amp_skips += int(not optimizer_updated)
+                if optimizer_updated:
+                    if self.scheduler is not None:
+                        self.scheduler.step()
+                    if self.ema is not None:
+                        self.ema.update(self.model)
+                scalar_loss = float(loss.detach())
+                self.after_step(
+                    epoch, batch_index, batch, loss=scalar_loss, optimizer_updated=optimizer_updated
+                )
+                batch_size = batch.target.shape[0]
+                meter_sum += scalar_loss * batch_size
+                meter_count += batch_size
+        finally:
+            batches.close()
         if meter_count == 0:
             raise ValueError(f"No training samples were provided for epoch {epoch}.")
         return meter_sum / meter_count
@@ -545,9 +677,7 @@ class Trainer:
                 checkpoint = self._latest_checkpoint()
                 if checkpoint is not None:
                     start_epoch = self.load_checkpoint(checkpoint)
-                elif any(path.exists() for path in (
-                    self.history_path, self.out_dir / "last_model.pt", self.out_dir / "ema_last_model.pt",
-                )):
+                elif any(path.exists() for path in self._standard_artifacts(include_inactive=True)):
                     raise FileExistsError(
                         "Training artifacts exist without a resume checkpoint; choose a new out_dir."
                     )
@@ -581,18 +711,22 @@ class Trainer:
                     "after_epoch may add fields but must not change the standard history fields."
                 )
             self._save_history(record)
-            self.save_checkpoint(epoch)
-            print(
-                f"[Epoch {epoch:03d}] train={train_loss:.4f} "
-                f"updates={record['optimizer_updates']} skips={record['amp_skips']}"
-            )
+            if self.ckpt_dir is not None:
+                self.save_checkpoint(epoch)
+            if self.cfg.verbose:
+                print(
+                    f"[Epoch {epoch:03d}] train={train_loss:.4f} "
+                    f"updates={record['optimizer_updates']} skips={record['amp_skips']}"
+                )
             last_epoch = epoch
-        self.save_weights_only()
-        if self.ema is not None:
+        if self.raw_weights_path is not None:
+            self.save_weights_only()
+        if self.ema_weights_path is not None:
             self._save_ema_weights_only()
+        final_file = self.cfg.ema_weights_file if self.ema_weights_path is not None else self.cfg.raw_weights_file
         return {
             "epochs": last_epoch, "completed": last_epoch >= epochs,
-            "final_model": "ema_last_model.pt" if self.ema is not None else "last_model.pt",
+            "final_model": str(final_file) if final_file is not None else None,
             "attempted_steps": self.attempted_steps, "optimizer_updates": self.optimizer_updates,
             "amp_skips": self.amp_skips,
         }

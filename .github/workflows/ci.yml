@@ -67,3 +67,32 @@ jobs:
           MPLBACKEND: Agg
         run: |
           pytest -q -ra
+
+  installed-package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build wheel and source distribution
+        run: |
+          python -m pip install "build>=1.2"
+          python -m build
+
+      - name: Install wheel without development extras
+        run: |
+          python -m venv "$RUNNER_TEMP/chemomae-wheel"
+          "$RUNNER_TEMP/chemomae-wheel/bin/python" -m pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2,<3"
+          "$RUNNER_TEMP/chemomae-wheel/bin/python" -m pip install dist/*.whl
+
+      - name: Verify installed public CPU workflow outside checkout
+        env:
+          MPLBACKEND: Agg
+        run: |
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/chemomae-wheel/bin/python" "$GITHUB_WORKSPACE/tests/installed_package_smoke.py"

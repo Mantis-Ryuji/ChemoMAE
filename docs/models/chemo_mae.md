@@ -4,6 +4,11 @@
 
 This document describes **ChemoMAE**, a Transformer-based masked autoencoder specialized for **one-dimensional spectral data**.
 
+Use `ChemoMAE.get_config()`, `save()`, and `load()` for complete, versioned
+configuration-and-weights persistence. See [model artifacts](persistence.md)
+for dtype/device behavior, validation, selected EMA snapshots, and the distinction
+between inference artifacts and training checkpoints.
+
 <p align="center">
 <img src="../../images/chemomae.svg">
 </p>
@@ -38,8 +43,9 @@ This creates a reconstruction task at the patch level, encouraging the model to 
 * Patch embeddings → positional encoding
 * Only visible patches + a `[CLS]` token are passed to a Transformer encoder
 * The `[CLS]` output is projected to `latent_dim`
-* If `latent_normalize=True` (default), the latent vector is **L2-normalized** → embedding on the **unit hypersphere**
-  (ideal for cosine metrics, CosineKMeans, vMF mixtures)
+* If `latent_normalize=True` (default), the latent vector is **L2-normalized**
+  for directional metrics, CosineKMeans, and vMF mixtures. Zero projections stay
+  zero; projections below `F.normalize`'s epsilon remain below unit norm.
 
 ### Decoder
 
@@ -53,7 +59,7 @@ The decoder intentionally avoids any patch reconstruction structure to place the
 ### Positional Encoding
 
 * **Learnable positional embeddings** (current default)
-* Only `n_patches` positions are encoded (not length `L`)
+* One CLS position and `n_patches` patch positions are encoded
 
 ---
 
@@ -90,7 +96,8 @@ make_patch_mask(batch_size, seq_len, n_patches, n_mask)
 **Output**
 
 * Latent vectors `(B, latent_dim)`
-* If `latent_normalize=True`: latent lies on the **unit hypersphere** (`‖z‖=1`)
+* If `latent_normalize=True`, projections with norm at least the normalization
+  epsilon satisfy $\lVert z\rVert_2\approx1$; zero projections stay zero.
 
 ---
 

@@ -1,17 +1,102 @@
 from __future__ import annotations
 
+import math
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, fields, replace
+from pathlib import Path
 from typing import Literal, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .._version import __version__
+
 __all__ = [
     "ChemoMAE",
+    "ChemoMAEConfig",
     "ChemoEncoder",
     "ChemoDecoder",
     "make_patch_mask",
 ]
+
+
+@dataclass(frozen=True)
+class ChemoMAEConfig:
+    """Complete constructor configuration for a ChemoMAE model.
+
+    Fields match ChemoMAE's keyword arguments. Unlike weights alone, this
+    configuration records attention heads, dropout, normalization, and masking.
+    Invalid dimensions and incompatible patch/head counts fail before allocation.
+    """
+
+    seq_len: int = 256
+    n_patches: int = 16
+    d_model: int = 256
+    nhead: int = 4
+    num_layers: int = 4
+    dim_feedforward: int | None = None
+    dropout: float = 0.0
+    latent_dim: int = 16
+    latent_normalize: bool = True
+    decoder_num_layers: int = 2
+    n_mask: int = 4
+
+    def __post_init__(self) -> None:
+        for name in (
+            "seq_len", "n_patches", "d_model", "nhead", "num_layers",
+            "latent_dim", "decoder_num_layers",
+        ):
+            value = getattr(self, name)
+            if type(value) is not int or value < 1:
+                raise ValueError(f"{name} must be a positive integer.")
+        if self.seq_len % self.n_patches:
+            raise ValueError("seq_len must be divisible by n_patches.")
+        if self.d_model % self.nhead:
+            raise ValueError("d_model must be divisible by nhead.")
+        if self.dim_feedforward is not None and (
+            type(self.dim_feedforward) is not int or self.dim_feedforward < 1
+        ):
+            raise ValueError("dim_feedforward must be a positive integer or None.")
+        if type(self.n_mask) is not int or not 0 <= self.n_mask <= self.n_patches:
+            raise ValueError("n_mask must be an integer in [0, n_patches].")
+        if type(self.latent_normalize) is not bool:
+            raise TypeError("latent_normalize must be a boolean.")
+        if isinstance(self.dropout, bool) or not isinstance(self.dropout, (int, float)) or not math.isfinite(self.dropout) or not 0 <= self.dropout <= 1:
+            raise ValueError("dropout must be finite and in [0, 1].")
+
+    def to_dict(self) -> dict[str, object]:
+        """Return constructor keywords containing only primitive values."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, config: Mapping[str, object]) -> ChemoMAEConfig:
+        """Validate a complete saved configuration, rejecting missing/extra keys."""
+        if not isinstance(config, Mapping):
+            raise TypeError("Model config must be a mapping.")
+        expected = {field.name for field in fields(cls)}
+        if set(config) != expected:
+            raise ValueError("Model config must contain exactly the ChemoMAEConfig fields.")
+        return cls(**dict(config))
+
+
+def _validate_model_state(
+    state: object, expected: Mapping[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    """Check all entries before copying any saved weights into a live model."""
+    if not isinstance(state, Mapping) or set(state) != set(expected):
+        raise ValueError("Model state has missing or unexpected keys.")
+    checked: dict[str, torch.Tensor] = {}
+    for name, reference in expected.items():
+        value = state[name]
+        if not isinstance(value, torch.Tensor) or value.layout != torch.strided or value.device.type == "meta":
+            raise ValueError(f"Model state {name!r} must be a dense tensor with stored values.")
+        if value.shape != reference.shape or value.dtype != reference.dtype:
+            raise ValueError(f"Model state {name!r} has an incompatible shape or dtype.")
+        if value.is_floating_point() and not bool(torch.isfinite(value).all()):
+            raise ValueError(f"Model state {name!r} contains NaN or infinity.")
+        checked[name] = value
+    return checked
 
 
 def make_patch_mask(
@@ -375,6 +460,12 @@ class ChemoMAE(nn.Module):
         n_mask: int = 4,
     ) -> None:
         super().__init__()
+        self._config = ChemoMAEConfig(
+            seq_len=seq_len, n_patches=n_patches, d_model=d_model, nhead=nhead,
+            num_layers=num_layers, dim_feedforward=dim_feedforward, dropout=dropout,
+            latent_dim=latent_dim, latent_normalize=latent_normalize,
+            decoder_num_layers=decoder_num_layers, n_mask=n_mask,
+        )
         self.seq_len = int(seq_len)
         self.n_patches = int(n_patches)
         self.n_mask = int(n_mask)
@@ -391,6 +482,90 @@ class ChemoMAE(nn.Module):
             latent_normalize=latent_normalize,
         )
         self.decoder = ChemoDecoder(seq_len=self.seq_len, latent_dim=latent_dim, num_layers=decoder_num_layers)
+
+    def get_config(self) -> dict[str, object]:
+        """Return full constructor settings, including current masking/normalization.
+
+        The constructed architecture must not be replaced in place. Current
+        n_mask and encoder.latent_normalize are included because neither is
+        recoverable from a state_dict.
+        """
+        return replace(
+            self._config, n_mask=self.n_mask,
+            latent_normalize=self.encoder.latent_normalize,
+        ).to_dict()
+
+    def save(
+        self, path: str | Path, *, state_dict: Mapping[str, torch.Tensor] | None = None,
+    ) -> None:
+        """Atomically save a versioned config-and-weights inference artifact.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            Output file; its parent directories are created after validation.
+        state_dict : mapping of str to torch.Tensor, optional
+            An explicit compatible snapshot, such as selected EMA weights.
+            None saves the current model. All tensors are copied to CPU, with
+            no weight normalization or change to the live model's mode/weights.
+
+        Notes
+        -----
+        Format version 1 contains the full configuration, package version, and
+        homogeneous floating dtype. It does not contain optimizer, RNG, or
+        training progress; use Trainer checkpoints to resume training.
+        """
+        if type(self) is not ChemoMAE:
+            raise TypeError("Model artifacts require a ChemoMAE instance; custom models own their format.")
+        current = self.state_dict()
+        checked = _validate_model_state(current if state_dict is None else state_dict, current)
+        dtypes = {value.dtype for value in checked.values() if value.is_floating_point()}
+        if len(dtypes) != 1:
+            raise ValueError("Model artifacts require one homogeneous floating dtype.")
+        dtype = next(iter(dtypes))
+        if dtype not in {torch.float16, torch.bfloat16, torch.float32, torch.float64}:
+            raise ValueError("Unsupported model artifact dtype.")
+        payload = {
+            "artifact": "chemomae.model", "format_version": 1,
+            "package_version": __version__, "config": self.get_config(),
+            "dtype": str(dtype).removeprefix("torch."),
+            "state_dict": {name: value.detach().cpu().clone() for name, value in checked.items()},
+        }
+        destination = Path(path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_suffix(destination.suffix + ".tmp")
+        try:
+            torch.save(payload, temporary)
+            temporary.replace(destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    @classmethod
+    def load(cls, path: str | Path, *, device: str | torch.device = "cpu") -> ChemoMAE:
+        """Load a config-and-weights artifact on an explicit device in eval mode.
+
+        The saved floating dtype is preserved, and weights are copied exactly.
+        Missing configuration, unsupported schemas, and corrupt tensor entries
+        fail clearly. Raw state_dict files and Trainer checkpoints are different
+        formats and are not accepted. Model construction consumes the standard
+        Torch CPU initialization stream; caller-owned generators are untouched.
+        """
+        payload = torch.load(Path(path), map_location="cpu", weights_only=True)
+        if not isinstance(payload, dict) or payload.get("artifact") != "chemomae.model":
+            raise ValueError("Expected a ChemoMAE config-and-weights model artifact.")
+        if type(payload.get("format_version")) is not int or payload["format_version"] != 1:
+            raise ValueError("Unsupported model artifact format_version; expected 1.")
+        config = ChemoMAEConfig.from_dict(payload.get("config"))
+        dtype_names = {
+            "float16": torch.float16, "bfloat16": torch.bfloat16,
+            "float32": torch.float32, "float64": torch.float64,
+        }
+        if not isinstance(payload.get("dtype"), str) or payload["dtype"] not in dtype_names:
+            raise ValueError("Unsupported or missing model artifact dtype.")
+        model = cls(**config.to_dict()).to(dtype=dtype_names[payload["dtype"]])
+        checked = _validate_model_state(payload.get("state_dict"), model.state_dict())
+        model.load_state_dict(checked, strict=True)
+        return model.to(device=device).eval()
 
     def encode(
         self,

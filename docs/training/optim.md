@@ -156,9 +156,8 @@ The public Trainer restores their saved state at a completed epoch. Use its
 checkpoint extension hooks for caller-owned state such as generators; do not
 expect a scheduler constructor alone to restore an advanced stream or step index.
 
-See [Trainer](trainer.md) for the public loop/customization contract and the
-[real NIR tutorial](../tutorials/nir_hsi.md) for a declared illustrative protocol.
+See [Trainer](trainer.md) for the public loop/customization contract.
 
-The MathJax `$...$`/`$$...$$` source has been updated, but GitHub and Colab
+The MathJax `$...$`/`$$...$$` source has been updated, but GitHub
 rendering has not been verified. The snippets and scheduler trace have not been
 executed for this documentation change.

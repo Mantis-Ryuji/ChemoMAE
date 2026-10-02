@@ -2,7 +2,8 @@
 
 > Module: `chemomae.utils.seed`
 
-This document describes utility functions for global seeding and deterministic control across Python, NumPy, and PyTorch, ensuring reproducible experiments in ChemoMAE.
+This document describes global seeding, RNG snapshots, and cuDNN controls across
+Python, NumPy, and PyTorch, with explicit reproducibility limits.
 
 ---
 
@@ -12,7 +13,8 @@ Experiments involving stochastic operations — such as **random masking** in Ch
 This module provides unified helpers for:
 
 * **Global seeding** across Python, NumPy, and PyTorch.
-* **Deterministic CuDNN settings** to ensure identical GPU results.
+* **cuDNN flags** for deterministic algorithms and disabled benchmarking.
+* **Versioned RNG snapshots** for standard global streams.
 
 ---
 
@@ -33,7 +35,8 @@ Set the same seed across all major random number generators.
 
 * Python: `random.seed(seed)`
 * NumPy: `np.random.seed(seed)`
-* OS: `os.environ["PYTHONHASHSEED"] = str(seed)`
+* OS: `os.environ["PYTHONHASHSEED"] = str(seed)` for future interpreters; the
+  current interpreter's hash randomization is not changed.
 * PyTorch (if available):
 
   * `torch.manual_seed(seed)`
@@ -88,18 +91,51 @@ enable_deterministic(False)  # allow kernel autotuning for speed
 
 ## Design Notes
 
-* `set_global_seed()` ensures reproducibility across Python, NumPy, and PyTorch.
+* `set_global_seed()` provides common starting seeds. Independent generators
+  need their own seeds; identical seeds do not guarantee all GPU operations or
+  cross-device/version results are identical.
 * `enable_deterministic()` is a lightweight control to toggle performance–reproducibility trade-offs after seeding.
-* Both functions **silently degrade** if PyTorch is not installed (no errors raised).
+* ChemoMAE declares PyTorch as a runtime dependency. cuDNN flags do not call
+  `torch.use_deterministic_algorithms` or control every nondeterministic operation.
+
+## Capturing and restoring RNG state
+
+```python
+import random
+import torch
+from chemomae.utils import capture_rng_state, restore_rng_state
+
+snapshot = capture_rng_state()
+expected = (random.random(), torch.randn(4))
+restore_rng_state(snapshot, restore_cuda=False)
+actual = (random.random(), torch.randn(4))
+assert expected[0] == actual[0]
+torch.testing.assert_close(expected[1], actual[1], rtol=0, atol=0)
+```
+
+Format 1 stores Python state, NumPy's global MT19937 state, Torch CPU state,
+and already initialized CUDA states using primitive values and tensors. Capturing
+does not initialize CUDA. Validation uses isolated generators before altering
+global streams. CUDA restoration requires compatible software and matching
+device count; restore_cuda=False explicitly leaves CUDA streams unchanged.
+Independent generators, worker RNG, MPS RNG, and external state remain caller-owned.
+
+Trainer checkpoints use these snapshots automatically. Read
+[model/training persistence](../models/persistence.md) for resume boundaries and
+extension hooks. Snapshot and resumed-trajectory tests are written but unrun.
 
 ---
 
 ## Minimal Tests
 
 ```python
-set_global_seed(1)
 import numpy as np
-assert np.random.randint(0, 100) == np.random.randint(0, 100)
+from chemomae.utils import set_global_seed, enable_deterministic
+
+set_global_seed(1)
+expected = np.random.randint(0, 100, size=4)
+set_global_seed(1)
+np.testing.assert_array_equal(expected, np.random.randint(0, 100, size=4))
 
 enable_deterministic(True)
 ```

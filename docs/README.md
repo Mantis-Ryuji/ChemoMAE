@@ -6,8 +6,8 @@ are recorded in [ToDo](../ToDo.md).
 
 ## Tutorial and protocol
 
-- [Minerals in the Wild NIR-HSI tutorial](tutorials/nir_hsi.md)
-- [Notebook](../notebooks/nir_hsi_tutorial.ipynb)
+- [Step-by-step synthetic workflow tutorial](tutorials/workflow.md)
+- [Model artifacts and training checkpoints](models/persistence.md)
 - [README workflow](../README.md)
 
 ## API references
@@ -20,7 +20,7 @@ are recorded in [ToDo](../ToDo.md).
 | Evaluation and extraction | [Tester reductions](training/tester.md), [batch-wise Extractor](training/extractor.md) |
 | Clustering | [CosineKMeans](clustering/cosine_kmeans.md), [vMF mixture](clustering/vmf_mixture.md), [cosine operations](clustering/ops.md) |
 | Cluster evaluation | [cosine silhouette](clustering/metric.md), [occupancy-corrected spatial LLA](clustering/spatial.md) |
-| Reproducibility | [global seed](utils/seed.md), explicit generator contracts in model/augmentation docs |
+| Persistence and reproducibility | [model/training artifacts](models/persistence.md), [global seed and RNG state](utils/seed.md), explicit generator contracts in model/augmentation docs |
 
 ## Numerical and experimental notes
 
@@ -31,4 +31,4 @@ when describing held-out generalization. LLA measures spatial coherence and
 occupancy rather than chemical or mineral annotation correctness.
 
 Math is authored for MathJax using inline `$...$` and display `$$...$$` with blank
-lines. Actual GitHub and Colab rendering must be verified before release.
+lines. Actual GitHub rendering must be verified before release.

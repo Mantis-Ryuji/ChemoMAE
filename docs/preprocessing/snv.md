@@ -179,5 +179,5 @@ CUDA device checks. Run the checks from the project root:
 pytest tests/preprocessing/test_snv.py -q
 ```
 
-These tests and the GitHub/Colab rendering checks must be run in their target
+These tests and the GitHub rendering checks must be run in their target
 environments; source changes alone do not establish numerical or CUDA validation.

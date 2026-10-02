@@ -1,4 +1,5 @@
 from __future__ import annotations
+from numbers import Integral
 from typing import List, Tuple
 import numpy as np
 import torch
@@ -35,15 +36,31 @@ def find_elbow_curvature(
     polyorder: int = 2,
 ) -> Tuple[int, int, float]:
     """
-    Detect elbow point by curvature on a normalized curve.
-    Compute kappa directly from Savitzky–Golay derivatives (deriv=1,2),
-    returning kappa at its maximum.
+    Detect an interior elbow on a finite, normalized, nonincreasing curve.
+
+    k_list must contain strictly increasing positive integers. On uniformly
+    spaced k values, smooth=True uses Savitzky–Golay derivatives when at least
+    five values are present. The odd window is reduced to fit the curve.
+    Nonuniform spacing and shorter curves use coordinate-aware gradients.
+    Return (selected_k, index, maximum_curvature), with scalar curvature.
     """
-    x = np.asarray(k_list, dtype=float)
-    y = np.asarray(inertia_list, dtype=float)
-    n = len(x)
-    if n < 3:
-        raise ValueError("k_list must have length >= 3")
+    raw_x = np.asarray(k_list)
+    raw_y = np.asarray(inertia_list)
+    if raw_x.dtype.kind not in "iuf" or raw_y.dtype.kind not in "iuf":
+        raise ValueError("Elbow curves must contain real numeric values.")
+    x = raw_x.astype(float)
+    y = raw_y.astype(float)
+    if x.ndim != 1 or y.ndim != 1 or x.shape != y.shape or x.size < 3:
+        raise ValueError("k_list and inertia_list must be matching 1D curves of length >= 3.")
+    if not np.isfinite(x).all() or not np.isfinite(y).all():
+        raise ValueError("Elbow curves must contain finite values.")
+    if np.any(x <= 0) or np.any(x != np.floor(x)) or np.any(np.diff(x) <= 0):
+        raise ValueError("k_list must contain strictly increasing positive integers.")
+    if isinstance(window_length, (bool, np.bool_)) or not isinstance(window_length, Integral) or window_length < 3 or window_length % 2 == 0:
+        raise ValueError("window_length must be an odd integer >= 3.")
+    if isinstance(polyorder, (bool, np.bool_)) or not isinstance(polyorder, Integral) or not 2 <= polyorder < window_length:
+        raise ValueError("polyorder must be an integer with 2 <= polyorder < window_length.")
+    n = x.size
 
     # 1) Enforce a nonincreasing sequence.
     y = np.minimum.accumulate(y)
@@ -55,19 +72,13 @@ def find_elbow_curvature(
     # 3) Adjust S-G parameters for small samples.
     #    - The odd window length is bounded according to n.
     #    - Ensure polyorder < window_length.
-    if smooth and n >= 5:
-        wl = min(window_length, (n // 2) * 2 + 1)  # Largest odd length near n.
-        wl = max(5, wl | 1)                        # At least five and odd.
-        po = min(polyorder, wl - 1)
-        po = max(2, po)                            # At least quadratic for curvature.
+    uniform_spacing = np.allclose(np.diff(x), x[1] - x[0], rtol=1e-12, atol=0)
+    if smooth and n >= 5 and uniform_spacing:
+        wl = min(int(window_length), n if n % 2 else n - 1)
+        po = min(int(polyorder), wl - 1)
         # 4) Sampling interval on normalized x.
         dx = float(np.median(np.diff(x_n)))
-        if not np.isfinite(dx) or dx <= 0:
-            dx = 1.0
-
         # 5) Compute y', y'' directly with S-G and interpolated endpoints.
-        #    Retain a zeroth-order pass for stability even without smoothed output.
-        _ = savgol_filter(y_n, window_length=wl, polyorder=po, deriv=0, mode="interp")
         dy  = savgol_filter(y_n, window_length=wl, polyorder=po, deriv=1, delta=dx, mode="interp")
         d2y = savgol_filter(y_n, window_length=wl, polyorder=po, deriv=2, delta=dx, mode="interp")
     else:
@@ -81,6 +92,8 @@ def find_elbow_curvature(
     # 7) Ignore endpoints.
     kappa[0] = kappa[-1] = -np.inf
 
+    if not np.isfinite(kappa[1:-1]).all():
+        raise ValueError("Elbow curvature arithmetic produced nonfinite values.")
     idx = int(np.argmax(kappa))
     return int(k_list[idx]), idx, float(kappa[idx])
 

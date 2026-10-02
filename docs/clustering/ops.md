@@ -74,20 +74,22 @@ $$
 $$
 
 3. **Savitzky–Golay Derivatives**
-   If `smooth=True` and $n \ge 5$, compute analytic derivatives on $y_n$. <br>
+   If `smooth=True`, $n \ge 5$, and K values are uniformly spaced, compute
+   analytic derivatives on $y_n$. Shorter or nonuniform curves use
+   coordinate-aware numerical gradients. <br>
 
    Let $\Delta x = \mathrm{median}(\mathrm{diff}(x_n))$, then:
 
 $$
-   \tilde{y} = \mathrm{SG}(y_n;\ 0), \quad
    y' = \mathrm{SG}(y_n;\ 1,\ \Delta x), \quad
    y'' = \mathrm{SG}(y_n;\ 2,\ \Delta x)
 $$
 
    *Safety adjustment:*
-   Use an odd `window_length` no larger than the number of points. The current
-   adjustment can exceed even-length inputs when a larger window is requested;
-   stronger parameter validation remains a release-plan item.
+   Require an odd `window_length` at least three, with
+   `2 <= polyorder < window_length`. The effective window is reduced to the
+   largest allowed odd length that fits the curve, including even-length inputs;
+   the effective polynomial degree is bounded by that window.
 
 4. **Curvature Calculation**
 
@@ -125,6 +127,12 @@ $$
 | `optimal_k` | `int`        | Selected cluster count at maximum curvature. |
 | `elbow_idx` | `int`        | Index of the elbow in `k_list`.              |
 | `kappa`     | `float`      | Curvature at the selected elbow index.      |
+
+Inputs must be matching finite one-dimensional curves of length at least three.
+K values must be strictly increasing positive integers. Duplicate/reversed K,
+mismatched lengths, nonfinite values, and invalid smoothing parameters raise
+ValueError. A flat curve selects the first interior point with zero curvature;
+this is a heuristic, not evidence that the chosen K has scientific meaning.
 
 #### Notes
 

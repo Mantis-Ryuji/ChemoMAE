@@ -132,6 +132,47 @@ def test_zero_vectors_match_sklearn() -> None:
     np.testing.assert_allclose(ours, ref, rtol=1e-7, atol=1e-7)
 
 
+@pytest.mark.parametrize("chunk", [0, -1, True, 1.5])
+def test_invalid_chunks_fail_before_iteration(chunk: object) -> None:
+    x, y = _make_blob_data(n_per_cluster=3, d=4, k=2)
+    with pytest.raises(ValueError, match="chunk"):
+        silhouette_samples_cosine_gpu(x, y, device="cpu", chunk=chunk)
+
+
+@pytest.mark.parametrize("labels", [
+    np.zeros(6, dtype=np.int64), np.arange(6, dtype=np.int64),
+    np.array([0.0, 0.0, 0.0, 1.5, 1.5, 1.5]),
+    np.array([False, False, False, True, True, True]), np.zeros((6, 1), dtype=np.int64),
+])
+def test_undefined_or_noninteger_labels_are_rejected(labels: np.ndarray) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        silhouette_samples_cosine_gpu(np.ones((6, 4)), labels, device="cpu")
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_nonfinite_features_are_rejected(value: float) -> None:
+    x, y = _make_blob_data(n_per_cluster=3, d=4, k=2)
+    x[0, 0] = value
+    with pytest.raises(ValueError, match="finite"):
+        silhouette_samples_cosine_gpu(x, y, device="cpu")
+
+
+def test_duplicate_directions_and_zero_distance_give_finite_zero_scores() -> None:
+    x = np.ones((6, 4), dtype=np.float64)
+    y = np.array([0, 0, 0, 1, 1, 1], dtype=np.int64)
+    scores = silhouette_samples_cosine_gpu(x, y, device="cpu", dtype=torch.float64)
+    np.testing.assert_array_equal(scores, np.zeros(6))
+
+
+def test_ambient_cpu_amp_does_not_override_requested_precision() -> None:
+    x, y = _make_blob_data(n_per_cluster=6, d=4, k=2)
+    expected = silhouette_samples_cosine_gpu(x, y, device="cpu", return_numpy=False)
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        actual = silhouette_samples_cosine_gpu(x, y, device="cpu", return_numpy=False)
+    assert actual.dtype == torch.float32
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_gpu_matches_cpu_and_chunking() -> None:
     """GPU results match CPU within float32-level tolerance and are chunk-invariant."""
