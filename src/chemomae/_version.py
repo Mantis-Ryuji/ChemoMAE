@@ -1,6 +1,6 @@
 """
 Central place to define the version of chemomae.
-This file is read by setup/pyproject and by chemomae.__init__.
+This value is exposed by chemomae.__init__ and must match project.version in pyproject.toml.
 """
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"

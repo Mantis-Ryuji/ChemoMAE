@@ -8,30 +8,30 @@ This document describes the **cosine-based silhouette score** functions implemen
 
 ## Overview
 
-The **cosine-based silhouette coefficient** quantifies clustering compactness and separation for each sample $`i`$:
+The **cosine-based silhouette coefficient** quantifies clustering compactness and separation for each sample $i$:
 
-```math
+$$
 d(x,y) = 1 - \cos(x,y)
-```
+$$
 
-```math
+$$
 a_i = \frac{1}{|C_{c(i)}|-1} \sum_{j\in C_{c(i)}, j\neq i} d(x_i, x_j)
-```
+$$
 
-```math
+$$
 b_i = \min_{k \neq c(i)} \frac{1}{|C_k|} \sum_{j\in C_k} d(x_i, x_j)
-```
+$$
 
-```math
+$$
 s_i = \frac{b_i - a_i}{\max(a_i, b_i)} \in [-1,1].
-```
+$$
 
-* **Cosine distance:** $`d(x,y) = 1 - \cos(x,y)`$.
+* **Cosine distance:** $d(x,y) = 1 - \cos(x,y)$.
   Internally, all rows are L2-normalized; zero vectors remain zeros (`cos=0 → distance=1`).
 
 * **GPU accelerated:** Vectorized with PyTorch, complexity **O(NK)**.
 
-* **Chunked evaluation:** Supports block-wise computation of $`b_i`$ to reduce memory usage.
+* **Chunked evaluation:** Supports block-wise computation of $b_i$ to reduce memory usage.
 
 * **API parity:** Equivalent to `sklearn.metrics.silhouette_samples` / `silhouette_score`, but specialized for cosine distance.
 

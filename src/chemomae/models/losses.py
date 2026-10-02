@@ -12,38 +12,36 @@ def masked_sse(
     reduction: str = "batch_mean",
 ) -> torch.Tensor:
     r"""
-    Masked Sum of Squared Errors (SSE).
+    Aggregate squared reconstruction errors at selected positions.
 
-    概要
-    ----
-    `mask=True` の位置（＝**隠す領域**）に対してのみ二乗誤差を集計します。
-    通常は可視マスク `visible` から `mask = ~visible` を作って渡します。
+    True mask entries select the loss region. For masked reconstruction,
+    invert the model's visible mask with ``mask = ~visible``.
 
     Parameters
     ----------
     x_recon : torch.Tensor, shape (B, L)
-        再構成系列。
+        Reconstructed spectra.
     x : torch.Tensor, shape (B, L)
-        元系列。
+        Target spectra.
     mask : torch.Tensor, shape (B, L), dtype=bool
-        True=損失を計算する位置（=隠す領域）。False=可視で損失対象外。
+        True includes a position in the loss; false excludes it.
     reduction : {"sum", "mean", "batch_mean"}, default="batch_mean"
-        集約方法を指定。
-        - "sum": すべてのマスク要素の SSE 合計
-        - "mean": マスク要素数で割った平均（要素平均）
-        - "batch_mean": バッチ平均（SSE / B）。マスク要素数の違いに依存しないスケーリング
+        ``sum`` returns total selected SSE. ``mean`` divides by the number
+        of selected elements. ``batch_mean`` divides selected SSE by the
+        batch size, so its value still depends on the selected channel count.
 
     Returns
     -------
     torch.Tensor
-        スカラー損失。
+        Scalar loss.
 
     Notes
     -----
-    - 空マスク（`mask.sum()==0`）のとき：
-      - "sum" と "batch_mean" は 0 を返す
-      - "mean" は 0 を返す（ゼロ割りを避けて 0 にフォールバック）
-    - 勾配は `x_recon` と `x` の双方に流れます（必要に応じて `x` の `requires_grad` を切る）。
+    An empty selection returns zero for every reduction. The empty ``mean``
+    fallback creates a constant Tensor without a gradient connection.
+    Otherwise gradients can reach both reconstruction and target; disable
+    target gradients explicitly when they are not needed. Supply finite
+    inputs over the full spectrum: errors are squared before boolean selection.
     """
     diff2 = (x_recon - x).pow(2)[mask]
     if reduction == "sum":
@@ -64,38 +62,37 @@ def masked_mse(
     reduction: str = "mean",
 ) -> torch.Tensor:
     r"""
-    Masked Mean Squared Error (MSE).
+    Aggregate squared errors, averaging selected elements by default.
 
-    概要
-    ----
-    `mask=True` の位置（＝**隠す領域**）に対してのみ二乗誤差を集計します。
-    「MSE」のデフォルト挙動は **マスク要素の平均**（"mean"）です。
+    True mask entries select the loss region. The default ``mean`` reduction
+    computes MSE over those selected elements.
 
     Parameters
     ----------
     x_recon : torch.Tensor, shape (B, L)
-        再構成系列。
+        Reconstructed spectra.
     x : torch.Tensor, shape (B, L)
-        元系列。
+        Target spectra.
     mask : torch.Tensor, shape (B, L), dtype=bool
-        True=損失を計算する位置（=隠す領域）。False=可視で損失対象外。
+        True includes a position in the loss; false excludes it.
     reduction : {"mean", "sum", "batch_mean"}, default="mean"
-        集約方法を指定。
-        - "mean": マスク要素数で割った平均（一般的な MSE）
-        - "sum": すべてのマスク要素の SSE 合計（SSE と同義）
-        - "batch_mean": バッチ平均（SSE / B）
+        ``mean`` returns selected SSE divided by the selected element count.
+        ``sum`` returns total selected SSE. ``batch_mean`` divides selected
+        SSE by the batch size. This matches :func:`masked_sse` with the same
+        reduction; only the default reduction differs.
 
     Returns
     -------
     torch.Tensor
-        スカラー損失。
+        Scalar loss.
 
     Notes
     -----
-    - 空マスク（`mask.sum()==0`）のとき：
-      - "mean" は 0 を返す
-      - "sum" / "batch_mean" も 0 を返す
-    - 可視マスクを使う場合は `masked_mse(x_rec, x, ~visible)` のように反転して渡してください。
+    An empty selection returns zero for every reduction. The empty ``mean``
+    fallback creates a constant Tensor without a gradient connection.
+    Invert a visible mask when selecting hidden positions, for example
+    ``masked_mse(x_recon, x, ~visible)``. Supply finite inputs over the full
+    spectrum: errors are squared before boolean selection.
     """
     diff2 = (x_recon - x).pow(2)[mask]
     if reduction == "sum":

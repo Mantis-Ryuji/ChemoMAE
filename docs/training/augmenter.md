@@ -19,17 +19,17 @@ The intended role of this module is **auxiliary regularization** for masked or f
 
 Consider a batch of SNV-normalized spectra
 
-```math
+$$
 X = \{\mathbf{x}_1, \dots, \mathbf{x}_B\} \subset \mathbb{R}^L
-```
+$$
 
 where each spectrum satisfies approximately
 
-```math
+$$
 \frac{1}{L}\sum_{\ell=1}^{L} x_{i,\ell} \approx 0 \quad\text{and}\quad\lVert \mathbf{x}_i \rVert_2 \approx r
-```
+$$
 
-for some nearly constant radius $`r > 0`$.
+for some nearly constant radius $r > 0$.
 
 Under exact SNV with population standard deviation, each spectrum lies on the intersection of:
 
@@ -38,15 +38,15 @@ Under exact SNV with population standard deviation, each spectrum lies on the in
 
 That is,
 
-```math
+$$
 \mathbf{x}_i \in \mathcal{M}=\left\{\mathbf{x} \in \mathbb{R}^L\;\middle|\;\mathbf{1}^{\top}\mathbf{x}=0,\;\lVert \mathbf{x} \rVert_2=r\right\}.
-```
+$$
 
 A naive Euclidean perturbation,
 
-```math
+$$
 \mathbf{x}_i' = \mathbf{x}_i + \boldsymbol{\varepsilon}_i,
-```
+$$
 
 generally violates this structure because it may change both the sample mean and the L2 norm.
 
@@ -63,23 +63,23 @@ The main learning signal in ChemoMAE is reconstruction over the region selected 
 
 In masked mode, the model receives a partially visible spectrum and learns to reconstruct masked wavelength regions. In all-region mode, every output element is compared with the clean spectrum. Augmentation is used only as a secondary regularizer, and the reconstruction target remains the unaugmented input in both modes:
 
-```math
+$$
 A(\mathbf{x})_{\Omega_v}\longrightarrow\mathbf{x}_{\Omega_m},
-```
+$$
 
 where:
 
-* $`A`$ is the augmentation operator,
-* $`\Omega_v`$ is the visible wavelength region,
-* $`\Omega_m`$ is the masked wavelength region.
+* $A$ is the augmentation operator,
+* $\Omega_v$ is the visible wavelength region,
+* $\Omega_m$ is the masked wavelength region.
 
 Thus, the module should perturb spectra enough to improve robustness, but not so strongly that it destroys chemically or physically meaningful degradation-related variation.
 
 For this reason, the recommended augmentation set is intentionally compact:
 
-```math
+$$
 \text{fractional shift} + \text{tangent Gaussian noise}.
-```
+$$
 
 Structured low-frequency augmentations such as tilt or quadratic baseline are intentionally excluded from this version because they may interfere with degradation-related low-frequency spectral changes.
 
@@ -93,9 +93,9 @@ This implementation uses different control variables for fractional shift and ta
 
 Fractional shift is controlled only by the shift amount
 
-```math
+$$
 \delta \quad \text{[channel index]}.
-```
+$$
 
 The corresponding API parameter is:
 
@@ -111,11 +111,11 @@ This design is intentional. Fractional shift is an axis-domain operation, and it
 
 Tangent Gaussian noise is controlled by geodesic angle.
 
-For an input spectrum $`\mathbf{x}`$ and augmented spectrum $`\mathbf{x}_{\mathrm{aug}}`$, the angle is defined through
+For an input spectrum $\mathbf{x}$ and augmented spectrum $\mathbf{x}_{\mathrm{aug}}$, the angle is defined through
 
-```math
+$$
 \cos(\theta)=\frac{\mathbf{x}^{\top}\mathbf{x}_{\mathrm{aug}}}{\lVert \mathbf{x} \rVert_2 \lVert \mathbf{x}_{\mathrm{aug}} \rVert_2}.
-```
+$$
 
 The API specifies the noise angle range in **degrees**:
 
@@ -133,20 +133,20 @@ Angle-based control is appropriate for tangent Gaussian noise because the pertur
 
 After each augmentation, the module can apply re-centering:
 
-```math
+$$
 \mathbf{x}_{\mathrm{cand}}\leftarrow\mathbf{x}_{\mathrm{cand}}-\frac{1}{L}\left(\mathbf{1}^{\top}\mathbf{x}_{\mathrm{cand}}\right)\mathbf{1},
-```
+$$
 
 followed by re-normalization:
 
-```math
+$$
 \mathbf{x}_{\mathrm{cand}}\leftarrow\lVert \mathbf{x} \rVert_2\frac{\mathbf{x}_{\mathrm{cand}}}{\lVert \mathbf{x}_{\mathrm{cand}} \rVert_2}.
-```
+$$
 
 Here:
 
-* $`\mathbf{x}`$ is the input to the current augmentation operation,
-* $`\mathbf{x}_{\mathrm{cand}}`$ is the intermediate augmented candidate.
+* $\mathbf{x}$ is the input to the current augmentation operation,
+* $\mathbf{x}_{\mathrm{cand}}$ is the intermediate augmented candidate.
 
 This operation preserves the original per-sample norm while enforcing zero mean.
 
@@ -165,17 +165,17 @@ When both are enabled, the output after each augmentation remains compatible wit
 
 For tangent Gaussian noise, the implementation constructs a perturbation direction in the tangent space of the sphere.
 
-At a spectrum $`\mathbf{x}`$, the tangent space of the sphere is
+At a spectrum $\mathbf{x}$, the tangent space of the sphere is
 
-```math
+$$
 T_{\mathbf{x}}\mathbb{S}^{L-1}(r)=\left\{\mathbf{v} \in \mathbb{R}^L\;\middle|\;\mathbf{v}^{\top}\mathbf{x}=0\right\}.
-```
+$$
 
-Given an arbitrary direction $`\mathbf{d}`$, the projection onto this tangent space is
+Given an arbitrary direction $\mathbf{d}$, the projection onto this tangent space is
 
-```math
+$$
 \mathbf{v}=\mathbf{d}-\frac{\mathbf{d}^{\top}\mathbf{x}}{\lVert \mathbf{x} \rVert_2^2}\mathbf{x}.
-```
+$$
 
 In this implementation, the random direction is first centered before tangent projection. This makes the perturbation more compatible with the zero-mean SNV hyperplane.
 
@@ -183,11 +183,11 @@ In this implementation, the random direction is first centered before tangent pr
 
 ## Geodesic Rotation for Noise
 
-Given a unit tangent direction $`\mathbf{u}`$, the spectrum is rotated along the sphere by angle $`\theta`$:
+Given a unit tangent direction $\mathbf{u}$, the spectrum is rotated along the sphere by angle $\theta$:
 
-```math
+$$
 \mathbf{x}_{\mathrm{aug}}=r\left(\cos(\theta)\frac{\mathbf{x}}{r}+\sin(\theta)\mathbf{u}\right),\qquad r = \lVert \mathbf{x} \rVert_2.
-```
+$$
 
 This operation preserves the L2 norm before re-centering. Since re-centering may slightly change the norm, the implementation can re-normalize the result to the input norm afterward.
 
@@ -207,35 +207,35 @@ Unlike `torch.roll`, fractional shift supports non-integer shifts and uses linea
 
 ### Construction
 
-For each selected spectrum $`\mathbf{x}`$, a shift amount is sampled:
+For each selected spectrum $\mathbf{x}$, a shift amount is sampled:
 
-```math
+$$
 \delta \sim \mathcal{U}(\delta_{\min}, \delta_{\max}).
-```
+$$
 
-The shifted candidate $`\mathbf{x}_{\mathrm{shift}}`$ is constructed by interpolation:
+The shifted candidate $\mathbf{x}_{\mathrm{shift}}$ is constructed by interpolation:
 
-```math
+$$
 (\mathbf{x}_{\mathrm{shift}})_\ell=(1-\alpha_\ell)x_{\lfloor s_\ell \rfloor}+\alpha_\ell x_{\lfloor s_\ell \rfloor+1},
-```
+$$
 
 where
 
-```math
+$$
 s_\ell = \ell - \delta \quad\text{and}\quad\alpha_\ell = s_\ell - \lfloor s_\ell \rfloor.
-```
+$$
 
 Boundary indices are clamped to the valid wavelength-index range.
 
-After the candidate shift is generated, $`\mathbf{x}_{\mathrm{shift}}`$ is reprojected to the SNV-compatible geometry.
+After the candidate shift is generated, $\mathbf{x}_{\mathrm{shift}}$ is reprojected to the SNV-compatible geometry.
 
 The final output of this augmentation is
 
-```math
+$$
 \mathbf{x}_{\mathrm{aug}}=\Pi_{\mathcal{M}}(\mathbf{x}_{\mathrm{shift}}),
-```
+$$
 
-where $`\Pi_{\mathcal{M}}`$ denotes the optional re-centering and re-normalization operation.
+where $\Pi_{\mathcal{M}}$ denotes the optional re-centering and re-normalization operation.
 
 ### Practical Role
 
@@ -258,9 +258,9 @@ Tangent Gaussian noise introduces small random local perturbations while respect
 
 Instead of adding Euclidean Gaussian noise directly,
 
-```math
+$$
 \mathbf{x}_{\mathrm{aug}} = \mathbf{x} + \boldsymbol{\varepsilon},
-```
+$$
 
 the implementation:
 
@@ -272,52 +272,52 @@ the implementation:
 
 ### Construction
 
-For each selected spectrum $`\mathbf{x}`$, sample
+For each selected spectrum $\mathbf{x}$, sample
 
-```math
+$$
 \mathbf{g} \sim \mathcal{N}(\mathbf{0}, I_L).
-```
+$$
 
 Center the direction:
 
-```math
+$$
 \tilde{\mathbf{g}}
 =
 \mathbf{g}
 -
 \frac{1}{L}
 (\mathbf{1}^{\top}\mathbf{g})\mathbf{1}.
-```
+$$
 
 Project it onto the tangent space:
 
-```math
+$$
 \mathbf{v}=\tilde{\mathbf{g}}-\frac{\tilde{\mathbf{g}}^{\top}\mathbf{x}}{\lVert \mathbf{x} \rVert_2^2}\mathbf{x}.
-```
+$$
 
 Normalize the tangent direction:
 
-```math
+$$
 \mathbf{u}
 =
 \frac{\mathbf{v}}{\lVert \mathbf{v} \rVert_2}.
-```
+$$
 
 Then sample an angle:
 
-```math
+$$
 \theta_{\mathrm{noise}}
 \sim
 \mathcal{U}(\theta_{\min}, \theta_{\max})
-```
+$$
 
 and rotate along the tangent direction:
 
-```math
+$$
 \mathbf{x}_{\mathrm{noise}}=r\left(\cos(\theta_{\mathrm{noise}})\frac{\mathbf{x}}{r}+\sin(\theta_{\mathrm{noise}})\mathbf{u}\right).
-```
+$$
 
-Finally, $`\mathbf{x}_{\mathrm{noise}}`$ is reprojected to the SNV-compatible geometry when re-centering and re-normalization are enabled.
+Finally, $\mathbf{x}_{\mathrm{noise}}$ is reprojected to the SNV-compatible geometry when re-centering and re-normalization are enabled.
 
 ### Practical Role
 
@@ -345,15 +345,15 @@ shuffle_order_per_batch = False
 
 the operations are applied in this fixed order:
 
-```math
+$$
 \text{fractional shift}\rightarrow\text{tangent Gaussian noise}.
-```
+$$
 
 With reprojection enabled, the sequence becomes:
 
-```math
+$$
 \text{shift}\rightarrow\text{recenter/renorm}\rightarrow\text{noise}\rightarrow\text{recenter/renorm}.
-```
+$$
 
 ### Random Order
 
@@ -365,9 +365,9 @@ shuffle_order_per_batch = True
 
 the operation order is sampled once per batch. The possible orders are:
 
-```math
+$$
 \text{shift}\rightarrow\text{noise}\quad\mathrm{or}\quad\text{noise}\rightarrow\text{shift}.
-```
+$$
 
 The order is not sampled independently for each sample. However, each operation still has an independent per-sample application mask and independently sampled strength parameters.
 
@@ -410,26 +410,37 @@ class SpectraAugmenterConfig:
 ### Constraints
 
 * `shift_prob` and `noise_prob` must lie in `[0, 1]`.
-* `shift_delta_range` must satisfy `low <= high`.
+* `shift_delta_range` must have finite endpoints and satisfy `low <= high`.
 * `noise_angle_deg_range` must satisfy:
 
+  * finite endpoints,
   * lower bound `>= 0`,
   * upper bound `<= 180`,
   * lower bound `<=` upper bound.
-* `eps > 0`.
+* `eps` must be finite and strictly positive.
 
 ### Class: `SpectraAugmenter`
 
 ```python
 class SpectraAugmenter(nn.Module):
-    def __init__(self, config: SpectraAugmenterConfig) -> None: ...
-    def forward(self, x: torch.Tensor) -> torch.Tensor: ...
+    def __init__(
+        self, config: SpectraAugmenterConfig, *,
+        generator: torch.Generator | None = None,
+    ) -> None: ...
+    def forward(
+        self, x: torch.Tensor, *, generator: torch.Generator | None = None,
+    ) -> torch.Tensor: ...
 ```
 
 ### Input
 
 * `x`: `torch.Tensor` of shape `(B, L)`
 * floating dtype required
+
+For float16/bfloat16 input, fractional-shift draws, channel coordinates, and
+interpolation arithmetic use float32 before converting back to the input dtype.
+This avoids rounding away half-channel shifts or aliasing neighboring channel
+indices. Float32/float64 input keeps its corresponding shift arithmetic.
 
 ### Output
 
@@ -475,11 +486,62 @@ x_aug = augmenter(x)
 
 ---
 
+## Caller-owned random streams
+
+Every random draw can use an explicit `torch.Generator`: operation order,
+per-spectrum application masks, shift amounts, Gaussian directions, and noise
+angles. Supply a module default so that `Trainer`, `Tester`, and `Extractor`
+can keep calling `augmenter(x)` without hidden global-state replacement:
+
+```python
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+augmentation_stream = torch.Generator(device=device).manual_seed(42)
+augmenter = SpectraAugmenter(cfg, generator=augmentation_stream).train()
+x = x.to(device)
+x_aug = augmenter(x)
+
+# A separate stream overrides the module default for this call only.
+other_stream = torch.Generator(device=device).manual_seed(73)
+other_view = augmenter(x, generator=other_stream)
+```
+
+`forward(..., generator=None)` selects the module default. If neither is
+supplied, random draws use the input device's global Torch generator; the module
+does not reseed or replace global state. Explicit streams leave unrelated
+global streams untouched. Use independent generators for masking, augmentation,
+and sampling when those operations must not affect each other's sequences.
+
+The active stream must match the input's device type and CUDA index. Device
+mismatches raise a clear error during active augmentation. `augmenter.to(...)`
+does not move a generator: create a stream on the destination device explicitly.
+In evaluation mode the input is returned unchanged and no stream advances.
+
+Generator state is caller-owned and is not part of `augmenter.state_dict()`.
+Persist the selected stream separately when continuing an augmentation sequence:
+
+```python
+state = augmentation_stream.get_state().clone()
+expected_next = augmenter(x)
+augmentation_stream.set_state(state)
+repeated_next = augmenter(x)
+torch.testing.assert_close(repeated_next, expected_next)
+```
+
+Restoring a seed or state only reproduces a sequence under matching inputs,
+configuration, modes, batch partitioning, call order, device, dtype, and
+software. Equal seeds do not establish equality across CPU/CUDA or Torch
+versions. Skipped operations and degenerate tangent directions can change how
+many draws a call consumes. This API changes RNG ownership; fractional-shift
+interpolation, tangent projection, geodesic rotation, and reprojection remain
+the same mathematical operations.
+
+---
+
 ## Design Notes
 
 ### Why remove angle control from fractional shift?
 
-Fractional shift is naturally parameterized by the displacement amount $`\delta`$ along the wavelength axis.
+Fractional shift is naturally parameterized by the displacement amount $\delta$ along the wavelength axis.
 
 Earlier versions controlled shift in two stages:
 
@@ -492,9 +554,9 @@ For spectra, this can be undesirable because the same channel shift may induce v
 
 Therefore, the current design uses:
 
-```math
+$$
 \delta \sim \mathcal{U}(\delta_{\min}, \delta_{\max})
-```
+$$
 
 as the only shift-strength parameter.
 
@@ -508,29 +570,29 @@ Tangent Gaussian noise does not have a natural physical unit like channel displa
 
 The random direction is sampled in the ambient feature space and then projected to the tangent space. Therefore, controlling its magnitude by geodesic angle is appropriate:
 
-```math
+$$
 c = \cos(\theta).
-```
+$$
 
 For weak augmentations:
 
-```math
+$$
 \theta = 1^\circ
 \quad\Rightarrow\quad
 c \approx 0.99985
-```
+$$
 
-```math
+$$
 \theta = 3^\circ
 \quad\Rightarrow\quad
 c \approx 0.99863
-```
+$$
 
-```math
+$$
 \theta = 5^\circ
 \quad\Rightarrow\quad
 c \approx 0.99619
-```
+$$
 
 Thus, small degree values correspond to very high cosine similarity.
 
@@ -558,9 +620,9 @@ ChemoMAE already receives a strong reconstruction learning signal. Augmentation 
 
 The intended role is:
 
-```math
+$$
 \text{reconstruction}+\text{weak denoising regularization}.
-```
+$$
 
 Strong augmentations may cause the model to reconstruct targets from overly distorted inputs and could suppress degradation-related structure.
 
@@ -579,21 +641,17 @@ augmenter.eval()
 x_out = augmenter(x)
 ```
 
-gives $`\mathbf{x}_{\mathrm{out}} = \mathbf{x}`$.
+gives $\mathbf{x}_{\mathrm{out}} = \mathbf{x}$.
 
 ### Do not use for deterministic feature extraction
 
 For latent extraction, spectra should be passed without stochastic augmentation.
 
-For ChemoMAE feature extraction, use either:
-
-```python
-augmenter.eval()
-```
-
-or avoid passing an augmenter entirely.
-
-Also ensure that the model itself is called with an all-visible mask if deterministic latent extraction is required.
+For repeatable extraction with `Extractor`, omit the augmenter. Passing an
+augmenter to `Extractor` or `Tester` explicitly activates it for each batch,
+even if it was previously in evaluation mode; its original mode is restored.
+Calling `augmenter.eval()` directly still makes standalone `augmenter(x)` an
+identity operation. `Extractor` calls the model's all-visible `encode` API.
 
 ### Recommended after SNV preprocessing
 
@@ -601,9 +659,9 @@ This module assumes spectra are already SNV-normalized.
 
 The recommended input geometry is:
 
-```math
+$$
 \mathbf{1}^{\top}\mathbf{x} \approx 0\quad\text{and}\quad\lVert \mathbf{x} \rVert_2 \approx r.
-```
+$$
 
 ---
 

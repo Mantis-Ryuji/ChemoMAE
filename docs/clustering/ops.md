@@ -18,16 +18,17 @@ These operations provide the numerical foundation for `CosineKMeans` and `elbow_
 
 Row-wise L2 normalization.
 
-* Each row vector is divided by its L2 norm.
-* Guarantees unit-length rows, suitable for cosine-based clustering.
+* Each row vector is divided by its L2 norm clamped below by `eps`.
+* Nonzero rows with norm at least `eps` become unit length. Zero rows stay zero;
+  smaller rows remain below unit length.
 
 **Formula**
 
-For a row vector $`x`$:
+For a row vector $x$:
 
-```math
-\tilde{x} = \frac{x}{\lVert x \rVert_2 + \varepsilon}
-```
+$$
+\tilde{x} = \frac{x}{\max(\lVert x \rVert_2, \varepsilon)}
+$$
 
 ---
 
@@ -36,7 +37,7 @@ For a row vector $`x`$:
 Compute pairwise cosine similarity between row-normalized tensors.
 
 * Assumes both `A` and `B` are already L2-normalized.
-* Returns an `(N, M)` matrix of $`\cos(x_i, y_j)`$ values.
+* Returns an `(N, M)` matrix of $\cos(x_i, y_j)$ values.
 
 ---
 
@@ -45,13 +46,13 @@ Compute pairwise cosine similarity between row-normalized tensors.
 Compute cosine dissimilarity ($1 - \cos$).
 
 * Used as the inertia metric in `CosineKMeans`.
-* Returns `(N, M)` matrix of $`1 - \cos(x_i, y_j)`$.
+* Returns `(N, M)` matrix of $1 - \cos(x_i, y_j)$.
 
 ---
 
 ### Function:
 
-`find_elbow_curvature(k_list: List[int], inertia_list: List[float], *, smooth: bool = True, window_length: int = 5, polyorder: int = 2) -> Tuple[int, int, np.ndarray]`
+`find_elbow_curvature(k_list: List[int], inertia_list: List[float], smooth: bool = True, window_length: int = 5, polyorder: int = 2) -> Tuple[int, int, float]`
 
 Estimate the optimal cluster count via **curvature-based elbow detection** using the **Savitzky–Golay derivative method**.
 
@@ -60,56 +61,59 @@ Estimate the optimal cluster count via **curvature-based elbow detection** using
 1. **Monotonicity Enforcement**
    Enforce non-increasing inertia:
 
-```math
-   y \leftarrow \mathrm{cummin}(y) = \min_{i \le j} y_i
-```
+$$
+   y_j \leftarrow \min_{i \le j} y_i
+$$
 
 2. **Normalization**
    Scale $(x, y)$ to $[0, 1]$ for numerical stability:
 
-```math
+$$
    x_n = \frac{x - x_{\min}}{x_{\max} - x_{\min} + \varepsilon}, \quad
    y_n = \frac{y - y_{\min}}{y_{\max} - y_{\min} + \varepsilon}
-```
+$$
 
 3. **Savitzky–Golay Derivatives**
    If `smooth=True` and $n \ge 5$, compute analytic derivatives on $y_n$. <br>
 
-   Let $`\Delta x = \mathrm{median}(\mathrm{diff}(x_n))`$, then:
+   Let $\Delta x = \mathrm{median}(\mathrm{diff}(x_n))$, then:
 
-```math
+$$
    \tilde{y} = \mathrm{SG}(y_n;\ 0), \quad
    y' = \mathrm{SG}(y_n;\ 1,\ \Delta x), \quad
    y'' = \mathrm{SG}(y_n;\ 2,\ \Delta x)
-```
+$$
 
    *Safety adjustment:*
-   `window_length` is clipped to the largest odd number ≤ `n`,
-   and `polyorder < window_length`.
+   Use an odd `window_length` no larger than the number of points. The current
+   adjustment can exceed even-length inputs when a larger window is requested;
+   stronger parameter validation remains a release-plan item.
 
 4. **Curvature Calculation**
 
-```math
+$$
    \kappa = \frac{|y''|}{(1 + (y')^2)^{3/2}}
-```
+$$
 
 5. **Endpoint Handling**
-```math
+
+$$
    \text{Set} \quad \kappa_0 = \kappa_{n-1} = -\infty
-```
+$$
+
 6. **Elbow Selection**
 
-```math
+$$
    \text{optimal\_k} = k_{\arg\max \kappa}, \quad
    \text{elbow\_idx} = \arg\max \kappa
-```
+$$
 
 #### Parameters
 
 | Name            | Type          | Default | Description                                 |
 | --------------- | ------------- | ------- | ------------------------------------------- |
 | `k_list`        | `List[int]`   | —       | List of tested cluster counts.              |
-| `inertia_list`  | `List[float]` | —       | Mean inertia per K (e.g., mean $`1-\cos`$). |
+| `inertia_list`  | `List[float]` | —       | Mean inertia per K (e.g., mean $1-\cos$). |
 | `smooth`        | `bool`        | `True`  | Enable S–G derivative smoothing.            |
 | `window_length` | `int`         | `5`     | Window size for S–G filter (auto-adjusted). |
 | `polyorder`     | `int`         | `2`     | Polynomial order for S–G filter.            |
@@ -120,7 +124,7 @@ Estimate the optimal cluster count via **curvature-based elbow detection** using
 | ----------- | ------------ | -------------------------------------------- |
 | `optimal_k` | `int`        | Selected cluster count at maximum curvature. |
 | `elbow_idx` | `int`        | Index of the elbow in `k_list`.              |
-| `kappa`     | `np.ndarray` | Curvature array (endpoints = −∞).            |
+| `kappa`     | `float`      | Curvature at the selected elbow index.      |
 
 #### Notes
 
@@ -129,7 +133,7 @@ Estimate the optimal cluster count via **curvature-based elbow detection** using
 
 ---
 
-### Function: `plot_elbow(k_list, inertias, optimal_k, elbow_idx)`
+### Function: `plot_elbow_ckm(k_list, inertias, optimal_k, elbow_idx)`
 
 Visualize the inertia curve and elbow location.
 
@@ -146,7 +150,7 @@ Visualize the inertia curve and elbow location.
 from chemomae.clustering.ops import (
     l2_normalize_rows,
     find_elbow_curvature,
-    plot_elbow,
+    plot_elbow_ckm,
 )
 import matplotlib.pyplot as plt
 import torch
@@ -159,7 +163,7 @@ k_list = [2, 3, 4, 5, 6]
 inertias = [0.7, 0.5, 0.42, 0.39, 0.38]
 K, idx, kappa = find_elbow_curvature(k_list, inertias)
 
-plot_elbow(k_list, inertias, K, idx)
+plot_elbow_ckm(k_list, inertias, K, idx)
 plt.show()
 ```
 
@@ -169,7 +173,7 @@ plt.show()
 
 * Functions assume **cosine-based** clustering context (inputs typically pre-normalized).
 * `find_elbow_curvature` ensures monotonic inertia for numerical robustness.
-* `plot_elbow` uses Matplotlib with minimal dependencies, designed for flexible integration.
+* `plot_elbow_ckm` uses Matplotlib with minimal dependencies, designed for flexible integration.
 
 ---
 

@@ -1,188 +1,164 @@
-# Optimizer & Scheduler Builders for ChemoMAE
+# Optimizer and scheduler builders
 
-> Module: `chemomae.training.optim`
+`chemomae.training.optim` provides grouped AdamW and a per-update
+linear-warmup/cosine scheduler. These defaults are an explicit recipe, not a
+scientific recommendation for every spectrum, model, or dataset.
 
-This module provides utilities to construct a **parameter-grouped AdamW optimizer** and a **linear-warmup + cosine-decay** learning-rate scheduler tailored for Transformer-based 1D spectral models such as ChemoMAE.
-
----
-
-## Summary
-
-* **`build_optimizer(model, lr=1.5e-4, weight_decay=0.05, betas=(0.9,0.95), eps=1e-8)`**
-  Returns an **AdamW** optimizer with **standard weight-decay exclusions**:
-
-  * bias parameters (`.bias`)
-  * LayerNorm weights
-  * learned tokens and embeddings: `cls_token`, `pos_embed`
-
-  Two parameter groups are created:
-  `{weight_decay=wd}` and `{weight_decay=0.0}`.
-
-* **`build_scheduler(optimizer, *, steps_per_epoch, epochs, warmup_epochs=1, min_lr_scale=0.1)`**
-  Returns a `LambdaLR` implementing **linear warmup** (for `warmup_epochs`) followed by **cosine decay** down to `base_lr × min_lr_scale`.
-  It’s a convenience wrapper around `build_warmup_cosine(...)`, which operates on global step counts.
-
----
-
-## Rationale for Defaults
-
-* **AdamW** is the de-facto optimizer for Vision Transformer–like architectures; its exclusions prevent over-regularization of normalization layers and special embeddings.
-* **Linear warmup** stabilizes early training when activations and gradients are uncalibrated.
-* **Cosine decay** yields a smooth, non-oscillatory LR schedule that converges gracefully.
-
----
-
-## API Reference
-
-### `build_optimizer(...) → torch.optim.AdamW`
-
-#### Parameters
-
-| Name           | Type                 | Default       | Description                                                   |
-| -------------- | -------------------- | ------------- | ------------------------------------------------------------- |
-| `model`        | `nn.Module`          | —             | Model whose parameters are grouped by decay / no-decay rules. |
-| `lr`           | `float`              | `1.5e-4`        | Base learning rate.                                           |
-| `weight_decay` | `float`              | `0.05`        | L2 coefficient for the decay group.                           |
-| `betas`        | `tuple[float,float]` | `(0.9, 0.95)` | AdamW β coefficients.                                         |
-| `eps`          | `float`              | `1e-8`        | Numerical stability term for AdamW.                           |
-
-#### Behavior
-
-The function traverses the model hierarchy and assigns parameters to **no-decay** if they belong to:
-
-* any bias parameter,
-* LayerNorm weights, or
-* special tokens/embeddings (`cls_token`, `pos_embed`).
-  All others (typically Linear weights) belong to the **decay** group.
-
-#### Example
+## AdamW parameter groups
 
 ```python
+import torch
 from chemomae.models import ChemoMAE
-from chemomae.training.optim import build_optimizer
+from chemomae.training import build_optimizer
 
-model = ChemoMAE(seq_len=256)
-optimizer = build_optimizer(model, lr=1e-3, weight_decay=1e-4)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = ChemoMAE(seq_len=256).to(device)
+optimizer = build_optimizer(model, lr=1.5e-4, weight_decay=0.05)
 
-for i, g in enumerate(optimizer.param_groups):
-    print(i, 'params=', len(g['params']), 'wd=', g['weight_decay'])
+parameter_names = {id(parameter): name for name, parameter in model.named_parameters()}
+for index, group in enumerate(optimizer.param_groups):
+    names = [parameter_names[id(parameter)] for parameter in group["params"]]
+    print(index, "weight_decay=", group["weight_decay"], "parameters=", names)
 ```
 
----
+Move the model to its training device and configure `requires_grad` before
+constructing the optimizer. Frozen parameters are omitted.
 
-### `build_scheduler(...) → torch.optim.lr_scheduler.LambdaLR`
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `lr` | `1.5e-4` | Group base learning rate before scheduler scaling |
+| `weight_decay` | `0.05` | AdamW decoupled decay for the decay group |
+| `betas` | `(0.9, 0.95)` | AdamW moment coefficients |
+| `eps` | `1e-8` | AdamW stability term |
 
-#### Parameters
+No decay applies to parameter names ending in `.bias`, any parameter whose
+module/ancestor walk includes `LayerNorm`, and names containing `cls_token` or
+`pos_embed`. These are exact name/module rules; a top-level parameter simply
+named `bias` does not match the `.bias` suffix rule. Other parameters receive
+`weight_decay`. Only nonempty groups are created, with decay first and no-decay
+second when both exist. Inspect `optimizer.param_groups` rather than assuming
+every model yields two groups.
 
-| Name              | Type        | Default | Description                                            |
-| ----------------- | ----------- | ------- | ------------------------------------------------------ |
-| `optimizer`       | `Optimizer` | —       | Target optimizer.                                      |
-| `steps_per_epoch` | `int`       | —       | Number of steps per epoch (e.g., `len(train_loader)`). |
-| `epochs`          | `int`       | —       | Total number of training epochs.                       |
-| `warmup_epochs`   | `int`       | `1`     | Number of epochs to linearly ramp LR from 0 → base LR. |
-| `min_lr_scale`    | `float`     | `0.1`   | Final LR scale: `base_lr × min_lr_scale`.              |
-
-#### Step-wise Definition
-
-Let `S = steps_per_epoch × epochs`,
-`W = steps_per_epoch × warmup_epochs`,
-and global step index `s ∈ {0, 1, …}`.
-The LR multiplier λ(s) is:
-
-```math
-\lambda(s) =
-\begin{cases}
-\max(10^{-8}, \tfrac{s+1}{\max(1,W)}) & s < W,\\[6pt]
-\alpha + \tfrac{1-\alpha}{2}\bigl(1+\cos(\pi t)\bigr) & s \ge W, \quad
-t=\tfrac{s-W}{\max(1, S-W)},\ \alpha=\text{min\_lr\_scale}.
-\end{cases}
-```
-
-Actual LR: `lr(s) = base_lr × λ(s)`
-If `warmup_epochs=0`, the function still behaves safely due to `max(1, W)`.
-
-#### Example
+## Epoch-sized scheduler budgets
 
 ```python
-from chemomae.training.optim import build_optimizer, build_scheduler
-optimizer = build_optimizer(model, lr=1e-3, weight_decay=1e-4)
+from chemomae.training import build_scheduler
+
 scheduler = build_scheduler(
     optimizer,
     steps_per_epoch=len(train_loader),
-    epochs=100,
-    warmup_epochs=5,
-    min_lr_scale=0.1
+    epochs=2,
+    warmup_epochs=1,
+    min_lr_scale=0.1,
 )
-
-for epoch in range(100):
-    for batch in train_loader:
-        loss = train_step(batch)
-        loss.backward()
-        optimizer.step()
-        scheduler.step()     # one step per optimizer update
-        optimizer.zero_grad(set_to_none=True)
 ```
 
----
+`train_loader` above is the caller's training iterable. The wrapper sets
+`total_steps = steps_per_epoch * epochs` and
+`warmup_steps = steps_per_epoch * warmup_epochs`, then delegates to
+`build_warmup_cosine`. Each group receives the same multiplier relative to its
+own base rate.
 
-### `build_warmup_cosine(optimizer, *, warmup_steps, total_steps, min_lr_scale=0.0)`
-
-A lower-level variant that accepts explicit **global step** counts.
-Useful when training with **gradient accumulation** or custom step accounting.
-
-#### Parameters
-
-| Name           | Type        | Default | Description                               |
-| -------------- | ----------- | ------- | ----------------------------------------- |
-| `optimizer`    | `Optimizer` | —       | Target optimizer.                         |
-| `warmup_steps` | `int`       | —       | Number of warmup steps.                   |
-| `total_steps`  | `int`       | —       | Total number of steps (including warmup). |
-| `min_lr_scale` | `float`     | `0.0`   | Final LR scale at the end of training.    |
-
-#### Example
+Use the lower-level builder for explicit update budgets:
 
 ```python
 from chemomae.training.optim import build_warmup_cosine
-opt = build_optimizer(model, lr=1e-3)
-sched = build_warmup_cosine(opt, warmup_steps=1000, total_steps=50000, min_lr_scale=0.2)
 
-for s in range(50000):
-    loss = train_step()
-    loss.backward()
-    opt.step(); sched.step()
-    opt.zero_grad(set_to_none=True)
+scheduler = build_warmup_cosine(
+    optimizer, warmup_steps=2, total_steps=6, min_lr_scale=0.1,
+)
 ```
 
----
+The lower-level default `min_lr_scale` is `0.0`; the epoch wrapper defaults to
+`0.1`. Choose positive total steps, a meaningful warmup budget, and the intended
+minimum scale explicitly. The builders do not validate arbitrary schedule
+budgets. Their denominator guards prevent division by zero, not invalid research
+or training configurations.
 
-## Practical Tips
+## Exact multiplier and update indexing
 
-* **Batch-size scaling:** When changing batch size significantly, scale `lr` linearly (and adjust `warmup_epochs` if needed).
-* **Min LR:** `min_lr_scale=0.1` is robust; lower it for very long training or if late-epoch overfitting appears.
-* **Frozen parameters:** Call `build_optimizer` *after* setting `requires_grad=False` to exclude frozen params.
-* **EMA & AMP:** Compatible with both exponential moving average and mixed precision.
-* **Step order:** Normally call `optimizer.step()` **before** `scheduler.step()`.
-  If using gradient accumulation, step the scheduler only after the actual optimizer update.
+Let $S$ be `total_steps`, $W$ be `warmup_steps`, $\alpha$ be
+`min_lr_scale`, and $s$ be the scheduler's zero-based index. The implementation is
 
----
+$$
+t(s) = \min\left(1,\frac{s-W}{\max(1,S-W)}\right),
+$$
 
-## Minimal Tests
+$$
+\lambda(s) =
+\begin{cases}
+\max\left(10^{-8},\frac{s+1}{\max(1,W)}\right), & s<W, \\
+\alpha+\frac{1-\alpha}{2}\left(1+\cos(\pi t(s))\right), & s\ge W.
+\end{cases}
+$$
+
+The rate at that index is $\mathrm{base\_lr}\,\lambda(s)$.
+
+`LambdaLR` applies index **0 during construction**. With positive warmup, the
+first optimizer update therefore uses the positive multiplier
+$\max(10^{-8},1/W)$, rather than starting at zero. With no warmup, index 0 uses
+the full base rate.
+
+Call `optimizer.step()` before `scheduler.step()`. If every update succeeds and
+the scheduler is stepped once afterward, the $j$-th update uses index $j-1$;
+the following scheduler call installs index $j$ for the next update.
+
+| Point in a normal budget with $0<W<S$ | Scheduler index | Effect |
+| --- | --- | --- |
+| Before first update | $0$ | Positive initial warmup rate |
+| Update $W$ | $W-1$ | First use of the full base rate |
+| Update $W+1$ | $W$ | Cosine decay starts at the full base rate again |
+| Last planned update $S$ | $S-1$ | Uses the penultimate cosine index |
+| After that update and scheduler call | $S$ | Installs the minimum scale $\alpha$ |
+
+The full base rate consequently appears at two adjacent indices around a
+positive warmup boundary. With $W<S$ and $\alpha<1$, the final planned optimizer
+update uses a rate above the minimum; the minimum is installed **after** that
+update. Reading `get_last_lr()` after the scheduler step describes the next
+update's rate. If $W\ge S$, the declared budget can end before cosine decay or
+its minimum is used.
+
+The following illustrative snippet exposes consumed versus next rates. It is
+a scalar optimization example, not a spectral experimental recipe:
 
 ```python
-opt = build_optimizer(model)
-assert any(g['weight_decay'] > 0 for g in opt.param_groups)
-assert any(g['weight_decay'] == 0 for g in opt.param_groups)
+import torch
+from chemomae.training.optim import build_warmup_cosine
 
-sched = build_scheduler(opt, steps_per_epoch=100, epochs=2, warmup_epochs=1)
-lrs = []
-for _ in range(200):
-    opt.step(); sched.step()
-    lrs.append(sched.get_last_lr()[0])
-assert min(lrs[120:]) <= lrs[99]
+parameter = torch.nn.Parameter(torch.tensor(1.0))
+optimizer = torch.optim.AdamW([parameter], lr=1e-3)
+scheduler = build_warmup_cosine(
+    optimizer, warmup_steps=2, total_steps=6, min_lr_scale=0.1,
+)
+for update in range(1, 7):
+    optimizer.zero_grad(set_to_none=True)
+    consumed_lr = optimizer.param_groups[0]["lr"]
+    parameter.square().backward()
+    optimizer.step()
+    scheduler.step()
+    print(update, "used=", consumed_lr, "next=", scheduler.get_last_lr()[0])
 ```
 
----
+## Trainer, AMP, accumulation, and resume
 
-## Version
+Trainer advances the scheduler and EMA only after a successful optimizer update.
+An AMP-skipped attempt increments attempted/skip counters without advancing the
+scheduler. If an epoch-sized budget contains skipped updates, fewer scheduler
+indices are consumed; reaching the nominal epoch count need not reach the
+declared minimum rate.
 
-* Introduced in `chemomae.training.optim` — initial public draft.
+For gradient accumulation in a caller-owned loop, advance the scheduler after
+the actual successful optimizer update, rather than after every microbatch.
+Specify whether the schedule budget counts attempts or successful updates.
+
+Recreate the same optimizer/scheduler recipe before loading a training checkpoint.
+The public Trainer restores their saved state at a completed epoch. Use its
+checkpoint extension hooks for caller-owned state such as generators; do not
+expect a scheduler constructor alone to restore an advanced stream or step index.
+
+See [Trainer](trainer.md) for the public loop/customization contract and the
+[real NIR tutorial](../tutorials/nir_hsi.md) for a declared illustrative protocol.
+
+The MathJax `$...$`/`$$...$$` source has been updated, but GitHub and Colab
+rendering has not been verified. The snippets and scheduler trace have not been
+executed for this documentation change.

@@ -4,19 +4,15 @@
 
 This document describes **CosineKMeans**, an implementation of **hyperspherical k-means** using cosine similarity, and the helper function **`elbow_ckmeans`** for model selection.
 
-<p align="center">
-<img src="../../images/ckmeans.png" >
-</p>
-
 ---
 
 ## Overview
 
 * **Objective** — minimize mean cosine dissimilarity:
 
-  ```math
+  $$
   J = \mathrm{mean}\,(1 - \cos(x, c))
-  ```
+  $$
 
 * **E-step:** Assign each sample to the centroid with the highest cosine similarity.
 
@@ -28,7 +24,7 @@ This document describes **CosineKMeans**, an implementation of **hyperspherical 
 
 * **Precision:** Internally computed in `float32` (even for half/bf16 inputs).
 
-* **Post-condition:** All centroids are L2-normalized (unit vectors).
+* **Post-condition:** Nonzero centroids are L2-normalized; zero means remain zero.
 
 ---
 
@@ -50,11 +46,11 @@ ckm = CosineKMeans(
 
 | Name               | Type    | Default       | Description                                                  |
 | ------------------ | ------- | ------------- | ------------------------------------------------------------ |
-| `n_components`     | `int`   | —             | Number of clusters  $`K`$.                                   |
+| `n_components`     | `int`   | —             | Number of clusters  $K$.                                   |
 | `tol`              | `float` | `1e-4`        | Convergence tolerance on inertia.                            |
 | `max_iter`         | `int`   | `500`         | Maximum number of EM iterations.                             |
 | `device`           | `str` or `torch.device` | `"cuda"` | Device for computation.                           |
-| `random_state`     | `int` or `None`         | `None`   | RNG seed for reproducibility.                     |
+| `random_state`     | `int` or `None`         | `42`   | Initialization stream seed.                     |
 
 
 
@@ -63,8 +59,11 @@ ckm = CosineKMeans(
 | Name         | Type                  | Description                                        |
 | ------------ | --------------------- | -------------------------------------------------- |
 | `centroids`  | `torch.Tensor (K, D)` | Learned cluster centroids (L2-normalized).         |
-| `latent_dim` | `int`                 | Feature dimension $`D`$.                           |
-| `inertia_`   | `float`               | Final objective value $`\mathrm{mean}(1 - \cos)`$. |
+| `latent_dim` | `int`                 | Feature dimension $D$.                           |
+| `inertia_`   | `float`               | Final objective value $\mathrm{mean}(1 - \cos)$. |
+| `n_iter_` | `int` | Number of completed centroid updates; zero before fit. |
+| `converged_` | `bool` | Whether the existing objective-tolerance criterion stopped fitting. |
+| `stop_reason_` | `str` or `None` | `"tolerance"`, `"max_iter"`, or `None` before fit. |
 
 ---
 
@@ -75,8 +74,8 @@ ckm = CosineKMeans(
 | `fit(X, chunk=None)`                        | Train centroids on data `X (N, D)`. If `chunk > 0`, enables streaming (CPU→GPU). |
 | `fit_predict(X, chunk=None)`                | Fit and return cluster assignments.                                              |
 | `predict(X, return_dist=False, chunk=None)` | Predict labels for `X`. Returns `(labels, dist)` if `return_dist=True`.          |
-| `save_centroids(path)`                      | Save centroids and inertia via `torch.save()`.                                   |
-| `load_centroids(path, strict_k=True)`       | Load centroids from file; check K consistency if `strict_k=True`.                |
+| `save_centroids(path)`                      | Save versioned fitted prediction state with exact centers, config, and diagnostics. |
+| `load_centroids(path, strict_k=True)`       | Validate and restore fitted state; check K if strict, otherwise adopt saved K. |
 
 ---
 
@@ -153,7 +152,7 @@ k_list, inertias, optimal_k, elbow_idx, kappa = elbow_ckmeans(CosineKMeans, X, k
 
 * **Normalization:** Each input vector is internally L2-normalized before similarity computation.
 * **Empty clusters:** If a cluster receives no assignments, it is reinitialized with the farthest sample.
-* **Inertia metric:** Uses $`\mathrm{mean} (1 - \cos)`$, not Euclidean SSE.
+* **Inertia metric:** Uses $\mathrm{mean} (1 - \cos)$, not Euclidean SSE.
 * **Memory safety:** Frees GPU cache per iteration during streaming/elbow search.
 * **Numerical stability:** Small epsilon added in normalization to avoid division by zero.
 
@@ -177,5 +176,25 @@ assert torch.allclose(ckm.centroids, ckm2.centroids)
 ---
 
 ## Version
+
+### Product release in development
+
+`inertia_` is recomputed against the exact final prediction buffer after the last
+centroid update. Stopping still uses the existing objective-tolerance test; the
+extra final assignment pass provides accurate diagnostics without changing that
+criterion. This pass adds one assignment cost to fitting.
+
+Fitted-state files use `format_version=1` and include constructor configuration,
+feature dimension, FP32 centers, final objective, and convergence diagnostics.
+Centers are saved and restored without renormalization or dtype conversion;
+this preserves the fitted predictor's stored values. Loading validates the
+payload before changing state. Unsupported/old unversioned files fail clearly.
+The caller's selected device is retained, and advanced initialization RNG state
+is not saved. This is prediction reuse, not continuation of an interrupted fit.
+
+Streaming bounds transfer/assignment intermediates but still allocates full
+label and maximum-similarity outputs. `return_dist=True` additionally allocates
+the full `(N, K)` matrix. It does not make the complete input/output resident
+memory independent of dataset size.
 
 * Introduced in `chemomae.clustering.cosine_kmeans` — initial public draft.

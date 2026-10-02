@@ -116,104 +116,105 @@ class VMFMixture(nn.Module):
     r"""
     von Mises–Fisher (vMF) Mixture Model on the unit hypersphere with chunked EM.
 
-    概要
+    Overview
     ----
-    本クラスは **単位球面上の混合モデル** vMF mixture を EM で学習する。
-    入力特徴 `X` は行方向 L2 正規化されたベクトル（`||x_i||=1`）として扱い、
-    各成分 k は方向 `μ_k`（単位ベクトル）と集中度 `κ_k` を持つ。
+    Fit a vMF mixture on the unit hypersphere by EM.
+    Input features `X` are treated as row-wise L2-normalized vectors (`||x_i||=1`).
+    Each component k has a unit direction `μ_k` and concentration `κ_k`.
 
-    分布
+    Distribution
     ----
-    - vMF 密度（d 次元）:
+    - vMF density in d dimensions:
       `p(x | μ, κ) = C_d(κ) * exp(κ μ^T x)`,  `||x||=||μ||=1`
-    - `C_d(κ)` は正規化定数で、ベッセル関数 `I_ν` を含む:
+    - The normalization constant `C_d(κ)` contains the Bessel function `I_ν`:
       `C_d(κ) = κ^ν / ((2π)^(ν+1) I_ν(κ))`,  `ν = d/2 - 1`
 
-    最適化（EM）
+    Optimization (EM)
     -----------
-    目的は対数尤度
+    Maximize the log-likelihood
     `L = Σ_i log Σ_k π_k * C_d(κ_k) * exp(κ_k μ_k^T x_i)`
-    を最大化すること。
 
     - E-step:
-      責務（posterior）
+      Posterior responsibilities
       `γ_{ik} = p(z_i=k | x_i) = softmax_k( log π_k + log C_d(κ_k) + κ_k μ_k^T x_i )`
     - M-step:
-      - 混合比: `π_k = (1/N) Σ_i γ_{ik}`
-      - 方向:   `s_k = Σ_i γ_{ik} x_i`,  `μ_k = s_k / ||s_k||`
-      - 集中度: `R̄_k = ||s_k|| / Σ_i γ_{ik}` から近似更新（本実装は closed-form 近似）
+      - Mixture weights: `π_k = (1/N) Σ_i γ_{ik}`
+      - Directions: `s_k = Σ_i γ_{ik} x_i`, `μ_k = s_k / ||s_k||`
+      - Concentrations: update approximately from `R̄_k = ||s_k|| / Σ_i γ_{ik}`
+        using a closed-form approximation.
 
-    数値計算
+    Numerics
     --------
-    正規化定数は CPU float64 の SciPy scaled Bessel 関数で計算する。
-    小 κ または underflow 時は収束する定義級数へ切り替える。
-    log density と尤度の集計も float64 とし、方向・十分統計は指定 dtype を使う。
+    Compute normalization constants using SciPy scaled Bessel functions in CPU float64.
+    For small κ or underflow, use the convergent defining series instead.
+    Log densities and likelihood aggregation also use float64; directions and
+    sufficient statistics use the configured dtype.
 
-    ストリーミング（chunked E-step）
+    Streaming (chunked E-step)
     -------------------------------
-    `chunk` を指定すると、E-step を `X` のブロックに分割し、
-    `X[s:e]` を逐次 `device` に移して責務と十分統計量 `(N_k, S_k)` を累積する。
-    VRAM が厳しい大規模データでの学習を想定。
+    With `chunk`, partition the E-step into blocks of `X`, transfer each `X[s:e]`
+    to `device`, and accumulate responsibilities and sufficient statistics `(N_k, S_k)`.
+    This supports large datasets under constrained VRAM.
 
     Parameters
     ----------
     n_components : int
-        混合成分数 K。
+        Number of mixture components K.
     d : int | None, default=None
-        特徴次元 D。None の場合は `fit(X)` 時に `X.shape[1]` から決定。
+        Feature dimension D; None infers it from `X.shape[1]` during `fit(X)`.
     device : str | torch.device, default="cuda"
-        計算デバイス。chunk を使う場合でも十分統計の集約はこの device 上で行う。
+        Computation device; sufficient statistics are aggregated here even with chunks.
     random_state : int | None, default=42
-        初期化に用いる乱数シード（CPU Generator 固定）。
+        Initialization seed for a fixed CPU Generator.
     tol : float, default=1e-4
-        非負の相対改善が tol 未満、または非負の絶対改善が 1e-6 未満で収束。
-        尤度減少は収束と区別して停止する。
+        Converge when nonnegative relative improvement is below tol, or nonnegative
+        absolute improvement is below 1e-6. Likelihood decreases stop separately.
     max_iter : int, default=200
-        EM 反復回数の上限。
+        Maximum number of EM iterations.
     init : {"kmeans++", "random"}, default="kmeans++"
-        初期化方式。`kmeans++` は cosine 距離 `1-cos` に相当するシード選択を行う。
+        Initialization method; `kmeans++` selects seeds using cosine distance `1-cos`.
     kappa_init : float, default=10.0
-        κ の初期値（全成分共通）。
+        Initial κ shared by all components.
     kappa_min : float, default=1e-6
-        κ の正の下限。ゼロ resultant の成分にも使用する。
+        Positive lower bound for κ, also used for zero-resultant components.
     dtype : torch.dtype, default=torch.float32
-        方向・十分統計の dtype（float32 または float64）。入力はこの dtype に変換する。
+        Direction/statistics dtype (float32 or float64); inputs are cast to this dtype.
 
     Attributes
     ----------
     K : int
-        混合成分数。
+        Number of mixture components.
     d : int | None
-        特徴次元。`fit()` 後は必ず int。
+        Feature dimension, always an int after `fit()`.
     mus : torch.Tensor, shape (K, d)
-        各成分の方向ベクトル（L2 正規化済み）。
+        L2-normalized component direction vectors.
     kappas : torch.Tensor, shape (K,)
-        各成分の集中度 κ（`>=kappa_min`）。
+        Component concentrations κ (`>=kappa_min`).
     logpi : torch.Tensor, shape (K,)
-        混合比の対数（内部表現）。`log_softmax` を通した値が posterior で使用される。
+        Internal log mixture weights; the posterior uses their `log_softmax` values.
     _logC : torch.Tensor, shape (K,)
-        `log C_d(κ_k)` のキャッシュ。
+        Cached `log C_d(κ_k)`.
     n_iter_ : int
-        実行された EM 反復回数。
+        Number of completed EM iterations.
     lower_bound_ : float
-        最終パラメータで再計算した総対数尤度。旧版 checkpoint からの復元時は NaN。
+        Total log-likelihood recomputed from final parameters; NaN on legacy restoration.
     converged_ : bool
-        非負の改善が収束基準を満たして停止したか。
+        Whether nonnegative improvement satisfied a convergence criterion.
     stop_reason_ : str | None
-        "tol", "likelihood_decreased", "max_iter"、または fit 前・旧版復元時の None。
+        "tol", "likelihood_decreased", "max_iter", or None before fit/on legacy restoration.
     _fitted : bool
-        学習済みフラグ。
+        Fitted-state flag.
 
     Notes
     -----
-    - **入力は球面前提**：本実装は `X` を行ごとに L2 正規化して扱う。
-      したがって、ユーザーが事前正規化していても動作は同じ（再正規化される）。
-    - κ 更新は厳密な Newton 解ではなく、`R̄` からの近似式を用いる。
-      高次元・高 κ 領域では近似誤差が出る可能性があるため、必要なら κ 更新を差し替える。
-    - `chunk` ありの場合、初期化 (`_init_params`) でも大規模データ転送を避けるため
-      サブサンプルを用いる設計になっている。
-    - GPU/CPU 間転送を最小化したい場合、`chunk=None` で `X` を事前に device に載せる。
-      VRAM が厳しい場合は `chunk` を指定し `X` は CPU に置いたまま fit する。
+    - Inputs are assumed spherical and are L2-normalized row by row, including
+      inputs already normalized by the caller.
+    - The κ update uses an approximation based on `R̄` rather than an exact Newton solution.
+      Approximation error can arise at high dimension/concentration; replace the
+      κ update if required.
+    - Chunked initialization (`_init_params`) also uses a subsample to avoid large transfers.
+    - To minimize CPU/GPU transfers, use `chunk=None` with `X` already on device.
+      Under constrained VRAM, use chunks while keeping `X` on CPU.
     """
     
     def __init__(
@@ -280,7 +281,7 @@ class VMFMixture(nn.Module):
         self.converged_: bool = False
         self.stop_reason_: Optional[str] = None
 
-        # rng (CPU固定: deviceに依存させない)
+        # Keep RNG on CPU, independent of the computation device.
         self._g = torch.Generator(device="cpu")
         if self.random_state is not None:
             self._g.manual_seed(int(self.random_state))
@@ -501,23 +502,23 @@ class VMFMixture(nn.Module):
         Parameters
         ----------
         X : torch.Tensor, shape (N, d)
-            入力特徴行列。`N` はサンプル数、`d` は特徴次元。
-            NaN/Inf を含んではならない。内部で行ごとに L2 正規化する。
-            空データ・ゼロベクトルは ValueError とする。
+            Input features with `N` samples and dimension `d`.
+            Values must be finite; rows are L2-normalized internally.
+            Empty data and zero vectors raise ValueError.
         chunk : int | None, default=None
-            E-step のチャンクサイズ。None の場合は全量を一括処理。
-            int の場合は `X` を `chunk` 行ごとに device に転送して責務を計算し、
-            十分統計 `(N_k, S_k)` を累積する（ストリーミング学習）。
+            E-step chunk size; None processes all rows together.
+            An int transfers `chunk` rows at a time to device, computes responsibilities,
+            and accumulates sufficient statistics `(N_k, S_k)` for streaming training.
 
         Returns
         -------
         self : VMFMixture
-            学習済みインスタンス（チェーン可能）。
+            Fitted instance for method chaining.
 
         Notes
         -----
-        - `d` が None の場合は `X.shape[1]` で自動決定し、以後固定される。
-        - 収束判定は lower bound（E-step での `logsumexp` 総和）の改善に基づく。
+        - If `d` is None, infer it from `X.shape[1]` and keep it fixed afterward.
+        - Convergence uses improvement in the lower bound (E-step `logsumexp` sum).
         """
         chunk = self._validate_chunk(chunk)
         self._validate_X(X)
@@ -561,22 +562,22 @@ class VMFMixture(nn.Module):
         Parameters
         ----------
         X : torch.Tensor, shape (N, d)
-            入力特徴。`fit()` と同じ次元 d が必要。
-            内部で行ごとに L2 正規化する。
+            Input features with the same dimension d as `fit()`.
+            Rows are L2-normalized internally.
         chunk : int | None, default=None
-            E-step と同様のチャンク処理。大規模 `X` に対して VRAM を節約できる。
+            Chunking as in the E-step, reducing VRAM use for large `X`.
 
         Returns
         -------
         gamma : torch.Tensor, shape (N, K)
-            各サンプル i に対する各成分 k の責務 `γ_{ik}`（行方向 softmax、総和 1）。
+            Responsibilities `γ_{ik}` for sample i/component k; row-wise softmax sums to one.
 
         Raises
         ------
         RuntimeError
-            モデルが未学習（`fit()` 未実行）の場合。
+            The model is not fitted.
         ValueError
-            入力形状が不正、または `X.shape[1] != d` の場合。
+            Invalid input shape or `X.shape[1] != d`.
         """
         if not self._fitted:
             raise RuntimeError("Model not fitted")
@@ -594,14 +595,14 @@ class VMFMixture(nn.Module):
         Parameters
         ----------
         X : torch.Tensor, shape (N, d)
-            入力特徴。
+            Input features.
         chunk : int | None, default=None
-            `predict_proba` と同様。
+            As in `predict_proba`.
 
         Returns
         -------
         labels : torch.Tensor, shape (N,)
-            `argmax_k γ_{ik}` による割当ラベル（0..K-1）。
+            Assigned labels (0..K-1) from `argmax_k γ_{ik}`.
         """
         return self.predict_proba(X, chunk=chunk).argmax(dim=1)
 
@@ -613,21 +614,22 @@ class VMFMixture(nn.Module):
         Parameters
         ----------
         X : torch.Tensor, shape (N, d)
-            入力特徴。内部で L2 正規化される。
+            Input features, L2-normalized internally.
         chunk : int | None, default=None
-            大規模 `X` 用のチャンク計算。
+            Chunked computation for large `X`.
         average : bool, default=False
-            True の場合は 1 サンプル当たり平均（mean log-likelihood）を返す。
+            Return mean log-likelihood per sample when true.
 
         Returns
         -------
         ll : float
-            `Σ_i log Σ_k π_k C_d(κ_k) exp(κ_k μ_k^T x_i)` の総和、または平均。
+            Total or per-sample mean log-likelihood,
+            `Σ_i log Σ_k π_k C_d(κ_k) exp(κ_k μ_k^T x_i)`.
 
         Notes
         -----
-        - `logpi` は `log_softmax` を通した混合比として扱う（数値安定）。
-        - 内部で float64 の `_logC` を用いる。
+        - Treat `logpi` as mixture weights after `log_softmax` for numerical stability.
+        - Use float64 `_logC` internally.
         """
         if not self._fitted:
             raise RuntimeError("Model not fitted")
@@ -665,18 +667,19 @@ class VMFMixture(nn.Module):
         Parameters
         ----------
         X : torch.Tensor, shape (N, d)
-            入力特徴。
+            Input features.
         chunk : int | None, default=None
-            `loglik` と同様のチャンク計算。
+            Chunked computation as in `loglik`.
 
         Returns
         -------
         bic : float
-            BIC 値（小さいほど良い）。
+            BIC value; lower is better.
 
         Notes
         -----
-        - `p = K*d + (K-1)` は方向の K*(d-1)、集中度の K、混合比の K-1 を数える。
+        - `p = K*d + (K-1)` counts K*(d-1) direction, K concentration,
+          and K-1 mixture-weight parameters.
         """
         if self.d is None:
             raise RuntimeError("Model not fitted (d is None)")
@@ -695,17 +698,17 @@ class VMFMixture(nn.Module):
         Returns
         -------
         state : dict
-            次を含む辞書（CPU tensor とメタ情報）:
+            Dictionary of CPU tensors and metadata containing:
             - K, d, device, dtype
-            - mus, kappas, logpi, _logC （すべて CPU clone）
+            - mus, kappas, logpi, _logC (all CPU clones)
             - numerics_version, n_iter_, lower_bound_, converged_, stop_reason_, _fitted
             - random_state, rng_state
             - tol, max_iter, init, kappa_init, kappa_min
 
         Notes
         -----
-        - `torch.nn.Module.state_dict()` と異なり、本クラス固有の永続化形式を提供する。
-        - 返り値は `torch.save()` でそのまま保存可能。
+        - Provides a class-specific persistence format rather than `torch.nn.Module.state_dict()`.
+        - The returned dictionary can be saved directly with `torch.save()`.
         """
         return {
             "numerics_version": 2,
@@ -739,11 +742,11 @@ class VMFMixture(nn.Module):
         Parameters
         ----------
         path : str
-            保存先パス。`torch.save(self.state_dict_vmf(), path)` を実行する。
+            Destination path for `torch.save(self.state_dict_vmf(), path)`.
 
         Notes
         -----
-        - すべて CPU tensor として保存されるため、環境依存（GPU 有無）の影響を受けにくい。
+        - Saving all tensors on CPU reduces dependence on GPU availability.
         """
         torch.save(self.state_dict_vmf(), path)
 
@@ -756,25 +759,25 @@ class VMFMixture(nn.Module):
         Parameters
         ----------
         path : str
-            `save()` で保存したファイルパス。
+            Path to a file written by `save()`.
         map_location : str | torch.device | None, default=None
-            復元後の計算 device。None なら保存時の device。CPU 復元は "cpu" を指定。
+            Restored computation device; None uses the saved device. Use "cpu" for CPU loading.
 
         Returns
         -------
         model : VMFMixture
-            復元されたモデル。`mus/kappas/logpi/_logC` を含み、`_fitted=True` となる。
+            Restored model with `mus/kappas/logpi/_logC` and `_fitted=True`.
 
         Raises
         ------
         RuntimeError
-            保存データが不正で `d=None` のまま復元できない場合など。
+            Invalid saved data, for example when `d=None` prevents buffer allocation.
 
         Notes
         -----
-        - 明示的な map_location を保存 device より優先し、dtype は保存値を使う。
-        - `_logC` は現行の数値計算で再構築する。旧版の尤度・収束情報は再利用しない。
-        - `rng_state` が保存されていれば CPU Generator の状態も復元する。
+        - Explicit map_location takes precedence over the saved device; use the saved dtype.
+        - Rebuild `_logC` with current numerics; do not reuse legacy likelihood/convergence data.
+        - Restore the CPU Generator state when `rng_state` was saved.
         """
         # The serialized tensors and generator state are CPU data. Move only
         # model buffers to the requested computation device after deserialization.
@@ -846,43 +849,43 @@ def elbow_vmf(
     Parameters
     ----------
     cluster_module : Callable[..., VMFMixture]
-        `VMFMixture` を返す callable（通常は VMFMixture クラス自身）。
-        例: `elbow_vmf(VMFMixture, X, ...)`
+        Callable returning `VMFMixture`, usually the class itself.
+        For example: `elbow_vmf(VMFMixture, X, ...)`.
     X : torch.Tensor, shape (N, d)
-        入力特徴。
+        Input features.
     device : str, default="cuda"
-        各 K のモデル学習に用いるデバイス。
+        Training device for each K.
     k_max : int, default=50
-        K を 1..k_max で走査する。
+        Sweep K from 1..k_max.
     chunk : int | None, default=None
-        None の場合、`X` を一度 device に載せて各 K で再利用する（高速だが VRAM 使用）。
-        int の場合、`X` は CPU のままでもよく、fit/predict の E-step を chunk ストリーミングで処理する。
+        None transfers `X` to device once for reuse across K, trading VRAM for speed.
+        With an int, `X` may remain on CPU while fit/predict stream chunked E-steps.
     verbose : bool, default=True
-        各 K のスコアを表示する。
+        Print the score for each K.
     random_state : int, default=42
-        各 K の初期化に用いる乱数シード。
+        Initialization seed for each K.
     criterion : {"bic", "nll"}, default="bic"
-        - "bic": `vmf.bic(X)` を評価（小さいほど良い）
-        - "nll": `-vmf.loglik(X, average=True)` を評価（小さいほど良い）
+        - "bic": evaluate `vmf.bic(X)` (lower is better).
+        - "nll": evaluate `-vmf.loglik(X, average=True)` (lower is better).
 
     Returns
     -------
     k_list : list[int]
-        走査した K のリスト（1..k_max）。
+        Evaluated K values (1..k_max).
     scores : list[float]
-        各 K のスコア（criterion に依存）。小さいほど良い。
+        Score for each K, depending on criterion; lower is better.
     K_elbow : int
-        曲率ベースの elbow 推定による最適 K。
+        Optimal K from curvature-based elbow estimation.
     idx_elbow : int
-        `k_list` 上の elbow インデックス。
+        Elbow index in `k_list`.
     curvature : float
-        elbow 推定に使った曲率スカラー。
+        Scalar curvature used for elbow estimation.
 
     Notes
     -----
-    - 曲率計算は `find_elbow_curvature` を利用し、内部ではスコア系列を符号反転して
-      “増加系列”として扱っている（実装依存）。
-    - BIC と elbow の最適 K は一致しないことがあるため、用途に応じて採用基準を決める。
+    - Curvature uses `find_elbow_curvature`, treating the negated score series as
+      an increasing sequence (implementation-dependent).
+    - BIC and elbow estimates can select different K; choose the criterion for the application.
     """
     if X.ndim != 2:
         raise ValueError("X must be 2D")

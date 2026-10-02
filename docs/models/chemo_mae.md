@@ -5,7 +5,7 @@
 This document describes **ChemoMAE**, a Transformer-based masked autoencoder specialized for **one-dimensional spectral data**.
 
 <p align="center">
-<img src="../../images/chemomae.png">
+<img src="../../images/chemomae.svg">
 </p>
 
 ---
@@ -144,9 +144,38 @@ mae = ChemoMAE(
 
 ### Methods
 
-* `forward(x, visible_mask=None, *, n_mask=None)` → `(x_recon, z, visible_mask)`
-* `reconstruct(x, visible_mask=None, *, n_mask=None)` → `x_recon`
-* `make_visible(batch_size, *, n_mask=None, device=None)` → `visible_mask`
+* `forward(x, visible_mask=None, *, n_mask=None, generator=None)` → `(x_recon, z, visible_mask)`
+* `reconstruct(x, visible_mask=None, *, n_mask=None, generator=None)` → `x_recon`
+* `make_visible(batch_size, *, n_mask=None, device=None, generator=None)` → `visible_mask`
+* `encode(x, *, representation="latent")` → all-visible features
+
+### All-visible representations
+
+`encode` uses every patch and bypasses both the decoder and random masking.
+No internal hooks are required. The representation is explicit:
+
+| Representation | Shape | Meaning |
+| --- | --- | --- |
+| `"latent"` | `(B, latent_dim)` | Projected CLS, using `latent_normalize` from model configuration. |
+| `"raw_latent"` | `(B, latent_dim)` | CLS projection before normalization. |
+| `"normalized_latent"` | `(B, latent_dim)` | Always L2-normalized CLS projection. |
+| `"cls"` | `(B, d_model)` | Transformer CLS output before projection. |
+
+```python
+mae.eval()
+with torch.inference_mode():
+    z = mae.encode(x, representation="normalized_latent")
+    raw = mae.encode(x, representation="raw_latent")
+    cls = mae.encode(x, representation="cls")
+```
+
+Each call returns one selected representation. Outputs remain on the input
+device and follow model/autocast arithmetic. `encode` preserves module mode and
+autograd, allowing a trainable downstream head to consume CLS or latent features.
+For inference, the caller controls `eval()` and `inference_mode()`; dropout can
+still be stochastic in training mode. An exactly zero projected vector remains
+zero under `F.normalize`. Use [Extractor](../training/extractor.md) for bounded,
+batch-wise extraction with explicit output device, dtype, and representation.
 
 ---
 
@@ -190,10 +219,11 @@ For full-spectrum autoencoder training, use `n_mask=0` and `TrainerConfig(loss_r
 
 If `latent_normalize=True`, L2 normalization ensures:
 
-```
-‖z‖ = 1
-cosine similarity = z_i · z_j
-```
+For projections whose norm is at least the `F.normalize` epsilon:
+
+$$
+\lVert z \rVert_2 = 1, \qquad \operatorname{cos}(z_i,z_j) = z_i^\top z_j.
+$$
 
 This is ideal for cosine geometry and directional clustering.
 If disabled, the latent is unconstrained in norm.
@@ -204,7 +234,22 @@ MAE training utilities (EMA, AMP, checkpointing, loss) are kept outside the mode
 
 ### Determinism
 
-Masking is RNG-driven; use fixed seeds or provide explicit `visible_mask` for reproducibility.
+Masking is RNG-driven. Provide an explicit `visible_mask`, or a caller-owned
+`torch.Generator` on the computation device to control its stream without
+replacing global RNG state:
+
+```python
+mask_rng = torch.Generator(device=x.device).manual_seed(42)
+x_rec, z, visible = mae(x, generator=mask_rng)
+mask_rng_state = mask_rng.get_state()  # Save alongside caller-owned run state.
+```
+
+An explicit mask ignores `generator` and `n_mask`. All-visible `encode` generates
+no masks; train-mode dropout is controlled by Torch's ordinary RNG, separately
+from the mask generator. The current encoder exposes the first patch when every
+sample in a batch is entirely hidden. For strict masked-input isolation, keep
+at least one patch visible in every spectrum; do not use that fallback as a
+research protocol.
 
 ---
 

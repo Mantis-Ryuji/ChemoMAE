@@ -1,190 +1,172 @@
+"""Explicit-device cosine farthest-point sampling of spectral rows."""
+
 from __future__ import annotations
-from typing import Optional, Union, Tuple
+
+import math
+from numbers import Integral, Real
+
 import numpy as np
 import torch
+
+__all__ = ["cosine_fps_downsample"]
 
 
 @torch.no_grad()
 def cosine_fps_downsample(
-    X: Union[np.ndarray, torch.Tensor],
+    X: np.ndarray | torch.Tensor,
     *,
     ratio: float = 0.1,
-    seed: Optional[int] = None,
-    init_index: Optional[int] = None,
+    seed: int | None = None,
+    init_index: int | None = None,
     return_numpy: bool = True,
     return_indices: bool = False,
     eps: float = 1e-12,
-) -> Union[np.ndarray, torch.Tensor, Tuple[Union[np.ndarray, torch.Tensor], Union[np.ndarray, torch.Tensor]]]:
-    """
-    Farthest-Point Sampling (FPS) on the unit hypersphere with cosine geometry.
-
-    概要
-    ----
-    - 既選集合から「最も離れた（= 方向が最も異なる）」サンプルを 1 点ずつ追加していく、
-      多様性重視のダウンサンプリングです（コサイン幾何、単位球上）。
-    - 内部では **必ず各行を L2 正規化** してコサイン幾何に整合させます。
-      ただし **返り値は元スケール**（正規化前のデータ）から抽出します。
-    - CUDA が利用可能なら自動で GPU を使用します。
-
-    Algorithm
-    ---------
-    1) 初期点を 1 つ選ぶ（`init_index` があればそれを使用。なければ `seed` に基づく乱択）。
-    2) 目標個数 k（= min(max(1, round(N*ratio)), N)）に達するまで繰り返す:
-       - 各候補 i について、既選集合 S の中での最近傍距離（cos 距離） r(i) を維持更新。
-       - r(i) が最大の i を 1 点だけ S に追加。
-       - 以後の更新は 1 回の行列×ベクトル積と要素ごとの最小更新で O(N) に抑制。
+    device: str | torch.device | None = None,
+    generator: torch.Generator | None = None,
+) -> np.ndarray | torch.Tensor | tuple[np.ndarray, np.ndarray] | tuple[torch.Tensor, torch.Tensor]:
+    """Select rows by farthest-point sampling under cosine geometry.
 
     Parameters
     ----------
-    X : (N, C) np.ndarray | torch.Tensor
-        入力特徴（SNV 等の前処理後を想定）。NaN/Inf を含まないこと。
-    ratio : float, default 0.1
-        抜き出し比率。選択個数 k は k = min(max(1, round(N*ratio)), N)。
-        ratio <= 0 はエラー、ratio >= 1 なら全件選択 (k = N) に収束します。
-    seed : Optional[int]
-        初期点の乱択に使う乱数種（None なら現行 RNG）。`init_index` 指定時は無視されます。
-    init_index : Optional[int]
-        初期点のインデックスを固定したい場合に指定（`seed` より優先）。
-    return_numpy : bool, default True
-        True なら np.ndarray を返す。False なら torch.Tensor を返す。
-        Torch 入力で False の場合は入力テンソルと同じデバイスに載せて返します。
-    return_indices : bool, default False
-        True の場合、（サブセット, 選択インデックス）を返します。
-        return_numpy=True のとき indices は np.ndarray、False のときは torch.Tensor。
-    eps : float, default 1e-12
-        行 L2 正規化時の数値安定項。
+    X : numpy.ndarray or torch.Tensor, shape (N, C)
+        Finite real numerical rows. Selection normalizes rows internally;
+        returned rows retain the original scale.
+    ratio : float, default=0.1
+        Positive finite fraction. The sample count is clipped to
+        min(max(1, round(N*ratio)), N); ratios >= 1 select all rows.
+    seed : int, optional
+        Seed for a local initial-point stream; mutually exclusive with generator.
+    init_index : int, optional
+        Initial row index. When supplied, no random numbers are drawn.
+    return_numpy : bool, default=True
+        Return NumPy arrays, or Torch tensors when false.
+    return_indices : bool, default=False
+        Also return selected row indices, in selection order.
+    eps : float, default=1e-12
+        Positive finite value added to row norms for internal normalization.
+    device : str or torch.device, optional
+        CPU/CUDA computation device. None follows Torch input, otherwise CPU.
+        CUDA is never selected merely because it is available.
+    generator : torch.Generator, optional
+        Caller-owned initial-point stream on the computation device. With neither
+        seed nor generator, the ordinary device RNG draws the initial point.
 
     Returns
     -------
-    X_downsampled : (k, C) np.ndarray | torch.Tensor
-        選ばれたサブセット（元スケール）。
-    indices : (k,) np.ndarray | torch.Tensor, optional
-        return_indices=True のときのみ添付。
+    numpy.ndarray or torch.Tensor, or tuple of these
+        Selected rows and optionally indices. Torch input to Torch output keeps
+        its original dtype/device. NumPy input to Torch output uses the compute
+        device and original dtype. NumPy output preserves source dtype, except
+        Torch bfloat16 is promoted to float32 for NumPy compatibility.
 
     Notes
     -----
-    - 時間計算量は O(N * k)。各反復は 1 回の行列×ベクトル積と要素ごとの最小更新。
-    - 計算は少なくとも float32 で行います（fp16/bf16 入力は内部で昇格）。
-    - 角距離 d_ang = arccos(cos) と 1 - cos は単調変換の関係にあり、argmax/argmin による
-      選択順位は一致します（実装は高速な 1 - cos を用いて順位付けします）。
-    - 返り値の dtype / device は **元入力に合わせる** 方針です（numpy 入力→numpy 出力、
-      torch 入力→希望に応じて numpy / torch、torch のときは元デバイス）。
+    Zero rows remain zero; they have dissimilarity one to every direction.
+    Ties choose the first remaining row. Already selected rows cannot repeat.
+    Arithmetic uses float64 for float64 input and otherwise float32, with buffers
+    of the same dtype. Selection costs O(N*k); full working rows remain resident.
+    FPS is a discrete sampling operation and does not record autograd.
     """
-    # ---- 型判定と基本検証 -------------------------------------------------
+    if isinstance(ratio, bool) or not isinstance(ratio, Real):
+        raise TypeError("ratio must be a positive finite real number")
+    if not math.isfinite(float(ratio)) or ratio <= 0:
+        raise ValueError("ratio must be positive and finite")
+    if isinstance(eps, bool) or not isinstance(eps, Real) or not math.isfinite(float(eps)) or eps <= 0:
+        raise ValueError("eps must be positive and finite")
+    if seed is not None and (
+        isinstance(seed, bool) or not isinstance(seed, Integral)
+        or not -(2**63) <= seed < 2**64
+    ):
+        raise ValueError("seed must be an integer in Torch's seed range")
+    if generator is not None and not isinstance(generator, torch.Generator):
+        raise TypeError("generator must be a torch.Generator or None")
+    if seed is not None and generator is not None:
+        raise ValueError("seed and generator are mutually exclusive")
+    if not isinstance(return_numpy, bool) or not isinstance(return_indices, bool):
+        raise TypeError("return_numpy and return_indices must be boolean")
+
     is_numpy = isinstance(X, np.ndarray)
     if is_numpy:
-        if X.ndim != 2:
-            raise ValueError(f"X must be 2D, got shape={tuple(X.shape)}")
-        if X.size == 0:
-            # 空入力：元型で空を返す
-            empty_np = X[:0]
-            if return_indices:
-                return empty_np, (np.empty((0,), dtype=int))
-            return empty_np
-        if not np.isfinite(X).all():
-            raise ValueError("X contains NaN or Inf.")
-        xt = torch.from_numpy(X)
-    else:
-        if not torch.is_tensor(X):
-            raise TypeError("X must be a numpy array or torch tensor.")
-        if X.ndim != 2:
-            raise ValueError(f"X must be 2D, got shape={tuple(X.shape)}")
-        if X.numel() == 0:
-            empty_t = X[:0]
-            if return_numpy:
-                empty_np = empty_t.detach().cpu().numpy()
-                if return_indices:
-                    return empty_np, (np.empty((0,), dtype=int))
-                return empty_np
-            else:
-                if return_indices:
-                    return empty_t, (torch.empty(0, dtype=torch.long, device=X.device))
-                return empty_t
-        if not torch.isfinite(X).all():
-            raise ValueError("X contains NaN or Inf.")
+        if X.ndim != 2 or X.shape[1] == 0:
+            raise ValueError("X must be 2D with at least one feature")
+        if X.dtype.kind not in "fiu" or not np.isfinite(X).all():
+            raise ValueError("X must contain finite real numerical values")
+        xt = torch.from_numpy(np.array(X, copy=True, order="C"))
+    elif isinstance(X, torch.Tensor):
+        if X.ndim != 2 or X.shape[1] == 0 or X.layout != torch.strided or X.device.type == "meta":
+            raise ValueError("X must be a dense 2D tensor with at least one feature")
+        if X.is_complex() or X.dtype == torch.bool or not torch.isfinite(X).all():
+            raise ValueError("X must contain finite real numerical values")
         xt = X
-
-    N, C = int(xt.shape[0]), int(xt.shape[1])
-
-    # 取得個数 k の決定（クリップ）
-    k = int(round(N * float(ratio)))
-    k = max(1, k)
-    k = min(k, N)
-
-    # ---- デバイス・dtype 設定（演算は少なくとも fp32） -------------------
-    dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    dtype = xt.dtype if xt.dtype.is_floating_point else torch.float32
-    if dtype in (torch.float16, torch.bfloat16):
-        dtype = torch.float32
-    xt_work = xt.to(device=dev, dtype=dtype, non_blocking=True)
-
-    # ---- 単位球への埋め込み（必ず実施） ---------------------------------
-    n = torch.linalg.vector_norm(xt_work, dim=1, keepdim=True)
-    X_unit = xt_work / (n + eps)
-
-    # ---- 乱数生成器（初期点用） ------------------------------------------
-    gen = torch.Generator(device=dev)
-    if init_index is None:
-        if seed is not None:
-            gen.manual_seed(int(seed))
-        else:
-            gen.manual_seed(torch.seed())
-        idx0 = int(torch.randint(low=0, high=N, size=(1,), generator=gen, device=dev).item())
     else:
-        if not (0 <= int(init_index) < N):
-            raise ValueError(f"init_index out of range: {init_index} not in [0,{N})")
-        idx0 = int(init_index)
+        raise TypeError("X must be a NumPy array or Torch tensor")
 
-    # ---- FPS 本体 ---------------------------------------------------------
-    idx = torch.empty(k, dtype=torch.long, device="cpu")
-    idx[0] = idx0
+    compute_device = torch.device(device) if device is not None else xt.device
+    if compute_device.type not in {"cpu", "cuda"}:
+        raise ValueError("FPS supports CPU and CUDA devices")
+    if compute_device.type == "cuda" and not torch.cuda.is_available():
+        raise ValueError("CUDA was requested but is unavailable")
+    n = int(xt.shape[0])
+    if init_index is not None and (
+        isinstance(init_index, bool) or not isinstance(init_index, Integral)
+        or not 0 <= init_index < n
+    ):
+        raise ValueError("init_index must be an integer within the input row range")
+    if generator is not None and init_index is None:
+        actual_generator_device = torch.device(generator.device)
+        actual_index = actual_generator_device.index
+        target_index = compute_device.index
+        if compute_device.type == "cuda":
+            actual_index = torch.cuda.current_device() if actual_index is None else actual_index
+            target_index = torch.cuda.current_device() if target_index is None else target_index
+        if actual_generator_device.type != compute_device.type or (
+            compute_device.type == "cuda" and actual_index != target_index
+        ):
+            raise ValueError("generator must match the computation device")
 
-    # 既選集合への最近距離 dmin = 1 - X_unit @ x_sel（数値安定の clamping）
-    x0 = X_unit[idx0]                           # (C,)
-    dmin = 1.0 - (X_unit @ x0)                  # (N,)
-    dmin.clamp_min_(0.0)
-    NEG_INF = torch.tensor(float("-inf"), device=dev)
-    dmin[idx0] = NEG_INF                        # 再選択を確実に禁止
+    count = n if ratio >= 1 else min(max(1, round(n * float(ratio))), n)
+    work_dtype = torch.float64 if xt.dtype == torch.float64 else torch.float32
+    with torch.autocast("cpu", enabled=False), torch.autocast("cuda", enabled=False):
+        work = xt.to(device=compute_device, dtype=work_dtype)
+        if not torch.isfinite(work).all():
+            raise ValueError("X cannot be represented finitely in the computation dtype")
+        indices = torch.empty(count, dtype=torch.long, device=compute_device)
+        if count:
+            norms = torch.linalg.vector_norm(work, dim=1, keepdim=True)
+            if not torch.isfinite(norms).all():
+                raise ValueError("row norms overflowed; use float64 input")
+            denominator = norms + eps
+            if not torch.isfinite(denominator).all() or not (denominator > 0).all():
+                raise ValueError("normalization scale is invalid in the computation dtype")
+            unit = work / denominator
+            if init_index is None:
+                if seed is not None:
+                    generator = torch.Generator(device=compute_device).manual_seed(int(seed))
+                first = int(torch.randint(n, (1,), device=compute_device, generator=generator).item())
+            else:
+                first = int(init_index)
+            indices[0] = first
+            minimum = (1.0 - unit @ unit[first]).clamp_min(0)
+            minimum[first] = -torch.inf
+            for position in range(1, count):
+                selected = int(minimum.argmax().item())
+                indices[position] = selected
+                dissimilarity = 1.0 - (unit @ unit[selected]).clamp(-1, 1)
+                minimum = torch.minimum(minimum, dissimilarity)
+                minimum[selected] = -torch.inf
 
-    # 一時バッファ（再利用）
-    sim = torch.empty(N, device=dev)            # sim = X_unit @ x_new
-    one_minus = torch.empty(N, device=dev)      # 1 - sim
-
-    for t in range(1, k):
-        # 最も遠い候補を選ぶ
-        next_i = int(torch.argmax(dmin).item())
-        idx[t] = next_i
-
-        # 新規追加点との類似度を計算し、最近距離を更新
-        x_new = X_unit[next_i]                  # (C,)
-        sim.zero_().addmv_(X_unit, x_new)      # sim = X_unit @ x_new
-        sim.clamp_(-1.0, 1.0)                   # 数値誤差対策
-        one_minus.copy_(sim).mul_(-1.0).add_(1.0)     # 1 - sim
-        torch.minimum(dmin, one_minus, out=dmin)      # dmin = min(dmin, 1 - sim)
-        dmin[next_i] = NEG_INF                  # 追加済みは再選択不可
-
-    # ---- 出力（元スケールから抽出） --------------------------------------
     if is_numpy:
-        sel_np = X[idx.numpy()]  # 元 dtype のまま
+        cpu_indices = indices.cpu().numpy()
+        rows = X[cpu_indices]
         if return_numpy:
-            if return_indices:
-                return sel_np, idx.numpy()
-            return sel_np
-        else:
-            sel_t = torch.from_numpy(sel_np).to(device=dev, dtype=dtype)
-            if return_indices:
-                return sel_t, torch.from_numpy(idx.numpy()).to(device=dev)
-            return sel_t
-    else:
-        # torch 入力
-        x_dev = X.device
-        sel_t = X.index_select(0, idx.to(device=x_dev))  # 元デバイス・元 dtype
-        if return_numpy:
-            sel_np = sel_t.detach().cpu().numpy()
-            if return_indices:
-                return sel_np, idx.numpy()
-            return sel_np
-        else:
-            if return_indices:
-                return sel_t, idx.to(device=x_dev)
-            return sel_t
+            return (rows, cpu_indices) if return_indices else rows
+        rows_t = torch.from_numpy(rows).to(compute_device)
+        return (rows_t, indices) if return_indices else rows_t
+    rows_t = X.index_select(0, indices.to(X.device))
+    if not return_numpy:
+        original_indices = indices.to(X.device)
+        return (rows_t, original_indices) if return_indices else rows_t
+    compatible_rows = rows_t.float() if rows_t.dtype == torch.bfloat16 else rows_t
+    rows = compatible_rows.detach().cpu().numpy()
+    cpu_indices = indices.cpu().numpy()
+    return (rows, cpu_indices) if return_indices else rows

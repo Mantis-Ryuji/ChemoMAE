@@ -9,9 +9,11 @@ __all__ = ["build_optimizer", "build_scheduler"]
 
 
 def _walk_to_module(root: nn.Module, param_name: str):
-    """
-    'blocks.0.norm1.weight' → [root, blocks, blocks[0], norm1]
-    最後のテンソル名（weight/bias 等）は除く。
+    """Return the modules owning a dotted parameter name, excluding its tensor name.
+
+    For example, blocks.0.norm1.weight walks through root, blocks,
+    blocks[0], and norm1. The walk includes every ancestor used by the
+    LayerNorm exclusion rule.
     """
     parts = param_name.split(".")[:-1]
     m = root
@@ -30,40 +32,37 @@ def build_optimizer(
     betas: Tuple[float, float] = (0.9, 0.95),
     eps: float = 1e-8,
 ) -> optim.Optimizer:
-    r"""
-    Build an AdamW optimizer with standard weight-decay exclusions.
-
-    概要
-    ----
-    - AdamW を構築する補助関数。
-    - 通常の Transformer 系学習における慣習に従い、以下のパラメータは weight decay を除外する：
-      - **バイアス項**（`.bias`）
-      - **LayerNorm** の重み
-      - 特殊トークン：`cls_token`, `pos_embed`
+    """Build AdamW with explicit name/module-based weight-decay exclusions.
 
     Parameters
     ----------
-    model : nn.Module
-        最適化対象のモデル。
+    model : torch.nn.Module
+        Model to optimize. Move it to its training device and configure
+        requires_grad before creating the optimizer.
     lr : float, default=1.5e-4
-        学習率。
+        Base learning rate before scheduler scaling.
     weight_decay : float, default=0.05
-        weight decay をかけるパラメータ群に対する係数。
-    betas : Tuple[float, float], default=(0.9, 0.95)
-        AdamW の β 値。
+        AdamW decoupled weight decay applied to the decay group.
+    betas : tuple of float, default=(0.9, 0.95)
+        AdamW moment coefficients.
     eps : float, default=1e-8
-        AdamW の数値安定化項。
+        AdamW numerical stability term.
 
     Returns
     -------
-    optimizer : torch.optim.AdamW
-        構築された AdamW Optimizer。
+    torch.optim.AdamW
+        Optimizer containing the nonempty decay and no-decay groups.
 
     Notes
     -----
-    - `decay` group: 通常の重みパラメータ（weight_decay を適用）
-    - `no_decay` group: bias, LayerNorm, cls_token, pos_embed（weight_decay=0.0）
-    - これは BERT/ViT 系の学習レシピに基づく慣習で、汎用的に有効。
+    Parameters with requires_grad=False are excluded. No decay is applied
+    to names ending in ".bias", parameters whose module walk includes a
+    LayerNorm, or names containing "cls_token" or "pos_embed". Remaining
+    parameters receive weight_decay. Nonempty decay groups precede
+    nonempty no-decay groups, whose weight_decay is zero.
+
+    These are inspectable recipe choices, not a claim that one set of
+    exclusions is scientifically optimal for every dataset or model.
     """
     decay, no_decay = [], []
     for name, p in model.named_parameters():
@@ -94,9 +93,36 @@ def build_warmup_cosine(
     total_steps: int,
     min_lr_scale: float = 0.0,
 ) -> LambdaLR:
-    """
-    Return LambdaLR that does linear warmup then cosine decay to min_lr_scale.
-    - min_lr_scale is relative to the base LR set in the optimizer.
+    """Build a per-update LambdaLR with linear warmup and capped cosine decay.
+
+    Parameters
+    ----------
+    optimizer : torch.optim.Optimizer
+        Optimizer whose group base rates are scaled.
+    warmup_steps : int
+        Number of scheduler indices allocated to warmup.
+    total_steps : int
+        Planned update count, including warmup.
+    min_lr_scale : float, default=0.0
+        Multiplier at scheduler index total_steps when warmup_steps < total_steps.
+
+    Returns
+    -------
+    torch.optim.lr_scheduler.LambdaLR
+        Scheduler with the same multiplier applied to every group base rate.
+
+    Notes
+    -----
+    LambdaLR applies index zero during construction. With positive warmup,
+    the first optimizer update uses the positive multiplier
+    max(1e-8, 1/warmup_steps), not zero. Call scheduler.step() after an update:
+    j uses index j-1, then prepares index j for the next update. The base
+    rate appears at indices warmup_steps-1 and warmup_steps. For an ordinary
+    budget with 0 <= warmup_steps < total_steps, the minimum is installed
+    after the final planned update, rather than consumed by that update.
+
+    The helper does not validate schedule budgets. The max(1, ...) guards
+    avoid zero denominators; they do not make arbitrary budgets meaningful.
     """
     def lr_lambda(step: int):
         if step < warmup_steps:
@@ -115,38 +141,38 @@ def build_scheduler(
     warmup_epochs: int = 1,
     min_lr_scale: float = 0.1,
 ) -> LambdaLR:
-    r"""
-    Build a learning-rate scheduler: **linear warmup + cosine decay**.
-
-    概要
-    ----
-    - 最初の `warmup_epochs` では学習率を 0 → base_lr へ線形にウォームアップ。
-    - その後はコサイン曲線に従って `base_lr * min_lr_scale` まで減衰。
-    - 典型的な Transformer 系のスケジューラ設計。
+    """Build the warmup/cosine scheduler from epoch-sized update budgets.
 
     Parameters
     ----------
     optimizer : torch.optim.Optimizer
-        対象の Optimizer。
+        Optimizer to schedule.
     steps_per_epoch : int
-        1エポックあたりの更新ステップ数（= len(train_loader)）。
+        Planned optimizer updates per epoch, usually len(train_loader).
     epochs : int
-        総エポック数。
+        Planned total epochs.
     warmup_epochs : int, default=1
-        ウォームアップを適用するエポック数。
+        Number of epoch-sized warmup update budgets.
     min_lr_scale : float, default=0.1
-        最小学習率のスケール。最終的に `base_lr * min_lr_scale` に到達。
+        Multiplier installed at the planned final scheduler index.
 
     Returns
     -------
-    scheduler : torch.optim.lr_scheduler.LambdaLR
-        PyTorch の LambdaLR スケジューラ。
+    torch.optim.lr_scheduler.LambdaLR
+        Scheduler produced by build_warmup_cosine.
 
     Notes
     -----
-    - 総ステップ数 = `steps_per_epoch * epochs`
-    - ウォームアップステップ数 = `steps_per_epoch * warmup_epochs`
-    - コサイン減衰はウォームアップ後の残りステップに適用される。
+    total_steps = steps_per_epoch * epochs and warmup_steps =
+    steps_per_epoch * warmup_epochs. Index zero is applied on construction;
+    the first update uses a positive warmup rate when warmup is enabled.
+    With post-update stepping, the final minimum is installed after the
+    last planned update. See build_warmup_cosine for indexing details.
+
+    Trainer advances its scheduler only after successful optimizer
+    updates. AMP-skipped attempts therefore do not advance this schedule.
+    Epoch budgets still count attempts unless the caller's batching
+    protocol explicitly supplies an update-based budget.
     """
     total_steps = steps_per_epoch * epochs
     warmup_steps = steps_per_epoch * warmup_epochs

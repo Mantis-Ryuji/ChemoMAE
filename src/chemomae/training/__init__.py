@@ -1,4 +1,4 @@
-from .trainer import Trainer, TrainerConfig
+from .trainer import PreparedBatch, Trainer, TrainerConfig
 from .tester import TesterConfig, Tester
 from .extractor import Extractor, ExtractorConfig
 from .optim import build_optimizer, build_scheduler
@@ -6,6 +6,7 @@ from .augmenter import SpectraAugmenterConfig, SpectraAugmenter
 
 __all__ = [
     "Trainer",
+    "PreparedBatch",
     "TrainerConfig",
     "TesterConfig",
     "Tester",

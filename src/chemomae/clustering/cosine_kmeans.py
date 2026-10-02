@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import gc
-from typing import Optional, Tuple, Union, Callable, List
+import math
+from numbers import Integral, Real
+from typing import Optional, Tuple, Union, Callable, List, Literal
 
 import torch
 import torch.nn as nn
@@ -12,50 +14,122 @@ from .ops import l2_normalize_rows, cosine_dissimilarity
 __all__ = ["CosineKMeans", "elbow_ckmeans"]
 
 
+def _validated_config(
+    n_components: object, tol: object, max_iter: object, random_state: object
+) -> tuple[int, float, int, int | None]:
+    for name, value in (("n_components", n_components), ("max_iter", max_iter)):
+        if isinstance(value, bool) or not isinstance(value, Integral) or value <= 0:
+            raise ValueError(f"{name} must be a positive integer")
+    if isinstance(tol, bool) or not isinstance(tol, Real) or not math.isfinite(tol) or tol < 0:
+        raise ValueError("tol must be finite and nonnegative")
+    if random_state is not None and (
+        isinstance(random_state, bool) or not isinstance(random_state, Integral)
+        or not -(2**63) <= random_state <= 2**64 - 1
+    ):
+        raise ValueError("random_state must be an integer Torch seed or None")
+    return int(n_components), float(tol), int(max_iter), int(random_state) if random_state is not None else None
+
+
+def _validate_features(X: torch.Tensor) -> None:
+    if not isinstance(X, torch.Tensor):
+        raise TypeError("X must be a Torch tensor")
+    if X.ndim != 2 or X.size(0) == 0 or X.size(1) == 0:
+        raise ValueError("X must be a nonempty two-dimensional feature matrix")
+    if X.layout != torch.strided or X.is_complex() or X.dtype == torch.bool:
+        raise ValueError("X must be a dense real numeric tensor")
+    if not torch.isfinite(X).all():
+        raise ValueError("X contains NaN/Inf")
+
+
+def _validate_chunk(chunk: int | None) -> None:
+    if chunk is not None and (
+        isinstance(chunk, bool) or not isinstance(chunk, Integral) or chunk <= 0
+    ):
+        raise ValueError("chunk must be a positive integer or None")
+
+
+def _validated_diagnostics(
+    inertia: object, n_iter: object, converged: object, stop_reason: object, max_iter: int
+) -> tuple[float, int, bool, Literal["tolerance", "max_iter"]]:
+    if isinstance(inertia, bool) or not isinstance(inertia, Real) or not math.isfinite(inertia):
+        raise ValueError("inertia_ must be finite")
+    if isinstance(n_iter, bool) or not isinstance(n_iter, Integral) or not 1 <= n_iter <= max_iter:
+        raise ValueError("n_iter_ must be an integer from one through max_iter")
+    if type(converged) is not bool:
+        raise ValueError("converged_ must be boolean")
+    if stop_reason not in ("tolerance", "max_iter"):
+        raise ValueError("stop_reason_ must be 'tolerance' or 'max_iter'")
+    if converged != (stop_reason == "tolerance") or (not converged and n_iter != max_iter):
+        raise ValueError("convergence diagnostics are inconsistent")
+    reason: Literal["tolerance", "max_iter"] = "tolerance" if converged else "max_iter"
+    return float(inertia), int(n_iter), converged, reason
+
+
+def _validated_centers(centers: object, n_components: int, latent_dim: object) -> torch.Tensor:
+    if isinstance(latent_dim, bool) or not isinstance(latent_dim, Integral) or latent_dim <= 0:
+        raise ValueError("latent_dim must be a positive integer")
+    if not isinstance(centers, torch.Tensor):
+        raise ValueError("centroids must be a Torch tensor")
+    if (centers.layout != torch.strided or centers.dtype != torch.float32
+            or centers.ndim != 2 or centers.shape != (n_components, latent_dim)):
+        raise ValueError("centroids must be a nonempty FP32 matrix matching K and latent_dim")
+    if not torch.isfinite(centers).all():
+        raise ValueError("centroids contain NaN/Inf")
+    return centers
+
+
 class CosineKMeans(nn.Module):
     r"""
     Cosine (hyperspherical) K-Means with k-means++ init and optional streaming.
 
-    概要
-    ----
-    - 目的関数: 平均コサイン不類似度 `J = mean(1 - cos(x, c))`
-    - E-step: `argmax cos(x, c_k)` により割当
-    - M-step: クラスタ平均を L2 正規化（球面 k-means の標準形）
-    - k-means++ 初期化（フルデバイス / ストリーミングの両方に対応）
-    - 内部計算は原則 fp32（half/bf16 入力でも内部で昇格）
-    - VRAM が厳しい場合はチャンクストリーミング（CPU→GPU）でメモリ使用量を制御可能
-
     Parameters
     ----------
     n_components : int, default=8
-        クラスタ数 K。
+        Positive cluster count K.
     tol : float, default=1e-4
-        収束判定の許容値（相対 or 絶対のどちらかを満たしたら停止）。
+        Finite nonnegative tolerance. Stop when successive pre-update objectives
+        change relatively by less than tol or absolutely by less than tol*1e-3.
+        Zero disables tolerance-based stopping.
     max_iter : int, default=500
-        EM 反復の最大回数。
+        Positive maximum number of completed centroid updates.
     device : str | torch.device, default="cuda"
-        学習・推論に用いるデバイス。
+        Computation device.
     random_state : int | None, default=42
-        初期化・多項分布サンプリングの乱数シード（決定的動作に使用）。
+        Seed for the instance-owned CPU initialization generator. Its stream
+        advances across fits; None leaves the generator's default seed unchanged.
 
     Attributes
     ----------
-    `centroids` : torch.Tensor, shape (K, D)
-        L2 正規化済みのクラスタ中心（register_buffer で保持）。
-    `latent_dim` : int | None
-        特徴次元 D。`fit()` 実行時に `X.size(1)` から自動決定。
-    `inertia_` : float
-        最終反復での `mean(1 - cos)` 値（SSE ではない点に注意）。
-    `_fitted` : bool
-        学習済みであれば True。
+    centroids : torch.Tensor, shape (K, D)
+        FP32 fitted centers registered as a buffer, using the existing row
+        normalization convention. Zero sums remain zero.
+    latent_dim : int or None
+        Feature dimension, inferred during fitting.
+    inertia_ : float
+        Mean nearest-center cosine dissimilarity against the final stored
+        centers, after their final update and normalization. This is not SSE.
+    n_iter_ : int
+        Completed centroid updates; zero before fitting.
+    converged_ : bool
+        True only when the tolerance condition stopped the most recent fit.
+    stop_reason_ : {"tolerance", "max_iter"} or None
+        Most recent fit's stop reason; None before fitting.
 
     Notes
     -----
-    - 本実装は「球面 k-means」を想定しており、**入力ベクトルは行方向に L2 正規化**して扱います。
-      内部で必要に応じて `l2_normalize_rows` を適用します。
-    - ストリーミング（`chunk>0`）では CPU 上のバッチを逐次 GPU に送り、距離計算/更新のみ GPU で行います。
-      大規模データでも VRAM を抑えてクラスタリングできます。
-    - 学習後の再利用は `save_centroids()` / `load_centroids()` を利用（中心のみ保存・復元）。
+    Inputs are row-normalized and computed in FP32. Assignments maximize cosine
+    similarity; centroid means are normalized after updates. Empty classes use
+    the samples farthest from their currently nearest centers.
+    Row normalization uses eps=1e-6; sufficiently small or zero vectors can
+    retain a norm below one. Persistence validates values without normalizing.
+
+    A positive chunk streams CPU features to CUDA, but full labels and maximum
+    similarities remain resident on the compute device. CPU fitting retains the
+    full feature matrix. Final-objective evaluation adds one assignment pass.
+
+    save_centroids/load_centroids preserve fitted centers and diagnostics
+    exactly without renormalization. They restore prediction state, not an
+    in-progress fit or the advanced initialization-generator state.
     """
     def __init__(
         self,
@@ -66,42 +140,43 @@ class CosineKMeans(nn.Module):
         random_state: Optional[int] = 42
     ) -> None:
         super().__init__()
-        if n_components <= 0:
-            raise ValueError("n_components must be positive")
-
-        self.n_components = int(n_components)
-        self.tol = float(tol)
-        self.max_iter = int(max_iter)
+        self.n_components, self.tol, self.max_iter, self.random_state = _validated_config(
+            n_components, tol, max_iter, random_state
+        )
         self.device = torch.device(device)
-        self.random_state = random_state
+        if self.device.type == "cuda" and not torch.cuda.is_available():
+            raise ValueError("CUDA is not available; select device='cpu'")
 
-        # 次元未確定のため空バッファで登録（state_dict に載せるため register_buffer を使用）
-        self.register_buffer("centroids", torch.empty(0, 0, device=self.device))
+        # Register an empty buffer until fitting determines the feature dimension.
+        self.register_buffer("centroids", torch.empty(0, 0, device=self.device, dtype=torch.float32))
 
         self._generator = torch.Generator(device="cpu")
         if random_state is not None:
             self._generator.manual_seed(int(random_state))
 
         self.latent_dim: Optional[int] = None
-        # inertia_ は mean(1 - cos)（SSE ではない点に注意）
+        # The objective is mean cosine dissimilarity rather than SSE.
         self.inertia_: float = float("inf")
+        self.n_iter_: int = 0
+        self.converged_: bool = False
+        self.stop_reason_: Literal["tolerance", "max_iter"] | None = None
         self._fitted: bool = False
 
     # ----------------------------- init (k-means++) -----------------------------
     @torch.no_grad()
     def _init_centroids_kmeanspp(self, Xn: torch.Tensor) -> torch.Tensor:
-        """Full-device k-means++ (Xn: L2-normalized, device 上, fp32 推奨)."""
+        """Full-device k-means++ (Xn: L2-normalized, on device, preferably FP32)."""
         N = int(Xn.size(0))
         if self.n_components > N:
             raise ValueError(f"n_components ({self.n_components}) must be <= N ({N}).")
         K, d = self.n_components, int(Xn.size(1))
         C = torch.empty(K, d, device=Xn.device, dtype=Xn.dtype)
 
-        # 1点目
+        # First center.
         idx0 = torch.randint(0, N, (1,), generator=self._generator)
         C[0] = Xn[idx0.to(Xn.device)]
 
-        # 2点目以降
+        # Subsequent centers.
         dmin = cosine_dissimilarity(Xn, C[0:1]).squeeze(1).clamp_min_(1e-12)
         probs = (dmin / (dmin.sum() + 1e-12)).clamp_min_(0)
 
@@ -117,7 +192,7 @@ class CosineKMeans(nn.Module):
 
     @torch.no_grad()
     def _init_centroids_kmeanspp_stream(self, X_cpu: torch.Tensor, chunk: int) -> torch.Tensor:
-        """Streaming k-means++: X は CPU のまま、チャンクを device へ送る。"""
+        """Streaming k-means++: keep X on CPU and transfer chunks to device."""
         N = int(X_cpu.size(0))
         if self.n_components > N:
             raise ValueError(f"n_components ({self.n_components}) must be <= N ({N}).")
@@ -193,56 +268,58 @@ class CosineKMeans(nn.Module):
     @torch.no_grad()
     def fit(self, X: torch.Tensor, chunk: Optional[int] = None) -> "CosineKMeans":
         r"""
-        Fit centroids on `X`.
-
-        概要
-        ----
-        - k-means++ で中心を初期化し、E/M ステップを最大 `max_iter` まで反復。
-        - `chunk is None` ならフルデバイスで一括学習、`chunk>0` なら CPU→GPU ストリーミング。
+        Fit spherical centers and record final-objective and stop diagnostics.
 
         Parameters
         ----------
         X : torch.Tensor, shape (N, D)
-            入力特徴（任意の dtype 可。内部で fp32 に昇格して計算）。
+            Nonempty finite real features, converted to FP32 internally.
         chunk : int | None, default=None
-            ストリーミングのチャンクサイズ（ステップあたりのサンプル数）。
-            `None` ならフルデバイス。`>0` でストリーミング（GPU 前提）。
+            Positive streaming chunk size on CUDA. None uses the full device;
+            CPU fitting uses the full matrix even when a chunk is supplied.
 
         Returns
         -------
         self : CosineKMeans
-            学習済みインスタンス。
+            Fitted instance. n_iter_ counts completed updates; inertia_ is
+            evaluated against the final stored centers in an extra pass.
 
         Raises
         ------
         ValueError
-            入力形状/値が不正、または `n_components > N` のとき。
+            Invalid shape, nonfinite features, invalid chunk, or K greater than N.
         """
-        if X.ndim != 2:
-            raise ValueError(f"X must be 2D, got {tuple(X.shape)}")
-        if not torch.isfinite(X).all():
-            raise ValueError("X contains NaN/Inf")
+        _validate_features(X)
+        _validate_chunk(chunk)
+        _validated_config(self.n_components, self.tol, self.max_iter, self.random_state)
         if self.n_components > X.size(0):
             raise ValueError(f"n_components ({self.n_components}) must be <= N ({X.size(0)})")
-        if chunk is not None and chunk <= 0:
-            raise ValueError("chunk must be positive")
-
-        # 次元の自動確定
+        # Infer the feature dimension; an interrupted new fit is not fitted state.
         self.latent_dim = int(X.size(1))
+        self._fitted = False
+        self.n_iter_ = 0
+        self.converged_ = False
+        self.stop_reason_ = None
+        self.inertia_ = float("inf")
 
         stream = (chunk is not None) and (self.device.type == "cuda")
 
-        # k-means++ 初期化（内部計算は fp32）
+        # Initialize in FP32 using the existing k-means++ policy.
         if stream:
             X_cpu = X.to("cpu", dtype=torch.float32)
+            if not torch.isfinite(X_cpu).all():
+                raise ValueError("X cannot be represented as finite FP32 features")
             C = self._init_centroids_kmeanspp_stream(X_cpu, chunk)
         else:
-            Xn = l2_normalize_rows(X.to(self.device, dtype=torch.float32))
+            X_fp32 = X.to(self.device, dtype=torch.float32)
+            if not torch.isfinite(X_fp32).all():
+                raise ValueError("X cannot be represented as finite FP32 features")
+            Xn = l2_normalize_rows(X_fp32)
+            del X_fp32
             C = self._init_centroids_kmeanspp(Xn)
 
         prev = None
-        last = None
-        for _ in range(self.max_iter):
+        for iteration in range(1, self.max_iter + 1):
             # E-step
             if stream:
                 labels, max_sim = self._assign_in_chunks_cpu(X_cpu, C, chunk)
@@ -253,7 +330,7 @@ class CosineKMeans(nn.Module):
                 max_sim = sim.gather(1, labels.unsqueeze(1)).squeeze(1)
                 mean_J = (1.0 - max_sim).mean().item()
 
-            # M-step（累積は fp32）
+            # Accumulate centroid updates in FP32.
             if stream:
                 C_new, counts = self._update_centroids_in_chunks_cpu(X_cpu, labels, self.n_components, chunk)
             else:
@@ -264,7 +341,7 @@ class CosineKMeans(nn.Module):
                 if non_empty.any():
                     C_new[non_empty] = l2_normalize_rows(C_new[non_empty] / counts[non_empty].unsqueeze(1))
 
-            # 空クラスタ対応：最遠サンプルを盗む
+            # Refill empty classes with the farthest currently assigned samples.
             non_empty = counts > 0
             if (~non_empty).any():
                 num_empty = int((~non_empty).sum().item())
@@ -277,26 +354,40 @@ class CosineKMeans(nn.Module):
                 else:
                     C_new[empty_ids] = l2_normalize_rows(Xn[far_idx].to(torch.float32))
 
-            # 収束判定（相対/絶対）
+            self.n_iter_ = iteration
+            # Preserve the existing pre-update objective stopping criterion.
             if prev is not None:
                 rel = abs(prev - mean_J) / (abs(prev) + 1e-12)
                 if (rel < self.tol) or (abs(prev - mean_J) < self.tol * 1e-3):
                     C = C_new
                     prev = mean_J
-                    last = mean_J
+                    self.converged_ = True
+                    self.stop_reason_ = "tolerance"
                     break
             C = C_new
             prev = mean_J
-            last = mean_J
+        if not self.converged_:
+            self.stop_reason_ = "max_iter"
 
-        # centroids を L2 正規化してバッファに反映（register_buffer を保持）
+        # Normalize and update the registered prediction buffer.
         C = l2_normalize_rows(C).to(self.device, dtype=torch.float32)
+        if not torch.isfinite(C).all():
+            raise RuntimeError("Fitting produced nonfinite centers")
         if self.centroids.shape != C.shape:
             self.centroids.resize_(C.shape)
         self.centroids.copy_(C)
 
+        # Evaluate the reported objective against the exact prediction buffer,
+        # including the last M-step and its final normalization.
+        if stream:
+            _, final_max_sim = self._assign_in_chunks_cpu(X_cpu, self.centroids, chunk)
+        else:
+            del sim
+            final_max_sim = (Xn @ self.centroids.T).max(dim=1).values
+        self.inertia_ = float((1.0 - final_max_sim).mean().item())
+        if not math.isfinite(self.inertia_):
+            raise RuntimeError("Final-center objective is nonfinite")
         self._fitted = True
-        self.inertia_ = float(last if last is not None else prev)
 
         gc.collect()
         if stream and torch.cuda.is_available():
@@ -311,14 +402,14 @@ class CosineKMeans(nn.Module):
         Parameters
         ----------
         X : torch.Tensor, shape (N, D)
-            入力特徴。
+            Input features.
         chunk : int | None, default=None
-            ストリーミングのチャンクサイズ。
+            Streaming chunk size.
 
         Returns
         -------
         labels : torch.Tensor, shape (N,), dtype=torch.long
-            割当クラスタ ID。
+            Assigned cluster IDs.
         """
         self.fit(X, chunk=chunk)
         return self.predict(X, chunk=chunk)
@@ -333,33 +424,28 @@ class CosineKMeans(nn.Module):
         r"""
         Predict cluster labels (and optionally distances) for `X`.
 
-        概要
-        ----
-        - `labels = argmax_k cos(x, c_k)` を返す。
-        - `return_dist=True` の場合、`1 - cos` の距離行列も返す（メモリ消費に注意）。
-
         Parameters
         ----------
         X : torch.Tensor, shape (N, D)
-            入力特徴。
+            Nonempty finite real feature matrix.
         return_dist : bool, default=False
-            True のとき `(N, K)` の距離行列（1 - cos）も返す。
+            Also return the full (N, K) cosine-dissimilarity matrix.
         chunk : int | None, default=None
-            ストリーミングのチャンクサイズ。`None` ならフルデバイス。
+            Positive CUDA streaming chunk size; None uses the full device.
 
         Returns
         -------
         labels : torch.Tensor, shape (N,), dtype=torch.long
-            割当クラスタ ID。
+            Nearest-center IDs on the centers' device.
         dist : torch.Tensor, shape (N, K), optional
-            1 - cos の距離行列（`return_dist=True` のとき）。
+            Cosine dissimilarities; allocated in full even with streaming.
 
         Raises
         ------
         RuntimeError
-            学習済みでない（centroids 未初期化）場合。
+            Fitted centers are unavailable or invalid.
         ValueError
-            入力形状が不正、または特徴次元 D が学習時と異なる場合。
+            Invalid features or chunk, or a different feature dimension.
         """
         if (
             not self._fitted
@@ -369,22 +455,18 @@ class CosineKMeans(nn.Module):
         ):
             raise RuntimeError("Centroids are not initialized. Call fit() or load_centroids() first.")
 
-        if X.ndim != 2:
-            raise ValueError(f"X must be 2D, got {tuple(X.shape)}")
+        _validate_features(X)
+        _validate_chunk(chunk)
         if self.latent_dim is None:
             raise RuntimeError("latent_dim is undefined. Call fit() or load_centroids() first.")
         if int(X.size(1)) != self.latent_dim:
             raise ValueError(f"X dim mismatch: expected {self.latent_dim}, got {int(X.size(1))}")
 
-        if chunk is not None:
-            if not isinstance(chunk, int):
-                raise ValueError(f"chunk must be int or None, got {type(chunk)}")
-            if chunk <= 0:
-                raise ValueError(f"chunk must be positive, got {chunk}")
-
         stream = (chunk is not None) and (self.centroids.device.type == "cuda")
         if stream:
             X_cpu = X.to("cpu", dtype=torch.float32)
+            if not torch.isfinite(X_cpu).all():
+                raise ValueError("X cannot be represented as finite FP32 features")
             N = int(X_cpu.size(0))
             labels = torch.empty(N, dtype=torch.long, device=self.centroids.device)
             dist_all = None
@@ -401,7 +483,11 @@ class CosineKMeans(nn.Module):
                 del x, sim
             return (labels, dist_all) if return_dist else labels
         else:
-            Xn = l2_normalize_rows(X.to(self.centroids.device, dtype=torch.float32))
+            X_fp32 = X.to(self.centroids.device, dtype=torch.float32)
+            if not torch.isfinite(X_fp32).all():
+                raise ValueError("X cannot be represented as finite FP32 features")
+            Xn = l2_normalize_rows(X_fp32)
+            del X_fp32
             sim = Xn @ self.centroids.T
             labels = sim.argmax(dim=1)
             if return_dist:
@@ -410,85 +496,116 @@ class CosineKMeans(nn.Module):
 
     # ----------------------------- Centroids I/O  -----------------------------
     @torch.no_grad()
-    def save_centroids(self, path: str | bytes | "os.PathLike[str]"):
+    def save_centroids(self, path: str | bytes | "os.PathLike[str]") -> None:
         r"""
-        Save only the final centroids for later reuse.
-
-        概要
-        ----
-        - 予測再利用に必要な最小情報（L2 正規化済み中心と inertia_）を保存。
-        - `torch.save` でシリアライズ。
+        Save exact fitted centers, constructor configuration and diagnostics.
 
         Parameters
         ----------
         path : str | PathLike
-            保存先パス。
+            Destination for the versioned Torch fitted-state file.
 
         Raises
         ------
         RuntimeError
-            未学習で中心が存在しない場合。
-        
+            No fitted state is available.
+        ValueError
+            Centers, configuration or fitted diagnostics are invalid.
+
         Notes
         -----
-        - すべて CPU tensor として保存されるため、環境依存（GPU 有無）の影響を受けにくい。
+        Centers are copied to CPU without normalization or dtype conversion.
+        This file restores fitted prediction state; it excludes device choice
+        and the advanced initialization-generator state, and cannot resume fit.
         """
-        if not self._fitted or self.centroids.numel() == 0:
+        if not self._fitted:
             raise RuntimeError("Model is not fitted; no centroids to save.")
+        k, tol, max_iter, seed = _validated_config(
+            self.n_components, self.tol, self.max_iter, self.random_state
+        )
+        centers = _validated_centers(self.centroids, k, self.latent_dim)
+        inertia, n_iter, converged, reason = _validated_diagnostics(
+            self.inertia_, self.n_iter_, self.converged_, self.stop_reason_, max_iter
+        )
         payload = {
-            "centroids": l2_normalize_rows(self.centroids.detach().to("cpu", dtype=torch.float32)),
-            "inertia_": float(self.inertia_),
+            "format_version": 1,
+            "config": {
+                "n_components": k, "tol": tol, "max_iter": max_iter,
+                "random_state": seed,
+            },
+            "centroids": centers.detach().cpu().clone(),
+            "latent_dim": self.latent_dim,
+            "inertia_": inertia,
+            "n_iter_": n_iter,
+            "converged_": converged,
+            "stop_reason_": reason,
         }
         torch.save(payload, path)
 
     @torch.no_grad()
-    def load_centroids(self, path: str | bytes | "os.PathLike[str]", *, strict_k: bool = True):
+    def load_centroids(
+        self, path: str | bytes | "os.PathLike[str]", *, strict_k: bool = True
+    ) -> "CosineKMeans":
         r"""
-        Load saved centroids and enable immediate prediction.
-
-        概要
-        ----
-        - `save_centroids()` で保存した中心を読み込み、`predict()` 可能な状態に復元する。
-        - `strict_k=True` の場合、保存データの K と `self.n_components` が一致しないとエラー。
+        Restore validated fitted prediction state on this instance's device.
 
         Parameters
         ----------
         path : str | PathLike
-            保存ファイルのパス（`torch.save` 形式）。
+            File produced by save_centroids with format_version=1. Historical
+            unversioned center-only payloads are rejected explicitly.
         strict_k : bool, default=True
-            K の一致を厳密に要求するか。
+            Require saved K to match the instance's K. False adopts saved K.
+            Other saved constructor settings and diagnostics are restored.
 
         Returns
         -------
         self : CosineKMeans
-            復元済みインスタンス。
+            Restored instance. Centers are preserved without renormalization.
 
         Raises
         ------
-        KeyError
-            保存データに `centroids` が含まれない場合。
         ValueError
-            セントロイド形状が不正、または `strict_k=True` で K が不一致の場合。
+            Unsupported format, invalid configuration/state, or a K mismatch.
+
+        Notes
+        -----
+        Validation finishes before fitted attributes change. The initialization
+        generator is recreated from the saved random_state; its advanced stream
+        position is not stored. Subsequent fitting starts a new fit.
         """
-        payload = torch.load(path, map_location=self.device)
-        if "centroids" not in payload:
-            raise KeyError("payload has no 'centroids'.")
-
-        C = payload["centroids"].to(self.device, dtype=torch.float32)
-        if C.ndim != 2 or C.size(0) <= 0:
-            raise ValueError(f"Invalid centroids shape: {tuple(C.shape)}")
-        K, d = int(C.size(0)), int(C.size(1))
-
-        if strict_k and (K != self.n_components):
-            raise ValueError(f"n_components mismatch: expected {self.n_components}, file has {K}")
-
-        C = l2_normalize_rows(C).to(self.device, dtype=torch.float32)
-        if self.centroids.shape != C.shape:
-            self.centroids.resize_(C.shape)
-        self.centroids.copy_(C)
-
-        self.latent_dim = d
-        self.inertia_ = float(payload.get("inertia_", float("inf")))
+        if type(strict_k) is not bool:
+            raise ValueError("strict_k must be boolean")
+        payload = torch.load(path, map_location="cpu", weights_only=True)
+        if (not isinstance(payload, dict) or type(payload.get("format_version")) is not int
+                or payload["format_version"] != 1):
+            raise ValueError("Unsupported fitted-state format; expected format_version=1")
+        config = payload.get("config")
+        if not isinstance(config, dict):
+            raise ValueError("fitted-state config must be a dictionary")
+        k, tol, max_iter, seed = _validated_config(
+            config.get("n_components"), config.get("tol"),
+            config.get("max_iter"), config.get("random_state")
+        )
+        if "random_state" not in config:
+            raise ValueError("fitted-state config is missing random_state")
+        C = _validated_centers(payload.get("centroids"), k, payload.get("latent_dim"))
+        inertia, n_iter, converged, reason = _validated_diagnostics(
+            payload.get("inertia_"), payload.get("n_iter_"),
+            payload.get("converged_"), payload.get("stop_reason_"), max_iter
+        )
+        if strict_k and k != self.n_components:
+            raise ValueError(f"n_components mismatch: expected {self.n_components}, file has {k}")
+        restored_centers = C.to(self.device).clone()
+        restored_generator = torch.Generator(device="cpu")
+        if seed is not None:
+            restored_generator.manual_seed(seed)
+        self.centroids = restored_centers
+        self.n_components, self.tol, self.max_iter, self.random_state = k, tol, max_iter, seed
+        self._generator = restored_generator
+        self.latent_dim = int(C.size(1))
+        self.inertia_ = inertia
+        self.n_iter_, self.converged_, self.stop_reason_ = n_iter, converged, reason
         self._fitted = True
         return self
 
@@ -506,68 +623,69 @@ def elbow_ckmeans(
     r"""
     Sweep K from 1..k_max for cosine k-means and pick an elbow by curvature.
 
-    概要
+    Overview
     ----
-    - `K = 1..k_max` について CosineKMeans（`cluster_module`）を学習し、
-      目的値 `inertia = mean(1 - cos(x, c))` を記録。
-    - `find_elbow_curvature(k_list, inertias)` により **曲率ベースのエルボー**を自動選択。
-    - 返り値は `(k_list, inertias, optimal_k, elbow_idx, kappa)`。
+    - Fit CosineKMeans (`cluster_module`) for `K = 1..k_max` and record
+      the objective `inertia = mean(1 - cos(x, c))`.
+    - Select a curvature-based elbow with `find_elbow_curvature(k_list, inertias)`.
+    - Return `(k_list, inertias, optimal_k, elbow_idx, kappa)`.
 
     Parameters
     ----------
     cluster_module : Callable[..., CosineKMeans]
-        `CosineKMeans` 互換のコンストラクタ（例: `CosineKMeans` 自体）。
-        呼び出し側で `n_components`, `device`, `random_state` などを渡せる必要があります。
+        CosineKMeans-compatible constructor, such as `CosineKMeans` itself.
+        Must accept `n_components`, `device`, `random_state`, and related arguments.
     X : torch.Tensor, shape (N, D)
-        入力特徴行列。内部で `device` へ転送します（既に同一ならコピー無し）。
+        Input features, transferred internally to `device` without a copy if already there.
     device : {"cuda", "cpu"} | torch.device, default="cuda"
-        学習に用いるデバイス。
+        Training device.
     k_max : int, default=50
-        試すクラスタ数の上限（1..k_max を走査）。
+        Maximum cluster count to evaluate (sweeps 1..k_max).
     chunk : int | None, default=None
-        ストリーミング学習のチャンクサイズ。`None` ならフルデバイス、
-        `>0` なら CPU→GPU ストリーミング（VRAM 節約; `CosineKMeans.fit(..., chunk=...)` に委譲）。
+        Streaming chunk size. `None` uses the full device; a positive value uses
+        CPU-to-GPU streaming to reduce VRAM, delegated to `CosineKMeans.fit(..., chunk=...)`.
     verbose : bool, default=True
-        各 K での `mean_inertia` をログ表示。
+        Print `mean_inertia` for each K.
     random_state : int, default=42
-        乱数シード。k-means++ の初期化に影響。
+        Random seed controlling k-means++ initialization.
 
     Returns
     -------
     k_list : List[int]
-        走査したクラスタ数（1..k_max）。
+        Evaluated cluster counts (1..k_max).
     inertias : List[float]
-        各 K に対する `mean(1 - cos)` の列。通常は K を増やすと単調減少。
+        `mean(1 - cos)` for each K; generally decreases as K increases.
     optimal_k : int
-        曲率（“折れ曲がり”）により選ばれた推奨クラスタ数。
+        Recommended cluster count selected by curvature (the bend in the curve).
     elbow_idx : int
-        `k_list[elbow_idx] == optimal_k` を満たすインデックス。
+        Index satisfying `k_list[elbow_idx] == optimal_k`.
     kappa : float
-        選択点における曲率スコア（実装依存の非負値）。大きいほどエルボーが明確。
+        Implementation-dependent nonnegative curvature at the selected point.
+        Larger values indicate a clearer elbow.
 
     Notes
     -----
-    - 目的値（inertia）は `J = mean(1 - cos(x, c))`。SSE ではありません。
-    - 大きな N の場合、`chunk` を設定すると VRAM を抑えて計算できます。
-    - 各 K で学習後にガーベジコレクションと GPU メモリ解放を行います。
-    - エルボー推定は `find_elbow_curvature(k_list, inertias)` に委譲します（局所 import）。
+    - The inertia objective is `J = mean(1 - cos(x, c))`, rather than SSE.
+    - For large N, set `chunk` to reduce VRAM use.
+    - Garbage collection and GPU memory cleanup follow training for each K.
+    - Elbow estimation delegates to a locally imported `find_elbow_curvature`.
 
     Examples
     --------
-    >>> X = torch.randn(10000, 64)           # 特徴（未正規化でも OK：内部で行正規化）
-    >>> from chemomae.cluster import CosineKMeans
-    >>> ks, js, K, idx, kappa = elbow_ckmeans(CosineKMeans, X, k_max=30, chunk=2048)
-    >>> K
-    12
+    >>> X = torch.randn(500, 16)  # Features; rows are normalized internally.
+    >>> from chemomae.clustering import CosineKMeans
+    >>> ks, js, K, idx, kappa = elbow_ckmeans(
+    ...     CosineKMeans, X, device="cpu", k_max=6, chunk=128, verbose=False,
+    ... )
     """
     if X.ndim != 2:
         raise ValueError("X must be 2D")
 
-    # 修正: ストリーミング時は全データをGPUに送らない
+    # Avoid transferring all data to GPU when streaming.
     if chunk is None:
         X_input = X.to(device, non_blocking=True)
     else:
-        # chunk利用時はCPUのまま扱う（fit内部で適切に処理されることを期待）
+        # Keep chunked input on CPU; fit handles the transfers.
         X_input = X
 
     inertias: List[float] = []
@@ -586,12 +704,12 @@ def elbow_ckmeans(
         if verbose:
             print(f"k={k}, mean_inertia={ckm.inertia_:.6f}")
 
-        # メモリ掃除（GPUを使っている時のみ）
+        # Clear GPU memory only when using GPU.
         gc.collect()
         if torch.device(device).type == "cuda" and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    # 局所 import（循環参照回避）
+    # Import locally to avoid circular dependencies.
     from .ops import find_elbow_curvature
     K, idx, kappa = find_elbow_curvature(k_list, inertias)
     if verbose:

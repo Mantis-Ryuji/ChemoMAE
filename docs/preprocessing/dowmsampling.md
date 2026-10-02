@@ -3,7 +3,9 @@
 > Module: `chemomae.preprocessing.downsampling`
 
 This document describes **`cosine_fps_downsample`**, a diversity-first subsampling method that selects spectra maximally spread in *direction* under cosine geometry.
-The implementation automatically utilizes **CUDA** when available and returns data in the **original scale** (normalization is internal to the selection phase only).
+The implementation uses an explicit CPU/CUDA computation device and returns data
+in the original scale. With `device=None`, Torch input uses its current device and
+NumPy input uses CPU. CUDA is never chosen merely because it is available.
 
 <p align="center">
 <img src="../../images/cosine_fps_sampling_3d.gif" width="500">
@@ -15,29 +17,29 @@ The implementation automatically utilizes **CUDA** when available and returns da
 
 Consider a collection of spectra:
 
-```math
+$$
 X = \{\mathbf{x}_1, \dots, \mathbf{x}_N\} \subset \mathbb{R}^L
-```
+$$
 
 Each spectrum is **internally** projected onto the unit hypersphere via L2 normalization (for selection only):
 
-```math
+$$
 \tilde{\mathbf{x}}_i = \frac{\mathbf{x}_i}{\lVert \mathbf{x}_i \rVert_2 + \varepsilon},
 \quad \lVert \tilde{\mathbf{x}}_i \rVert_2 \approx 1
-```
+$$
 
 The dissimilarity measure used is the **cosine distance**:
 
-```math
+$$
 d(\tilde{\mathbf{x}}_i,\tilde{\mathbf{x}}_j)
 = 1 - \tilde{\mathbf{x}}_i^\top \tilde{\mathbf{x}}_j
 \in [0,2]
-```
+$$
 
 Interpretation:
 
-* $`d \approx 0`$ — spectra point in nearly the same direction (high similarity)
-* $`d \approx 2`$ — spectra point in opposite directions (maximally dissimilar)
+* $d \approx 0$ — spectra point in nearly the same direction (high similarity)
+* $d \approx 2$ — spectra point in opposite directions (maximally dissimilar)
 
 ---
 
@@ -45,24 +47,24 @@ Interpretation:
 
 The objective of FPS is to select a diverse subset of size
 
-```math
+$$
 k = \min\!\bigl(N,\ \max(1,\ \mathrm{round}(\rho N))\bigr)
-```
+$$
 
 Let the selected indices be
 
-```math
+$$
 \mathcal{S}_k = \{s_1, \dots, s_k\}
-```
+$$
 
 The greedy selection proceeds as follows:
 
-```math
+$$
 s_1 \text{ chosen randomly (or fixed)}, \qquad
-s_{k+1} = \arg\max_{i \notin \mathcal{S}_k} \
+s_{k+1} = \arg\max_{i \notin \mathcal{S}_k}
         \min_{j \in \mathcal{S}_k} 
         d(\tilde{\mathbf{x}}_i, \tilde{\mathbf{x}}_j)
-```
+$$
 
 Intuitively:
 
@@ -78,26 +80,28 @@ Thus, FPS iteratively adds the sample **farthest from all selected points**, ens
 
 For efficiency, the algorithm maintains a vector of current nearest distances
 
-```math
+$$
 \mathbf{d}_{\min} \in \mathbb{R}^N,
-```
+$$
 
 where $d_{\min}[i]$ is the distance between candidate $i$ and its closest selected point.
 
 When a new point $\tilde{\mathbf{x}}_s$ is selected, the update rule is:
 
-```math
+$$
 \mathbf{d}_{\min} \leftarrow
 \min \Bigl( \mathbf{d}_{\min},\ \mathbf{1} - X_{\text{unit}} \tilde{\mathbf{x}}_{s} \Bigr),
-```
+$$
 
 where $X_{\text{unit}}$ is the row-normalized version of `X` (computed internally).
 This update involves:
 
 * Computing cosine distances (`1 - X_unit @ x_s`) between all points and the new sample
-* Updating $d_{\min}$ in-place using an elementwise minimum
+* Replacing $d_{\min}$ with the elementwise minimum
 
-Each iteration thus requires only **one matrix–vector multiplication** and a `min` operation, efficiently implemented with `torch.matmul` and in-place updates.
+Each iteration requires **one matrix–vector multiplication** and a `min`
+operation. Selecting the next index also synchronizes a scalar on CUDA; FPS
+does not provide a synchronization-free GPU sampling loop.
 
 ---
 
@@ -114,6 +118,8 @@ cosine_fps_downsample(
     return_numpy: bool = True,
     return_indices: bool = False,
     eps: float = 1e-12,
+    device: str | torch.device | None = None,
+    generator: torch.Generator | None = None,
 ) -> (np.ndarray | torch.Tensor)
 ```
 
@@ -128,16 +134,28 @@ cosine_fps_downsample(
 | `return_numpy`   | `bool`                | If `True`, returns NumPy array; otherwise keeps Torch tensor type.               |
 | `return_indices` | `bool`                | If `True`, also returns the selected indices.                                    |
 | `eps`            | `float`               | Small constant for L2 normalization stability.                                   |
+| `device` | `str` or `torch.device`, optional | Explicit CPU/CUDA computation; default follows Torch input or CPU for NumPy. |
+| `generator` | `torch.Generator`, optional | Caller-owned initial-point stream on the computation device; mutually exclusive with seed. |
 
 #### Behavior & Types
 
-* **Device:** Automatically runs on CUDA if available; otherwise CPU.
+* **Device:** Follows the explicit request; the default follows Torch input or CPU for NumPy.
 * **Return type:**
 
   * NumPy in → NumPy out (default)
   * Torch in → Torch out if `return_numpy=False` (device preserved)
 * **Normalization:** Always performed internally (selection only). The output spectra remain in the **original scale**.
-* **Complexity:** $O(Nk)$ inner products; memory $O(N)$. Intermediate buffers are reused for GPU efficiency.
+* **Complexity:** $O(Nk)$ inner products, $O(NC)$ resident working data, and $O(N)$ distances.
+  Arithmetic is float64 for float64 input and otherwise float32. No autograd is recorded.
+* **Validation:** ratio and eps must be positive and finite; init_index must be an
+  integer in range. Ratios >= 1 select all rows. Empty row inputs return the requested
+  output type; a zero feature dimension is invalid.
+* **Randomness:** With neither seed nor generator, one draw uses the computation
+  device's global stream without reseeding it. An explicit init_index draws no random
+  numbers. Persist caller-owned generator state outside FPS.
+* **Zero rows:** Stay zero, with dissimilarity one to every direction. Ties choose
+  the first remaining row. Selected rows cannot repeat. Torch-to-NumPy bfloat16
+  output is promoted to float32 because NumPy does not represent bfloat16.
 
 ---
 
@@ -151,7 +169,7 @@ from chemomae.preprocessing import cosine_fps_downsample
 
 X = np.random.randn(5000, 128).astype(np.float32)
 X_sub = cosine_fps_downsample(X, ratio=0.1, seed=42)
-# -> NumPy array, shape (ceil(0.1*N), 128)
+# -> NumPy array, shape (round(0.1*N), 128), clipped to [1, N].
 ```
 
 ### Torch — return tensor (same device)
@@ -181,8 +199,9 @@ X_sub = cosine_fps_downsample(X_snv, ratio=0.1)
 ## Design Notes
 
 * **Internal normalization:** Always L2-normalized internally (cosine geometry); returned subset uses the original scale.
-* **CUDA handling:** Uses `torch.cuda.is_available()`; moves data once and reuses on device.
-* **Memory efficiency:** In-place updates (`addmv_`, `minimum(out=...)`) reduce memory churn and CUDA “reserved memory” inflation.
+* **CUDA handling:** Honors the explicit computation device and rejects unavailable CUDA.
+* **Precision:** Selection disables surrounding CPU/CUDA autocast. Float64 input
+  uses float64 arithmetic; other supported inputs use float32.
 * **Empty input:** For `N=0`, returns `(0, L)` array/tensor.
 * **Reproducibility:** Specify `seed` or `init_index` for deterministic runs.
 
@@ -230,8 +249,8 @@ np.testing.assert_allclose(A, B)
 # Invariance to row scaling
 scales = np.exp(np.random.randn(X.shape[0], 1).astype(np.float32))
 X2 = X * scales
-U1 = cosine_fps_downsample(X,  ratio=0.1)
-U2 = cosine_fps_downsample(X2, ratio=0.1)
+U1 = cosine_fps_downsample(X,  ratio=0.1, seed=42)
+U2 = cosine_fps_downsample(X2, ratio=0.1, seed=42)
 def unit(Z): return Z / (np.linalg.norm(Z, axis=1, keepdims=True) + 1e-12)
 np.testing.assert_allclose(unit(U1), unit(U2), atol=1e-5)
 ```

@@ -12,8 +12,21 @@ except Exception:
 
 def set_global_seed(seed: int = 42, *, fix_cudnn: bool = True) -> None:
     """
-    Python/NumPy(/PyTorch) の乱数をまとめて固定。
-    fix_cudnn=True のとき、CUDNN の決定論モードも設定（速度低下の可能性あり）。
+    Seed Python, NumPy, and available Torch global random streams.
+
+    Parameters
+    ----------
+    seed : int, default=42
+        Value converted to int before seeding the global generators.
+    fix_cudnn : bool, default=True
+        Set cuDNN deterministic mode and disable cuDNN benchmarking.
+
+    Notes
+    -----
+    Caller-owned Torch Generators are not seeded. PYTHONHASHSEED is set in the
+    environment for subsequently started interpreters; this does not change
+    hash randomization in the current interpreter. The cuDNN flags can affect
+    performance and do not guarantee deterministic behavior for all operators.
     """
     seed = int(seed)
     random.seed(seed)
@@ -31,7 +44,19 @@ def set_global_seed(seed: int = 42, *, fix_cudnn: bool = True) -> None:
 
 def enable_deterministic(enable: bool = True) -> None:
     """
-    決定論性フラグだけを切り替え（CUDNN）。Seed の固定は set_global_seed() で行う。
+    Toggle cuDNN deterministic and benchmark flags without changing seeds.
+
+    Parameters
+    ----------
+    enable : bool, default=True
+        Enable cuDNN deterministic mode and disable benchmarking when true;
+        apply the opposite flags when false. Does nothing when Torch is absent.
+
+    Notes
+    -----
+    Use :func:`set_global_seed` to seed global random streams. This helper does
+    not call ``torch.use_deterministic_algorithms`` or control every source of
+    nondeterminism.
     """
     if not _HAS_TORCH:
         return

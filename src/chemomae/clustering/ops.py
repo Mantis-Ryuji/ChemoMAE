@@ -36,7 +36,8 @@ def find_elbow_curvature(
 ) -> Tuple[int, int, float]:
     """
     Detect elbow point by curvature on a normalized curve.
-    Savitzky–Golay の微分出力（deriv=1,2）を直接用いて κ を計算し、最大点の κ を返す。
+    Compute kappa directly from Savitzky–Golay derivatives (deriv=1,2),
+    returning kappa at its maximum.
     """
     x = np.asarray(k_list, dtype=float)
     y = np.asarray(inertia_list, dtype=float)
@@ -44,40 +45,40 @@ def find_elbow_curvature(
     if n < 3:
         raise ValueError("k_list must have length >= 3")
 
-    # 1) 非増加性の強制
+    # 1) Enforce a nonincreasing sequence.
     y = np.minimum.accumulate(y)
 
-    # 2) 正規化
+    # 2) Normalize.
     x_n = (x - x.min()) / (x.max() - x.min() + 1e-12)
     y_n = (y - y.min()) / (y.max() - y.min() + 1e-12)
 
-    # 3) S-G 用のパラメータ調整（小標本セーフティ）
-    #    - 窓長は最大でも n に依存、かつ奇数
-    #    - polyorder < window_length を保証
+    # 3) Adjust S-G parameters for small samples.
+    #    - The odd window length is bounded according to n.
+    #    - Ensure polyorder < window_length.
     if smooth and n >= 5:
-        wl = min(window_length, (n // 2) * 2 + 1)  # 最大の奇数（≲ n）
-        wl = max(5, wl | 1)                        # 下限5、奇数化
+        wl = min(window_length, (n // 2) * 2 + 1)  # Largest odd length near n.
+        wl = max(5, wl | 1)                        # At least five and odd.
         po = min(polyorder, wl - 1)
-        po = max(2, po)                            # 下限2（曲率に十分）
-        # 4) サンプリング間隔（正規化 x 上）
+        po = max(2, po)                            # At least quadratic for curvature.
+        # 4) Sampling interval on normalized x.
         dx = float(np.median(np.diff(x_n)))
         if not np.isfinite(dx) or dx <= 0:
             dx = 1.0
 
-        # 5) S-G で解析的に y', y'' を直接計算（端点は補間モード）
-        #    y_smooth は出力用途がなければ省略可だが、安定のために 0次も一度通す
+        # 5) Compute y', y'' directly with S-G and interpolated endpoints.
+        #    Retain a zeroth-order pass for stability even without smoothed output.
         _ = savgol_filter(y_n, window_length=wl, polyorder=po, deriv=0, mode="interp")
         dy  = savgol_filter(y_n, window_length=wl, polyorder=po, deriv=1, delta=dx, mode="interp")
         d2y = savgol_filter(y_n, window_length=wl, polyorder=po, deriv=2, delta=dx, mode="interp")
     else:
-        # フォールバック（S-Gを使わない場合）
+        # Fallback when S-G is not used.
         dy  = np.gradient(y_n, x_n)
         d2y = np.gradient(dy,  x_n)
 
-    # 6) 曲率 κ = |y''| / (1 + (y')^2)^(3/2)
+    # 6) Curvature kappa = |y''| / (1 + (y')^2)^(3/2).
     kappa = np.abs(d2y) / np.power(1.0 + dy * dy, 1.5)
 
-    # 7) 端点は無視
+    # 7) Ignore endpoints.
     kappa[0] = kappa[-1] = -np.inf
 
     idx = int(np.argmax(kappa))
@@ -88,27 +89,27 @@ def plot_elbow_ckm(k_list, inertias, optimal_k, elbow_idx):
     r"""
     Plot elbow curve and highlight the chosen elbow point.
 
-    概要
+    Overview
     ----
-    - `k_list` と対応する `inertias` を折れ線グラフで描画。
-    - `find_elbow_curvature` で得た最適クラスタ数 `optimal_k` を縦線とマーカーで強調。
+    - Plot `k_list` and the corresponding `inertias` as a line graph.
+    - Highlight `optimal_k` from `find_elbow_curvature` with a vertical line and marker.
 
     Parameters
     ----------
     k_list : array-like of int
-        評価したクラスタ数のリスト (例: 1..k_max)。
+        Evaluated cluster counts (for example, 1..k_max).
     inertias : array-like of float
-        各 k に対する inertia 値（`mean(1 - cos)` など）。
+        Inertia for each k, such as `mean(1 - cos)`.
     optimal_k : int
-        曲率法などで推定された最適クラスタ数。
+        Optimal cluster count estimated by curvature or another method.
     elbow_idx : int
-        `k_list[elbow_idx] == optimal_k` を満たすインデックス。
+        Index satisfying `k_list[elbow_idx] == optimal_k`.
 
     Notes
     -----
-    - Y 軸ラベルは "Mean Cosine Inertia" として描画される。
-    - エルボー点にはラベル付き散布図マーカーが追加される。
-    - `plt.show()` は呼び出さないため、呼び出し側で表示や保存を行う。
+    - The Y-axis label is "Mean Cosine Inertia".
+    - A labeled scatter marker identifies the elbow point.
+    - `plt.show()` is not called; the caller handles display or saving.
     """
     k_list = np.asarray(k_list)
     inertias = np.asarray(inertias, dtype=float)
@@ -127,29 +128,29 @@ def plot_elbow_vmf(k_list, scores, optimal_k, elbow_idx, criterion: str = "bic")
     r"""
     Plot elbow curve for vMF Mixture and highlight the chosen elbow point.
 
-    概要
+    Overview
     ----
-    - `k_list` と対応する `scores`（BIC もしくは平均NLL）を折れ線グラフで描画。
-    - `find_elbow_curvature` で得た最適クラスタ数 `optimal_k` を縦線とマーカーで強調。
+    - Plot `k_list` and corresponding `scores` (BIC or mean NLL) as a line graph.
+    - Highlight `optimal_k` from `find_elbow_curvature` with a vertical line and marker.
 
     Parameters
     ----------
     k_list : array-like of int
-        評価したクラスタ数のリスト (例: 1..k_max)。
+        Evaluated cluster counts (for example, 1..k_max).
     scores : array-like of float
-        各 k に対する評価値。`criterion="bic"` なら BIC（小さいほど良い）、
-        `criterion="nll"` なら平均 NLL（小さいほど良い）。
+        Score for each k: BIC for `criterion="bic"`, or mean NLL for
+        `criterion="nll"`. Lower is better for both.
     optimal_k : int
-        曲率法などで推定された最適クラスタ数。
+        Optimal cluster count estimated by curvature or another method.
     elbow_idx : int
-        `k_list[elbow_idx] == optimal_k` を満たすインデックス。
+        Index satisfying `k_list[elbow_idx] == optimal_k`.
     criterion : {"bic", "nll"}, default="bic"
-        縦軸ラベルなどの表示に使う指標名。
+        Criterion used for display labels, including the Y axis.
 
     Notes
     -----
-    - BIC は「小さいほど良い」、平均NLL も「小さいほど良い」指標です。
-    - `plt.show()` は呼び出さないため、呼び出し側で表示や保存を行ってください。
+    - Lower values are better for both BIC and mean NLL.
+    - `plt.show()` is not called; the caller handles display or saving.
     """
     k_list = np.asarray(k_list)
     scores = np.asarray(scores, dtype=float)

@@ -49,3 +49,31 @@ def test_make_patch_mask_extreme_cases_zero_or_full_mask():
     # 全ブロックマスク
     mask_all = make_patch_mask(B, L, n_patches, n_patches)
     assert mask_all.sum().item() == B * L
+
+
+def test_explicit_generator_reproduces_masks_without_consuming_global_rng():
+    generator = torch.Generator().manual_seed(81)
+    state = generator.get_state().clone()
+    global_state = torch.get_rng_state().clone()
+    first = make_patch_mask(5, 64, 16, 5, generator=generator)
+    generator.set_state(state)
+    repeated = make_patch_mask(5, 64, 16, 5, generator=generator)
+    assert torch.equal(first, repeated)
+    assert torch.equal(global_state, torch.get_rng_state())
+    assert not torch.equal(state, generator.get_state())
+
+
+def test_model_forwards_generator_and_ignores_it_for_explicit_mask():
+    model = ChemoMAE(seq_len=12, n_patches=3, n_mask=1, d_model=8,
+                    nhead=2, num_layers=1, dim_feedforward=16, latent_dim=4).eval()
+    x = torch.randn(2, 12)
+    generator = torch.Generator().manual_seed(23)
+    state = generator.get_state().clone()
+    _, _, actual_visible = model(x, generator=generator)
+    generator.set_state(state)
+    expected_visible = model.make_visible(2, generator=generator)
+    assert torch.equal(actual_visible, expected_visible)
+    state_after_mask = generator.get_state().clone()
+    model(x, visible_mask=expected_visible, generator=generator)
+    model.reconstruct(x, visible_mask=expected_visible, generator=generator)
+    assert torch.equal(state_after_mask, generator.get_state())

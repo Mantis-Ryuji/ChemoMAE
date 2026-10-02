@@ -1,6 +1,7 @@
 import json
+from contextlib import nullcontext
 from pathlib import Path
-from typing import Literal
+from typing import Iterator, Literal
 
 import pytest
 import torch
@@ -10,7 +11,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from chemomae.models.chemo_mae import ChemoMAE
 from chemomae.training.augmenter import SpectraAugmenter, SpectraAugmenterConfig
 from chemomae.training.optim import build_optimizer, build_scheduler
-from chemomae.training.trainer import Trainer, TrainerConfig
+from chemomae.training.trainer import PreparedBatch, Trainer, TrainerConfig
 
 
 def _tiny_model(seq_len: int = 16, n_mask: int = 1) -> ChemoMAE:
@@ -81,6 +82,9 @@ def test_trainer_fit_with_ema_and_augmenter_creates_last_artifacts(tmp_path) -> 
         "epochs": epochs,
         "completed": True,
         "final_model": "ema_last_model.pt",
+        "attempted_steps": len(train_dl) * epochs,
+        "optimizer_updates": len(train_dl) * epochs,
+        "amp_skips": 0,
     }
 
     ckpt_dir = tmp_path / "checkpoints"
@@ -108,6 +112,12 @@ def test_trainer_fit_with_ema_and_augmenter_creates_last_artifacts(tmp_path) -> 
         "time_sec",
         "loss_region",
         "n_mask",
+        "attempted_steps",
+        "optimizer_updates",
+        "amp_skips",
+        "cumulative_attempted_steps",
+        "cumulative_optimizer_updates",
+        "cumulative_amp_skips",
     }
     assert "val_loss" not in history[0]
     assert history[0]["epoch"] == 1
@@ -173,6 +183,9 @@ def test_trainer_fit_without_ema_or_augmenter_creates_raw_last_only(tmp_path) ->
         "epochs": epochs,
         "completed": True,
         "final_model": "last_model.pt",
+        "attempted_steps": len(train_dl) * epochs,
+        "optimizer_updates": len(train_dl) * epochs,
+        "amp_skips": 0,
     }
 
     ckpt_dir = tmp_path / "checkpoints"
@@ -198,6 +211,12 @@ def test_trainer_fit_without_ema_or_augmenter_creates_raw_last_only(tmp_path) ->
         "time_sec",
         "loss_region",
         "n_mask",
+        "attempted_steps",
+        "optimizer_updates",
+        "amp_skips",
+        "cumulative_attempted_steps",
+        "cumulative_optimizer_updates",
+        "cumulative_amp_skips",
     }
     assert "val_loss" not in history[0]
     assert history[0]["loss_region"] == "masked"
@@ -240,6 +259,8 @@ def _loss_trainer(
 
 def test_trainer_config_defaults_to_masked_loss_region(tmp_path: Path) -> None:
     assert TrainerConfig().loss_region == "masked"
+    assert TrainerConfig().device is None
+    assert TrainerConfig().amp is False
 
     trainer = _loss_trainer(tmp_path, n_mask=1)
 
@@ -247,7 +268,7 @@ def test_trainer_config_defaults_to_masked_loss_region(tmp_path: Path) -> None:
     x_recon = torch.zeros_like(x)
     visible_mask = torch.tensor([[True, False], [False, True]])
 
-    assert trainer._compute_loss(x_recon, x, visible_mask).item() == pytest.approx(6.5)
+    assert trainer.compute_loss(x_recon, x, visible_mask).item() == pytest.approx(6.5)
 
 
 def test_trainer_config_rejects_unknown_loss_region() -> None:
@@ -276,7 +297,7 @@ def test_all_region_loss_matches_manual_value(
     x_recon = torch.zeros_like(x)
     visible_mask = torch.ones_like(x, dtype=torch.bool)
 
-    loss = trainer._compute_loss(x_recon, x, visible_mask)
+    loss = trainer.compute_loss(x_recon, x, visible_mask)
 
     assert loss.item() == pytest.approx(expected)
 
@@ -304,7 +325,7 @@ def test_all_region_with_zero_mask_backpropagates_to_encoder_and_decoder(
     x = torch.randn(2, 16)
     x_recon, _, visible_mask = model(x)
 
-    loss = trainer._compute_loss(x_recon, x, visible_mask)
+    loss = trainer.compute_loss(x_recon, x, visible_mask)
     loss.backward()
 
     encoder_grad = sum(
@@ -400,3 +421,389 @@ def test_checkpoint_retains_and_validates_loss_region(tmp_path: Path) -> None:
     mismatched = _loss_trainer(tmp_path / "mismatched", loss_region="masked")
     with pytest.raises(ValueError, match="checkpoint loss_region mismatch"):
         mismatched.load_checkpoint(checkpoint_path)
+
+
+class _PreparedEchoModel(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.scale = nn.Parameter(torch.tensor(1.0))
+
+    def forward(
+        self, x: torch.Tensor, visible_mask: torch.Tensor | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if visible_mask is None:
+            visible_mask = torch.zeros_like(x, dtype=torch.bool)
+        return x * self.scale, x.mean(dim=1, keepdim=True), visible_mask
+
+
+class _PublicHookTrainer(Trainer):
+    def __init__(self, directory: Path, resume_from: Path | None = None) -> None:
+        self.generator = torch.Generator().manual_seed(12)
+        self.spectra = torch.arange(16, dtype=torch.float32).reshape(4, 4) / 10
+        self.order: list[int] = []
+        self.events: list[tuple[str, int]] = []
+        model = _PreparedEchoModel()
+        super().__init__(
+            model, torch.optim.SGD(model.parameters(), lr=0.05), (),
+            cfg=TrainerConfig(
+                out_dir=directory, device="cpu", amp=False, use_ema=False,
+                grad_clip=None, resume_from=resume_from,
+            ),
+        )
+
+    def train_batches(self, epoch: int) -> Iterator[torch.Tensor]:
+        self.events.append(("train_batches", epoch))
+        order = torch.randperm(len(self.spectra), generator=self.generator)
+        self.order.extend(order.tolist())
+        for rows in order.split(2):
+            yield self.spectra[rows]
+
+    def prepare_batch(self, batch: object) -> PreparedBatch:
+        assert isinstance(batch, torch.Tensor)
+        self.events.append(("prepare_batch", self.current_epoch))
+        visible = torch.ones_like(batch, dtype=torch.bool)
+        visible[:, -2:] = False
+        return PreparedBatch(batch + 1.0, batch, visible)
+
+    def forward_batch(self, batch: PreparedBatch) -> tuple[torch.Tensor, torch.Tensor]:
+        self.events.append(("forward_batch", self.current_epoch))
+        return super().forward_batch(batch)
+
+    def compute_loss(
+        self, reconstructed: torch.Tensor, target: torch.Tensor, visible_mask: torch.Tensor
+    ) -> torch.Tensor:
+        self.events.append(("compute_loss", self.current_epoch))
+        return super().compute_loss(reconstructed, target, visible_mask)
+
+    def before_epoch(self, epoch: int) -> None:
+        self.events.append(("before_epoch", epoch))
+
+    def before_step(self, epoch: int, batch_index: int, batch: PreparedBatch) -> None:
+        self.events.append(("before_step", epoch))
+        assert batch.model_input.device == self.device
+        assert batch.visible_mask is not None
+        self.optimizer.param_groups[0]["lr"] = 0.05 / (epoch + batch_index)
+
+    def after_step(
+        self, epoch: int, batch_index: int, batch: PreparedBatch,
+        *, loss: float, optimizer_updated: bool,
+    ) -> None:
+        self.events.append(("after_step", epoch))
+        assert optimizer_updated and loss >= 0
+
+    def after_epoch(self, epoch: int, record: dict[str, object]) -> None:
+        self.events.append(("after_epoch", epoch))
+        record["application_epoch"] = epoch
+
+    def checkpoint_extra_state(self) -> dict[str, object]:
+        return {
+            "generator_state": self.generator.get_state(), "order": list(self.order),
+            "model": "application metadata cannot replace the core model state",
+        }
+
+    def load_checkpoint_extra_state(self, state: dict[str, object]) -> None:
+        generator_state = state["generator_state"]
+        assert isinstance(generator_state, torch.Tensor)
+        self.generator.set_state(generator_state)
+        order = state["order"]
+        assert isinstance(order, list)
+        self.order = list(order)
+
+
+def test_public_hooks_cover_preparation_order_events_and_namespaced_resume(tmp_path: Path) -> None:
+    reference = _PublicHookTrainer(tmp_path / "reference")
+    reference_result = reference.fit(epochs=2)
+    first = _PublicHookTrainer(tmp_path / "resumed")
+    first.fit(epochs=1)
+    checkpoint = first.ckpt_dir / "last.pt"
+    saved = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    assert isinstance(saved["model"], dict)
+    assert isinstance(saved["extension_state"]["model"], str)
+    restored = _PublicHookTrainer(tmp_path / "resumed", resume_from=checkpoint)
+    resumed_result = restored.fit(epochs=2)
+    assert restored.order == reference.order
+    torch.testing.assert_close(restored.model.scale, reference.model.scale, rtol=0, atol=0)
+    assert resumed_result == reference_result
+    assert restored.history[-1]["application_epoch"] == 2
+    assert restored.history[-1]["attempted_steps"] == 2
+    assert restored.history[-1]["cumulative_optimizer_updates"] == 4
+    assert restored.events == [
+        ("before_epoch", 2), ("train_batches", 2),
+        ("prepare_batch", 2), ("before_step", 2),
+        ("forward_batch", 2), ("compute_loss", 2), ("after_step", 2),
+        ("prepare_batch", 2), ("before_step", 2),
+        ("forward_batch", 2), ("compute_loss", 2), ("after_step", 2),
+        ("after_epoch", 2),
+    ]
+
+
+class _SkipFirstScaler:
+    """CPU test double for the documented standard GradScaler overflow policy."""
+
+    def __init__(self) -> None:
+        self.current_scale = 8.0
+        self.calls = 0
+
+    def is_enabled(self) -> bool:
+        return True
+
+    def get_scale(self) -> float:
+        return self.current_scale
+
+    def scale(self, loss: torch.Tensor) -> torch.Tensor:
+        return loss
+
+    def step(self, optimizer: torch.optim.Optimizer) -> None:
+        if self.calls > 0:
+            optimizer.step()
+        self.calls += 1
+
+    def update(self) -> None:
+        if self.calls == 1:
+            self.current_scale *= 0.5
+
+    def state_dict(self) -> dict[str, float | int]:
+        return {"scale": self.current_scale, "calls": self.calls}
+
+
+def test_amp_skip_advances_neither_scheduler_nor_ema_and_records_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = _PreparedEchoModel()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda _: 1.0)
+    batch = PreparedBatch(torch.ones(1, 4), torch.zeros(1, 4), torch.zeros(1, 4, dtype=torch.bool))
+    trainer = Trainer(
+        model, optimizer, [batch, batch], scheduler=scheduler,
+        cfg=TrainerConfig(
+            out_dir=tmp_path, device="cpu", amp=False, grad_clip=None,
+            use_ema=True, ema_decay=0.5, resume_from=None,
+        ),
+    )
+    trainer.scaler = _SkipFirstScaler()  # type: ignore[assignment]
+    assert trainer.ema is not None
+    ema_calls: list[int] = []
+    ema_update = trainer.ema.update
+
+    def record_ema_update(current_model: nn.Module) -> None:
+        ema_calls.append(trainer.attempted_steps)
+        ema_update(current_model)
+
+    monkeypatch.setattr(trainer.ema, "update", record_ema_update)
+    step_events: list[bool] = []
+
+    def after_step(
+        epoch: int, batch_index: int, prepared: PreparedBatch,
+        *, loss: float, optimizer_updated: bool,
+    ) -> None:
+        step_events.append(optimizer_updated)
+
+    monkeypatch.setattr(trainer, "after_step", after_step)
+    result = trainer.fit(epochs=1)
+    assert step_events == [False, True]
+    assert scheduler.last_epoch == 1
+    assert ema_calls == [2]
+    assert result["attempted_steps"] == 2
+    assert result["optimizer_updates"] == result["amp_skips"] == 1
+    assert trainer.history[0]["amp_skips"] == 1
+    checkpoint = torch.load(trainer.ckpt_dir / "last.pt", map_location="cpu", weights_only=False)
+    assert checkpoint["progress"] == {"attempted_steps": 2, "optimizer_updates": 1, "amp_skips": 1}
+    assert checkpoint["step_policy"] == "successful_optimizer_update"
+
+
+def test_prepared_batches_bypass_augmentation(tmp_path: Path) -> None:
+    class RejectAugmentation(nn.Module):
+        def forward(self, spectra: torch.Tensor) -> torch.Tensor:
+            raise AssertionError("Prepared model inputs must not be augmented again.")
+
+    model = _PreparedEchoModel()
+    batch = PreparedBatch(torch.ones(2, 4), torch.zeros(2, 4), torch.zeros(2, 4, dtype=torch.bool))
+    trainer = Trainer(
+        model, torch.optim.SGD(model.parameters(), lr=0.0), [batch],
+        augmenter=RejectAugmentation(),  # type: ignore[arg-type]
+        cfg=TrainerConfig(out_dir=tmp_path, device="cpu", amp=False, use_ema=False, resume_from=None),
+    )
+    assert trainer.train_one_epoch() == pytest.approx(1.0)
+
+
+def test_empty_epoch_and_invalid_prepared_batch_fail_fast(tmp_path: Path) -> None:
+    model = _PreparedEchoModel()
+    trainer = Trainer(
+        model, torch.optim.SGD(model.parameters(), lr=0.1), [],
+        cfg=TrainerConfig(out_dir=tmp_path, device="cpu", amp=False, use_ema=False, resume_from=None),
+    )
+    with pytest.raises(ValueError, match="No training samples"):
+        trainer.fit(epochs=1)
+    assert not (trainer.ckpt_dir / "last.pt").exists()
+    with pytest.raises(ValueError, match="same shape"):
+        PreparedBatch(torch.ones(2, 4), torch.ones(1, 4))
+    with pytest.raises(TypeError, match="boolean"):
+        PreparedBatch(torch.ones(2, 4), torch.ones(2, 4), torch.ones(2, 4))
+    with pytest.raises(ValueError, match="dense"):
+        PreparedBatch(torch.ones(2, 4).to_sparse(), torch.ones(2, 4))
+    with pytest.raises(ValueError, match="stored values"):
+        PreparedBatch(torch.empty(2, 4, device="meta"), torch.ones(2, 4))
+
+
+def test_fresh_run_does_not_mix_existing_artifacts(tmp_path: Path) -> None:
+    model = _PreparedEchoModel()
+    config = TrainerConfig(out_dir=tmp_path, device="cpu", amp=False, use_ema=False, resume_from=None)
+    first = Trainer(model, torch.optim.SGD(model.parameters(), lr=0.1), [torch.ones(1, 4)], cfg=config)
+    first.fit(epochs=1)
+    with pytest.raises(FileExistsError, match="resume explicitly"):
+        Trainer(model, torch.optim.SGD(model.parameters(), lr=0.1), [], cfg=config)
+
+
+@pytest.mark.parametrize("filename", ["training_history.json", "last_model.pt", "ema_last_model.pt"])
+def test_auto_resume_rejects_artifacts_without_epoch_checkpoint(tmp_path: Path, filename: str) -> None:
+    (tmp_path / filename).write_bytes(b"orphaned artifact")
+    model = _PreparedEchoModel()
+    trainer = Trainer(
+        model, torch.optim.SGD(model.parameters(), lr=0.1), [],
+        cfg=TrainerConfig(out_dir=tmp_path, device="cpu", amp=False, use_ema=False),
+    )
+    with pytest.raises(FileExistsError, match="without a resume checkpoint"):
+        trainer.fit(epochs=1)
+
+
+@pytest.mark.parametrize("parameter_free", [False, True])
+def test_default_device_follows_model_without_gpu_discovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, parameter_free: bool,
+) -> None:
+    model = nn.Identity() if parameter_free else _PreparedEchoModel()
+    parameters = [nn.Parameter(torch.ones(()))] if parameter_free else list(model.parameters())
+    optimizer = torch.optim.SGD(parameters, lr=0.1)
+
+    def reject_gpu_probe() -> bool:
+        raise AssertionError("Default CPU models must not trigger GPU discovery.")
+
+    monkeypatch.setattr(torch.cuda, "is_available", reject_gpu_probe)
+    trainer = Trainer(
+        model, optimizer, [],
+        cfg=TrainerConfig(out_dir=tmp_path, use_ema=False, resume_from=None),
+    )
+    assert trainer.device == torch.device("cpu")
+    assert not trainer.amp
+
+
+@pytest.mark.parametrize("device", ["cpu", "mps"])
+def test_amp_rejects_non_cuda_devices_before_moving_model(tmp_path: Path, device: str) -> None:
+    model = _PreparedEchoModel()
+    with pytest.raises(ValueError, match="AMP training requires a CUDA"):
+        Trainer(
+            model, torch.optim.SGD(model.parameters(), lr=0.1), [],
+            cfg=TrainerConfig(out_dir=tmp_path, device=device, amp=True, resume_from=None),
+        )
+
+
+def test_explicit_cuda_and_bf16_require_device_support(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _PreparedEchoModel()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    with pytest.raises(ValueError, match="CUDA was requested but is unavailable"):
+        Trainer(model, optimizer, [], cfg=TrainerConfig(out_dir=tmp_path, device="cuda"))
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device", lambda _: nullcontext())
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: False)
+    with pytest.raises(ValueError, match="bf16 AMP is unsupported"):
+        Trainer(
+            model, optimizer, [],
+            cfg=TrainerConfig(out_dir=tmp_path, device="cuda", amp=True, amp_dtype="bf16"),
+        )
+
+
+def test_fp16_amp_rejects_half_parameters_before_device_transfer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    model = _PreparedEchoModel().half()
+    with pytest.raises(ValueError, match="keep FP32 master parameters"):
+        Trainer(
+            model, torch.optim.SGD(model.parameters(), lr=0.1), [],
+            cfg=TrainerConfig(out_dir=tmp_path, device="cuda", amp=True, amp_dtype="fp16"),
+        )
+
+
+def test_minimum_torch_scaler_api_without_torch_amp_grad_scaler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class LegacyScaler:
+        def __init__(self, *, enabled: bool) -> None:
+            self.enabled = enabled
+
+        def is_enabled(self) -> bool:
+            return self.enabled
+
+    monkeypatch.delattr(torch.amp, "GradScaler", raising=False)
+    monkeypatch.setattr(torch.cuda.amp, "GradScaler", LegacyScaler)
+    model = _PreparedEchoModel()
+    trainer = Trainer(
+        model, torch.optim.SGD(model.parameters(), lr=0.1), [],
+        cfg=TrainerConfig(out_dir=tmp_path, device="cpu", use_ema=False, resume_from=None),
+    )
+    assert isinstance(trainer.scaler, LegacyScaler)
+    assert not trainer.scaler.is_enabled()
+
+
+@pytest.mark.parametrize("field", ["model_input", "target"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+def test_prepared_batch_rejects_nonfinite_values(field: str, value: float) -> None:
+    model_input, target = torch.zeros(1, 4), torch.zeros(1, 4)
+    invalid = model_input if field == "model_input" else target
+    invalid[0, 0] = value
+    with pytest.raises(ValueError, match=f"{field} contains NaN or infinity"):
+        PreparedBatch(model_input, target)
+
+
+@pytest.mark.parametrize("field", ["reconstruction", "target"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_loss_rejects_nonfinite_values_even_outside_selected_mask(
+    tmp_path: Path, field: str, value: float,
+) -> None:
+    trainer = _loss_trainer(tmp_path, loss_region="masked")
+    reconstructed, target = torch.zeros(1, 4), torch.zeros(1, 4)
+    visible = torch.tensor([[True, False, True, False]])
+    invalid = reconstructed if field == "reconstruction" else target
+    invalid[0, 0] = value  # Visible and therefore excluded from the masked loss.
+    with pytest.raises(ValueError, match="including positions outside the loss mask"):
+        trainer.compute_loss(reconstructed, target, visible)
+
+
+def test_amp_disabled_overrides_ambient_cpu_autocast_in_preparation_and_forward(tmp_path: Path) -> None:
+    class PrecisionModel(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.linear = nn.Linear(4, 4)
+            self.output_dtypes: list[torch.dtype] = []
+
+        def forward(self, spectra: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            reconstructed = self.linear(spectra)
+            self.output_dtypes.append(reconstructed.dtype)
+            return reconstructed, reconstructed[:, :1], torch.ones_like(spectra, dtype=torch.bool)
+
+    class PrecisionAugmenter(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.register_buffer("identity", torch.eye(4))
+            self.output_dtypes: list[torch.dtype] = []
+
+        def forward(self, spectra: torch.Tensor) -> torch.Tensor:
+            augmented = spectra @ self.identity
+            self.output_dtypes.append(augmented.dtype)
+            return augmented
+
+    model, augmenter = PrecisionModel(), PrecisionAugmenter()
+    trainer = Trainer(
+        model, torch.optim.SGD(model.parameters(), lr=0.0), [torch.ones(2, 4)],
+        augmenter=augmenter,  # type: ignore[arg-type]
+        cfg=TrainerConfig(
+            out_dir=tmp_path, device="cpu", loss_region="all",
+            use_ema=False, grad_clip=None, resume_from=None,
+        ),
+    )
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        trainer.train_one_epoch()
+        assert (torch.ones(2, 4) @ torch.ones(4, 2)).dtype == torch.bfloat16
+    assert augmenter.output_dtypes == model.output_dtypes == [torch.float32]

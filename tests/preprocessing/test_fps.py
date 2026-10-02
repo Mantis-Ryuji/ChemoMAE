@@ -29,7 +29,7 @@ def _scale_rows(X: np.ndarray, seed: int = 1) -> np.ndarray:
 # -----------------------------
 # 形状・型・比率境界の基本動作
 # -----------------------------
-@pytest.mark.parametrize("ratio", [0.0, 0.1, 0.25, 1.0])
+@pytest.mark.parametrize("ratio", [0.1, 0.25, 1.0])
 @pytest.mark.parametrize("return_numpy", [True, False])
 def test_shape_and_type_numpy_input(ratio: float, return_numpy: bool) -> None:
     X = _make_unit_sphere_data(N=123, C=7, seed=7)
@@ -46,13 +46,12 @@ def test_shape_and_type_numpy_input(ratio: float, return_numpy: bool) -> None:
         assert isinstance(out, np.ndarray)
     else:
         assert isinstance(out, torch.Tensor)
-        dev = "cuda" if torch.cuda.is_available() else "cpu"
-        assert str(out.device).startswith(dev)
+        assert out.device.type == "cpu"
 
     assert out.shape == (k, X.shape[1])
 
 
-@pytest.mark.parametrize("ratio", [0.0, 0.1, 0.25, 1.0])
+@pytest.mark.parametrize("ratio", [0.1, 0.25, 1.0])
 @pytest.mark.parametrize("return_numpy", [True, False])
 def test_shape_and_type_torch_input(ratio: float, return_numpy: bool) -> None:
     X = torch.as_tensor(_make_unit_sphere_data(N=200, C=5, seed=0))
@@ -165,8 +164,7 @@ def test_return_indices_matches_rows(as_numpy: bool) -> None:
         assert torch.is_tensor(subset)
         assert torch.is_tensor(indices)
 
-        # NumPy input + return_numpy=False follows implementation device policy:
-        # returned tensors live on the internal compute device (cuda if available else cpu).
+        # NumPy input defaults to CPU computation and CPU tensor output.
         X_t = torch.as_tensor(X, device=subset.device, dtype=subset.dtype)
         idx_t = indices.to(device=subset.device)
         assert torch.allclose(subset, X_t.index_select(0, idx_t))
@@ -191,3 +189,60 @@ def test_dtype_device_roundtrip_torch() -> None:
     out_np = cosine_fps_downsample(X, ratio=0.2, seed=99, return_numpy=True)
     assert isinstance(out_np, np.ndarray)
     assert out_np.shape[1] == X.shape[1]
+
+
+@pytest.mark.parametrize("ratio", [0.0, -0.1, float("nan"), float("inf")])
+def test_ratio_must_be_positive_and_finite(ratio):
+    with pytest.raises(ValueError, match="ratio"):
+        cosine_fps_downsample(np.ones((2, 3), dtype=np.float32), ratio=ratio)
+
+
+def test_explicit_cpu_does_not_select_available_cuda(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    output = cosine_fps_downsample(np.eye(3, dtype=np.float64), device="cpu",
+                                   return_numpy=False, seed=1)
+    assert output.device.type == "cpu" and output.dtype == torch.float64
+
+
+def test_generator_replays_without_reseeding_global_rng():
+    x = torch.randn(12, 4)
+    generator = torch.Generator().manual_seed(17)
+    state = generator.get_state().clone()
+    global_state = torch.get_rng_state().clone()
+    _, first = cosine_fps_downsample(x, ratio=0.5, generator=generator,
+                                    return_numpy=False, return_indices=True)
+    generator.set_state(state)
+    _, repeated = cosine_fps_downsample(x, ratio=0.5, generator=generator,
+                                       return_numpy=False, return_indices=True)
+    assert torch.equal(first, repeated)
+    assert torch.equal(global_state, torch.get_rng_state())
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        cosine_fps_downsample(x, seed=1, generator=generator)
+
+
+def test_zero_vectors_select_distinct_rows_and_numpy_empty_type_contract():
+    x = torch.zeros(4, 3)
+    _, indices = cosine_fps_downsample(x, ratio=1, init_index=2,
+                                      return_numpy=False, return_indices=True)
+    assert indices.tolist() == [2, 0, 1, 3]
+    rows, indices = cosine_fps_downsample(np.empty((0, 3), dtype=np.float64),
+                                        return_numpy=False, return_indices=True)
+    assert isinstance(rows, torch.Tensor) and rows.shape == (0, 3)
+    assert rows.dtype == torch.float64 and indices.numel() == 0
+
+
+def test_numpy_negative_stride_and_float64_selection_buffers():
+    x = np.eye(6, dtype=np.float64)[:, ::-1]
+    rows, indices = cosine_fps_downsample(x, ratio=0.5, seed=3, return_indices=True)
+    np.testing.assert_array_equal(rows, x[indices])
+    assert rows.dtype == np.float64
+
+
+def test_fps_does_not_inherit_ambient_cpu_autocast():
+    x = torch.tensor(_make_unit_sphere_data(N=31, C=11, seed=57))
+    _, reference = cosine_fps_downsample(x, ratio=0.5, seed=9,
+                                        return_numpy=False, return_indices=True)
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        _, actual = cosine_fps_downsample(x, ratio=0.5, seed=9,
+                                         return_numpy=False, return_indices=True)
+    assert torch.equal(actual, reference)

@@ -4,7 +4,7 @@ ChemoMAE: 1D Spectral Masked Autoencoder + Hyperspherical Clustering Toolkit
 
 from ._version import __version__
 
-# 公開サブパッケージをインポート
+# Import the public subpackages.
 from . import preprocessing
 from . import models
 from . import training

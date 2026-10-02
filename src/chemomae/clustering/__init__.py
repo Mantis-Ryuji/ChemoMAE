@@ -2,6 +2,7 @@ from .cosine_kmeans import CosineKMeans, elbow_ckmeans
 from .vmf_mixture import VMFMixture, elbow_vmf
 from .ops import find_elbow_curvature, plot_elbow_ckm, plot_elbow_vmf
 from .metric import silhouette_samples_cosine_gpu, silhouette_score_cosine_gpu
+from .spatial import LLAResult, LLAWindowResult, local_label_agreement
 
 __all__ = [
     "CosineKMeans",
@@ -12,5 +13,8 @@ __all__ = [
     "plot_elbow_ckm",
     "plot_elbow_vmf",
     "silhouette_samples_cosine_gpu",
-    "silhouette_score_cosine_gpu"
+    "silhouette_score_cosine_gpu",
+    "LLAResult",
+    "LLAWindowResult",
+    "local_label_agreement",
 ]

@@ -1,500 +1,125 @@
-# Tester — ChemoMAE Evaluation Utility
+# Tester — Reconstruction Evaluation
 
-> Module: `chemomae.training.tester`
+> Module: chemomae.training.tester
 
-This document describes the `Tester` and its configuration (`TesterConfig`), a lightweight evaluation utility for trained **ChemoMAE** models.
+Tester evaluates clean reconstruction targets, optionally from perturbed inputs.
+It supports both masked and full-spectrum loss. It performs no training or
+checkpoint selection.
 
-`Tester` computes **masked reconstruction losses** (SSE/MSE) with AMP support, optional fixed masks, optional spectral augmentation, and optional JSON logging.
+## Basic use
 
-> **Scope note:** v0.2.1 adds `loss_region="all"` to `TrainerConfig`. `TesterConfig` remains masked-only and does not expose this training option.
-
----
-
-## Overview
-
-The `Tester` evaluates a trained ChemoMAE model over an entire dataset.
-
-Its behavior mirrors the MAE training principle:
-
-* reconstruction loss is computed only on **masked positions**,
-* visible positions are excluded from the loss,
-* if an optional `SpectraAugmenter` is provided, the model input is augmented while the reconstruction target remains the original input spectrum.
-
-This makes the augmented testing path consistent with the Trainer's denoising-style objective.
-
-### Key features
-
-* **Masked-only loss** — evaluates reconstruction error only on masked tokens.
-* **Loss types** — supports SSE (`masked_sse`) and MSE (`masked_mse`).
-* **Mixed precision** — supports AMP with `bf16` or `fp16` on CUDA.
-* **Optional `SpectraAugmenter` support** — applies spectral augmentation before reconstruction testing.
-* **Fixed masks** — can evaluate with a predefined visible mask (`fixed_visible`).
-* **JSON logging** — optionally records test results for reproducibility.
-
----
-
-## Configuration — `TesterConfig`
-
-```python
-@dataclass
-class TesterConfig:
-    out_dir: str | Path = "runs"
-    device: str | torch.device = "cuda"
-    amp: bool = True
-    amp_dtype: Literal["bf16", "fp16"] = "bf16"
-
-    loss_type: Literal["sse", "mse"] = "mse"
-    reduction: Literal["sum", "mean", "batch_mean"] = "mean"
-    fixed_visible: Optional[torch.Tensor] = None
-
-    log_history: bool = True
-    history_filename: str = "test_history.json"
-```
-
-### Parameters
-
-| Name | Type | Default | Description |
-| --- | --- | --- | --- |
-| `out_dir` | `str` or `Path` | `"runs"` | Directory where evaluation history is saved. |
-| `device` | `str` or `torch.device` | `"cuda"` | Evaluation device (`"cuda"`, `"cpu"`, etc.). |
-| `amp` | `bool` | `True` | Enables automatic mixed precision during CUDA evaluation. |
-| `amp_dtype` | `"bf16"` or `"fp16"` | `"bf16"` | Precision type for autocast. `bf16` is recommended on recent CUDA GPUs. |
-| `loss_type` | `"sse"` or `"mse"` | `"mse"` | Reconstruction loss type. |
-| `reduction` | `"sum"`, `"mean"`, `"batch_mean"` | `"mean"` | Loss aggregation mode passed to `masked_sse` / `masked_mse`. |
-| `fixed_visible` | `torch.Tensor` or `None` | `None` | Optional fixed visible mask. True means visible. |
-| `log_history` | `bool` | `True` | If True, appends evaluation results to a JSON file. |
-| `history_filename` | `str` | `"test_history.json"` | JSON filename for result logging. |
-
----
-
-## Class: `Tester`
-
-### Initialization
-
-```python
-tester = Tester(
-    model,
-    cfg=TesterConfig(),
-    augmenter=None,
-)
-```
-
-| Argument | Description |
-| --- | --- |
-| `model` | Trained ChemoMAE model. `model(x)` must return `(x_recon, z, visible_mask)`. |
-| `cfg` | Optional `TesterConfig` controlling device, AMP, loss, mask, and logging behavior. |
-| `augmenter` | Optional `SpectraAugmenter` applied before reconstruction testing. |
-
-The model is moved to `cfg.device` and set to `eval()`.
-
-If `augmenter` is provided, it is also moved to `cfg.device`.
-
----
-
-## Call Interface
-
-```python
-avg_loss = tester(data_loader)
-```
-
-The tester iterates through `data_loader`, reconstructs inputs, computes masked loss, and returns a sample-weighted average loss as `float`.
-
-For each batch:
-
-1. Extracts `x` from the batch.
-2. Moves `x` to `cfg.device`.
-3. Applies optional augmentation:
-
-   ```python
-   x_input = augmenter(x) if augmenter is not None else x
-   ```
-
-4. Obtains reconstruction and visible mask:
-
-   If `fixed_visible is None`, the tester calls:
-
-   ```python
-   x_recon, _, visible_mask = model(x_input)
-   ```
-
-   If `fixed_visible` is provided, the tester bypasses model-side random masking:
-
-   ```python
-   z = model.encoder(x_input, visible_mask)
-   x_recon = model.decoder(z)
-   ```
-
-5. Computes loss against the original input `x`:
-
-   ```python
-   masked = ~visible_mask
-   loss = loss_fn(x_recon, x, masked)
-   ```
-
-6. Accumulates the sample-weighted loss.
-
----
-
-## Augmenter Handling
-
-`Tester` supports optional `SpectraAugmenter`:
-
-```python
-from chemomae.training import (
-    Tester,
-    TesterConfig,
-    SpectraAugmenter,
-    SpectraAugmenterConfig,
-)
-
-aug_cfg = SpectraAugmenterConfig(
-    shift_prob=0.5,
-    shift_delta_range=(-2.0, 2.0),
-    noise_prob=0.5,
-    noise_angle_deg_range=(0.5, 3.0),
-)
-
-augmenter = SpectraAugmenter(aug_cfg)
-
-tester = Tester(
-    model,
-    TesterConfig(device="cuda"),
-    augmenter=augmenter,
-)
-```
-
-### Important mode behavior
-
-`SpectraAugmenter` is implemented as an `nn.Module`.
-
-It returns the input unchanged in `eval()` mode.  
-Therefore, when an augmenter is provided, `Tester` temporarily sets only the augmenter to `train()` during testing:
-
-```python
-model.eval()
-augmenter.train()
-```
-
-After testing, the original train/eval state of the augmenter is restored.
-
-This means:
-
-* the ChemoMAE model remains in evaluation mode,
-* the augmenter is active during testing,
-* the augmenter state is restored after testing.
-
-### Target semantics
-
-When an augmenter is provided:
-
-```python
-x_input = augmenter(x)
-x_recon = model(x_input)
-loss = loss_fn(x_recon, x, masked)
-```
-
-That is:
-
-* **model input** = augmented spectrum,
-* **reconstruction target** = original spectrum.
-
-This is intentionally aligned with the Trainer's denoising-style reconstruction objective.
-
----
-
-## Fixed Visible Mask
-
-`fixed_visible` provides deterministic mask control.
-
-Accepted shapes:
-
-| Shape | Behavior |
-| --- | --- |
-| `(L,)` | Broadcast to every batch as `(B, L)`. |
-| `(1, L)` | Broadcast to current batch size. |
-| `(B, L)` | Used directly when batch size matches current batch. |
-
-`fixed_visible` must be a boolean tensor.
-
-```python
-visible = torch.zeros(seq_len, dtype=torch.bool)
-visible[: seq_len // 2] = True  # True = visible
-
-cfg = TesterConfig(
-    fixed_visible=visible,
-    loss_type="mse",
-    reduction="batch_mean",
-)
-tester = Tester(model, cfg)
-avg_loss = tester(test_loader)
-```
-
-If `fixed_visible=None`, the model uses its normal mask generation behavior.
-
----
-
-## Loss Handling
-
-| Setting | Behavior |
-| --- | --- |
-| `loss_type="sse"` | Uses `masked_sse`. |
-| `loss_type="mse"` | Uses `masked_mse`. |
-
-### Reduction modes
-
-| Mode | Description |
-| --- | --- |
-| `"sum"` | Total squared error over masked elements. |
-| `"mean"` | Mean squared error over masked elements. |
-| `"batch_mean"` | Batch-weighted reduction defined by the loss utility. |
-
----
-
-## Logging
-
-If `cfg.log_history=True`, results are appended to:
-
-```text
-{out_dir}/{history_filename}
-```
-
-Default:
-
-```text
-runs/test_history.json
-```
-
-Example record without augmenter:
-
-```json
-{
-  "phase": "test",
-  "test_loss": 0.1342,
-  "loss_type": "mse",
-  "reduction": "mean",
-  "augmented": false
-}
-```
-
-Example record with augmenter:
-
-```json
-{
-  "phase": "test",
-  "test_loss": 0.1487,
-  "loss_type": "mse",
-  "reduction": "mean",
-  "augmented": true
-}
-```
-
-Multiple test runs accumulate sequentially.
-
-Writes use temporary files and atomic replacement to reduce the risk of corruption.
-
----
-
-## Usage Examples
-
-### Basic evaluation
-
-```python
-from chemomae.training import Tester, TesterConfig
-
-cfg = TesterConfig(
-    device="cuda",
-    loss_type="mse",
-    reduction="mean",
-)
-
-tester = Tester(model, cfg)
-avg_loss = tester(test_loader)
-
-print("Test MSE:", avg_loss)
-```
-
-### Fixed visible mask evaluation
+This small example uses all-visible reconstruction, so its evaluation region is
+explicitly the complete spectrum:
 
 ```python
 import torch
+from torch.utils.data import DataLoader, TensorDataset
+from chemomae.models import ChemoMAE
 from chemomae.training import Tester, TesterConfig
 
-visible = torch.zeros(seq_len, dtype=torch.bool)
-visible[: seq_len // 2] = True
-
-cfg = TesterConfig(
-    device="cuda",
-    fixed_visible=visible,
-    loss_type="sse",
-    reduction="batch_mean",
+model = ChemoMAE(
+    seq_len=12, n_patches=3, n_mask=0, d_model=16,
+    nhead=4, num_layers=1, dim_feedforward=32, latent_dim=4,
 )
-
-tester = Tester(model, cfg)
-avg_loss = tester(test_loader)
+spectra = torch.randn(6, 12)  # Illustrative synthetic data.
+loader = DataLoader(TensorDataset(spectra), batch_size=2, shuffle=False)
+tester = Tester(model, TesterConfig(
+    device="cpu", loss_region="all", reduction="mean",
+    amp=False, log_history=False, progress=False,
+))
+mse = tester(loader)
 ```
 
-### Augmented reconstruction testing
+For masked reconstruction, set a nonzero model mask count and
+loss_region="masked". The loss region is never inferred from the model mask count.
+An all-visible mask with masked evaluation raises ValueError; an empty loader
+also raises rather than returning zero. Failed evaluations are not logged.
+
+## Configuration
+
+| Setting | Default | Contract |
+| --- | --- | --- |
+| device | None | Follow model parameters; CPU for parameter-free models. Explicit CPU/CUDA override moves the model. |
+| amp | False | Explicit CUDA autocast; CPU AMP is rejected. Disabled AMP also disables surrounding autocast for model inference. |
+| amp_dtype | "bf16" | "bf16" or "fp16"; requested bf16 requires support on the chosen CUDA device. |
+| loss_region | "masked" | "masked" evaluates hidden positions; "all" evaluates every feature. |
+| loss_type | "mse" | "mse" or "sse"; both use squared errors and the selected reduction determines scaling. |
+| reduction | "mean" | Dataset-wide reduction described below. |
+| fixed_visible | None | Optional boolean visible mask of shape (L,), (1, L), or the current (B, L). |
+| log_history | True | Write successful evaluations to JSON. |
+| out_dir | "runs" | Created only when logging is enabled. |
+| history_filename | "test_history.json" | Separate from training history. |
+| progress | True | Display evaluation progress. |
+
+Batches may be floating Torch tensors of shape (B, L), or tuples/lists whose
+first item is that tensor. Empty batches are skipped. Spectra are moved to the
+evaluation device and cast to the model parameter dtype resolved at Tester
+construction. Device moves persist; create a new Tester if the model device/dtype
+or precision configuration changes. Dataset iteration order is unchanged.
+Changing precision can change reconstruction outputs; error subtraction, squaring,
+and aggregation use float64 without claiming bitwise equality across devices.
+Nonfinite inputs/outputs and mismatched reconstruction/augmentation shapes fail
+explicitly. The selected autocast scope covers optional augmentation as well.
+
+## Dataset-wide reductions
+
+Let E be the selected squared-error sum, M the selected element count, and N
+the spectrum count across all evaluated batches:
+
+$$
+E = \sum_{(i,j)\in\mathcal{S}} (\hat{x}_{ij}-x_{ij})^2.
+$$
+
+| Reduction | Result |
+| --- | --- |
+| "sum" | $E$ |
+| "mean" | $E/M$ |
+| "batch_mean" | $E/N$ |
+
+The same reduction definitions apply for both loss_type names, consistent with
+the underlying squared-error utilities. These are dataset reductions, not the
+average of separately normalized batch losses. A final short batch or unequal
+numbers of hidden features therefore do not change the aggregation definition.
+Model predictions can still change when stochastic masks/augmentation or batch-
+dependent models change; hold those fixed for comparisons.
+
+## Fixed masks and augmentation
+
+True always means visible. A fixed mask must match spectral patch boundaries.
+(L,) and (1, L) masks broadcast to each current batch; a (B, L) mask requires B
+to match that batch, including a final shorter batch. Fixed-mask evaluation calls
+the encoder/decoder directly and consumes no model masking RNG.
+
+An explicitly supplied SpectraAugmenter is temporarily active in training mode.
+The model itself runs in evaluation mode. Inputs are augmented, and targets remain
+clean:
 
 ```python
-from chemomae.training import (
-    Tester,
-    TesterConfig,
-    SpectraAugmenter,
-    SpectraAugmenterConfig,
-)
+from chemomae.training import SpectraAugmenter, SpectraAugmenterConfig
 
-aug_cfg = SpectraAugmenterConfig(
-    shift_prob=0.5,
-    shift_delta_range=(-2.0, 2.0),
-    noise_prob=0.5,
-    noise_angle_deg_range=(0.5, 3.0),
-    recenter_after_each_op=True,
-    renorm_to_input_norm=True,
-)
-
-augmenter = SpectraAugmenter(aug_cfg)
-
-cfg = TesterConfig(
-    device="cuda",
-    amp=True,
-    amp_dtype="bf16",
-    loss_type="mse",
-    reduction="batch_mean",
-    history_filename="test_history_aug.json",
-)
-
+augmenter = SpectraAugmenter(SpectraAugmenterConfig(
+    shift_prob=0.5, noise_prob=0.5,
+))
 tester = Tester(
-    model,
-    cfg,
+    model, TesterConfig(device="cpu", loss_region="all", log_history=False),
     augmenter=augmenter,
 )
-
-avg_loss = tester(test_loader)
+augmented_input_mse = tester(loader)
 ```
 
-This evaluates how well the model reconstructs the original spectrum from augmented input.
+This is a stochastic robustness example, not a fixed experimental protocol.
+The caller must specify perturbation strength, random streams, repetitions, and
+data separation for a reproducible comparison.
 
----
+## State and history
 
-## Design Notes
+Construction preserves model mode. Evaluation restores every original
+model/augmenter submodule training flag, including mixed modes, on success and
+failure. Device movement persists. The helper uses inference mode and records
+no gradients.
 
-### AMP
-
-Uses:
-
-```python
-torch.amp.autocast(device_type="cuda", dtype=bf16|fp16)
-```
-
-only when:
-
-* `cfg.amp=True`, and
-* `cfg.device` resolves to CUDA.
-
-### JSON logging
-
-Records loss settings and whether augmentation was applied.
-
-Default logging is separated from Trainer's `training_history.json`.
-
-### Fixed vs. random masks
-
-* `fixed_visible=None`: uses the model's normal masking behavior.
-* `fixed_visible` provided: bypasses model-side random mask generation.
-
-This is useful when comparing reconstruction losses under a controlled mask.
-
-### Device management
-
-The tester transfers input tensors, model, and optional augmenter to the configured device.
-
-### Model/evaluator state
-
-The model is always evaluated under:
-
-```python
-model.eval()
-```
-
-If augmenter is provided, only the augmenter is temporarily placed in train mode:
-
-```python
-augmenter.train()
-```
-
-This is required because `SpectraAugmenter.eval()` is an identity mapping.
-
----
-
-## Minimal Tests
-
-### Basic test path
-
-```python
-from chemomae.training import Tester, TesterConfig
-
-cfg = TesterConfig(
-    device="cpu",
-    loss_type="mse",
-    reduction="mean",
-    log_history=False,
-)
-
-tester = Tester(model, cfg)
-loss = tester(test_loader)
-
-assert isinstance(loss, float)
-assert loss >= 0
-```
-
-### Augmenter path
-
-```python
-from chemomae.training import (
-    Tester,
-    TesterConfig,
-    SpectraAugmenter,
-    SpectraAugmenterConfig,
-)
-
-augmenter = SpectraAugmenter(SpectraAugmenterConfig())
-
-cfg = TesterConfig(
-    device="cpu",
-    loss_type="mse",
-    reduction="batch_mean",
-    log_history=False,
-)
-
-tester = Tester(
-    model,
-    cfg,
-    augmenter=augmenter,
-)
-
-loss = tester(test_loader)
-
-assert isinstance(loss, float)
-assert loss >= 0
-```
-
----
-
-## Version
-
-### v0.2.1
-
-* Clarifies that full-region loss selection belongs to `TrainerConfig`; `TesterConfig` remains masked-only.
-
-### v0.2.0
-
-Updated for the optional augmenter-enabled ChemoMAE testing pipeline.
-
-Changes:
-
-* added optional `SpectraAugmenter` support,
-* documented augmenter train/eval mode handling,
-* clarified denoising-style target semantics,
-* changed default history filename to `test_history.json`,
-* documented the `"augmented"` history field,
-* clarified fixed-visible shape handling.
+Successful history records include phase, test_loss, loss_type, loss_region,
+reduction, augmented, samples, and selected_elements. Existing malformed JSON or
+a history that is not a list of records raises an error; it is not silently
+discarded. Writes use temporary-file replacement. No history directory is created
+with log_history=False.

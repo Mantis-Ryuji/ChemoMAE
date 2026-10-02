@@ -8,6 +8,11 @@
 
 > **ChemoMAE**: A research-oriented PyTorch toolkit for **1D spectral representation learning, hypersphere-aware augmentation, and hyperspherical clustering** .
 
+ChemoMAE v0.2.3 is under development in this checkout. New APIs described
+below are not part of PyPI v0.2.2. See [development progress](ToDo.md) for completed
+implementation and pending validation; the historical research release remains
+available independently.
+
 ---
 
 ## Why ChemoMAE?
@@ -15,10 +20,15 @@
 Traditional chemometrics has long relied on **linear methods** such as PCA and PLS.
 While these methods remain foundational, they often struggle to capture the **nonlinear structures** and **high-dimensional variability** present in modern spectral datasets.
 
-ChemoMAE is motivated by the geometry induced by **Standard Normal Variate (SNV)** preprocessing. SNV centers each spectrum and scales it to unit variance, making the L2 norm essentially constant across samples. This means that sample-wise magnitude is no longer a meaningful degree of freedom after preprocessing; what remains informative is primarily the relative spectral shape, or direction, on the normalized spectral manifold. ChemoMAE is therefore designed to learn latent representations that emphasize directional structure while avoiding unnecessary dependence on latent norm.
+ChemoMAE is motivated by the geometry induced by **Standard Normal Variate (SNV)**
+preprocessing. For nonconstant spectra with negligible `eps`, SNV centers each
+spectrum and scales it to approximately unit sample variance and a common L2
+norm. This emphasizes relative spectral shape. Constant spectra become zero
+vectors; finite `eps` means the norm is only approximately constant. ChemoMAE
+provides normalized latent representations for directional downstream analysis.
 
 <p align="center">
-<img src="./images/chemomae.png">
+<img src="./images/chemomae.svg">
 </p>
 
 ### 1. Extending Chemometrics with Deep Learning
@@ -61,15 +71,41 @@ Built-in clustering modules — **Cosine K-Means** and **vMF Mixture** — lever
 
 ## Quick Start
 
-Install ChemoMAE:
+Install the published research release:
 
 ```bash
 pip install chemomae
 ```
 
+For the new APIs described in this development checkout, install its source in
+your chosen environment instead:
+
+```bash
+pip install -e .
+```
+
+The [real-data notebook](notebooks/nir_hsi_tutorial.ipynb) installs GitHub source;
+its matching source and notebook must be published and pinned before release use.
+
 ---
 
 ## ChemoMAE Example
+
+The real-data tutorial uses the SWIR reflectance hyperspectral images from
+[Minerals in the Wild](https://github.com/EleftheriaTtl/minerals-in-the-wild),
+with specimen-level splits, 273-to-256 wavelength interpolation before per-pixel SNV,
+representation learning, fixed-center clustering, and spatial LLA:
+
+- [English notebook](notebooks/nir_hsi_tutorial.ipynb)
+- [Data and experimental protocol](docs/tutorials/nir_hsi.md)
+- [API documentation index](docs/README.md)
+
+The separate specimen-level XRF elemental-composition table is not used in this
+tutorial; SNV applies to the image spectra.
+
+The notebook is a development draft. Fresh-Colab execution, direct data downloads,
+release-ref pinning, and publication are pending. The **Open in Colab** badge will
+be activated once the notebook is available at its documented GitHub ref.
 
 <details>
 <summary><b>Example</b></summary>
@@ -78,19 +114,22 @@ pip install chemomae
 
 Import `SNVScaler`.
 
-SNV standardizes each spectrum to have zero mean and unit variance. This removes baseline and scaling effects while preserving spectral shape. After SNV, all spectra have the same L2 norm:
+SNV centers each nonconstant spectrum and scales it by its sample standard
+deviation plus `eps`. When `eps` is negligible relative to that deviation,
+variance is approximately one and the L2 norm is approximately:
 
-```math
-\lVert x_{\mathrm{snv}} \rVert_2 = \sqrt{L - 1}
-```
+$$
+\lVert x_{\mathrm{snv}} \rVert_2 \approx \sqrt{L - 1}
+$$
 
 For example, for 256-dimensional spectra,
 
-```math
-\lVert x_{\mathrm{snv}} \rVert_2 = \sqrt{255} \approx 15.97
-```
+$$
+\lVert x_{\mathrm{snv}} \rVert_2 \approx \sqrt{255} \approx 15.97
+$$
 
-Hence, SNV maps spectra onto a constant-radius hypersphere.
+Constant spectra become zero vectors; the exact norm includes the factor
+$s/(s+\varepsilon)$. See the [SNV numerical contract](docs/preprocessing/snv.md).
 
 ```python
 from chemomae.preprocessing import SNVScaler
@@ -134,6 +173,7 @@ Define ChemoMAE and a standard optimization pipeline.
 from chemomae.models import ChemoMAE
 from chemomae.training import build_optimizer, build_scheduler
 
+device = torch.device("cpu")  # CUDA is an explicit choice.
 model = ChemoMAE(
     seq_len=256,
     d_model=256,
@@ -146,7 +186,7 @@ model = ChemoMAE(
     decoder_num_layers=2,
     n_patches=32,
     n_mask=16,
-)
+).to(device)
 
 opt = build_optimizer(
     model,
@@ -202,15 +242,17 @@ This provides weak denoising-style regularization while preserving the SNV-compa
 * final weights export
 
 ChemoMAE does **not** use validation-loss-based early stopping or best-checkpoint selection.
-Training is controlled by a predefined epoch / step budget, and the final model is selected by an explicit rule such as EMA-last weights.
+`fit(epochs=...)` uses an absolute epoch budget, including completed epochs on
+resume. A direct step-budget API remains pending. Select the final raw or EMA
+export explicitly before downstream inference.
 
 ```python
 from chemomae.training import TrainerConfig, Trainer
 
 trainer_cfg = TrainerConfig(
     out_dir="runs",
-    device="cuda",
-    amp=True,
+    device=str(device),
+    amp=False,
     amp_dtype="bf16",
     enable_tf32=False,
     grad_clip=1.0,
@@ -219,7 +261,7 @@ trainer_cfg = TrainerConfig(
     loss_type="mse",
     loss_region="masked",
     reduction="mean",
-    resume_from="auto",
+    resume_from=None,  # Use a fresh output directory; explicit resume is separate.
 )
 
 trainer = Trainer(
@@ -233,7 +275,17 @@ trainer = Trainer(
 
 result = trainer.fit(epochs=500)
 print(result["final_model"])  # "ema_last_model.pt" if EMA is enabled
+model.load_state_dict(torch.load(
+    "runs/" + result["final_model"], map_location=device, weights_only=True,
+))
+model.eval()
 ```
+
+Trainer exposes `PreparedBatch`, batch/step/epoch hooks, and checkpoint extension
+hooks for caller-owned masks, augmentation, ordering, LR timing, and RNG state.
+The [customization guide](docs/training/trainer.md) shows these APIs and a plain
+PyTorch alternative. Scheduler and EMA advance after successful optimizer updates;
+history records attempted steps, updates, and AMP skips separately.
 
 `loss_region="masked"` preserves the original masked-only objective. For an ordinary autoencoder objective, construct `ChemoMAE` with `n_mask=0` and set `loss_region="all"` explicitly; this mode computes loss against the full clean target spectrum. `loss_region="masked"` with no masked elements raises `ValueError` instead of producing a silent zero loss.
 
@@ -270,11 +322,11 @@ runs/
 
 ### 6. Evaluation (Tester + Config)
 
-The `Tester` evaluates masked reconstruction loss on a dataset.
+The `Tester` evaluates masked or full-spectrum reconstruction loss on a dataset.
 
 It supports:
 
-* masked-only reconstruction loss
+* explicit masked or full-spectrum reconstruction loss
 * AMP (`bf16` / `fp16`)
 * optional fixed visible masks
 * optional `SpectraAugmenter`
@@ -285,10 +337,11 @@ from chemomae.training import TesterConfig, Tester
 
 tester_cfg = TesterConfig(
     out_dir="runs",
-    device="cuda",
-    amp=True,
+    device=str(device),
+    amp=False,
     amp_dtype="bf16",
     loss_type="mse",
+    loss_region="masked",
     reduction="mean",
     fixed_visible=None,
     log_history=True,
@@ -327,11 +380,13 @@ By default, `Extractor` does not use ChemoMAE masking. It directly calls the enc
 from chemomae.training import ExtractorConfig, Extractor
 
 extractor_cfg = ExtractorConfig(
-    device="cuda",
-    amp=True,
+    device=str(device),
+    amp=False,
     amp_dtype="bf16",
     save_path=None,
-    return_numpy=False,
+    representation="normalized_latent",
+    output_type="tensor",
+    output_device="cpu",
 )
 
 extractor = Extractor(
@@ -340,6 +395,7 @@ extractor = Extractor(
     augmenter=None,
 )
 
+latent_train = extractor(train_loader)
 latent_test = extractor(test_loader)
 ```
 
@@ -359,15 +415,18 @@ Without an augmenter, latent extraction is deterministic with respect to ChemoMA
 
 ### 8. Clustering with Cosine K-Means
 
-Cluster latent vectors using cosine geometry.
+Choose K and fit centers using clean training features, then predict held-out
+features with those centers fixed. Use the nonaugmented extractor above for this
+path. The K sweep is optional and can be expensive; the real-data notebook uses
+a declared K instead.
 
 ```python
 from chemomae.clustering import CosineKMeans, elbow_ckmeans
 
 k_list, inertias, K, idx, kappa = elbow_ckmeans(
     CosineKMeans,
-    latent_test,
-    device="cuda",
+    latent_train,
+    device=device,
     k_max=50,
     chunk=5_000_000,
     random_state=42,
@@ -377,11 +436,11 @@ ckm = CosineKMeans(
     n_components=K,
     tol=1e-4,
     max_iter=500,
-    device="cuda",
+    device=device,
     random_state=42,
 )
 
-ckm.fit(latent_test, chunk=5_000_000)
+ckm.fit(latent_train, chunk=5_000_000)
 ckm.save_centroids("runs/ckm.pt")
 labels = ckm.predict(latent_test, chunk=5_000_000)
 ```
@@ -395,8 +454,8 @@ from chemomae.clustering import VMFMixture, elbow_vmf
 
 k_list, scores, K, idx, kappa = elbow_vmf(
     VMFMixture,
-    latent_test,
-    device="cuda",
+    latent_train,
+    device=device,
     k_max=50,
     chunk=5_000_000,
     random_state=42,
@@ -407,11 +466,11 @@ vmf = VMFMixture(
     n_components=K,
     tol=1e-4,
     max_iter=500,
-    device="cuda",
+    device=device,
     random_state=42,
 )
 
-vmf.fit(latent_test, chunk=5_000_000)
+vmf.fit(latent_train, chunk=5_000_000)
 vmf.save("runs/vmf.pt")
 labels = vmf.predict(latent_test, chunk=5_000_000)
 ```
@@ -430,12 +489,18 @@ labels = vmf.predict(latent_test, chunk=5_000_000)
 * [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/preprocessing/snv.md)
 * [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/preprocessing/snv.py)
 
-`SNVScaler` performs **row-wise mean subtraction and variance scaling** . Each spectrum is centered and divided by its **unbiased standard deviation** (`ddof=1`).
-It is a **stateless** transformer supporting both **NumPy** and **PyTorch** , preserving the original **framework, device, and dtype** .
+`SNVScaler` performs **row-wise mean subtraction and variance scaling**. Each
+spectrum is divided by its sample standard deviation (`ddof=1` for `L>=2`)
+plus `eps`; length-one spectra use `ddof=0`.
+It is a **stateless** transformer supporting **NumPy** and **PyTorch**. Torch
+normalization and statistics stay on the input device and retain autograd;
+float64 is preserved and float16/bfloat16 inputs are promoted to float32.
 
 When `transform_stats=True`, it returns `(Y, mu, sd)`, where `sd` already includes `eps` and can be directly used for inverse reconstruction.
 
-After SNV, all rows have **zero mean** and **unit variance** , producing a constant L2 norm of `sqrt(L - 1)`, thereby mapping spectra onto a constant-radius **hypersphere** — ideal for cosine-based clustering.
+Nonconstant rows have approximately unit sample variance when `eps` is negligible,
+and an L2 norm near `sqrt(L - 1)`. Constant and length-one spectra produce zeros;
+they do not define a direction on that hypersphere.
 
 ```python
 import numpy as np
@@ -456,8 +521,8 @@ X_rec = scaler.inverse_transform(Y, mu=mu, sd=sd)
 
 * unbiased standard deviation (`ddof=1`, with automatic fallback for `L=1`)
 * numerically stable `eps` handling
-* float64 internal computation
-* Torch-compatible device and dtype preservation
+* native on-device Torch arithmetic and same-framework statistics
+* explicit precision: float32/float64 preserved, half precision promoted to float32
 
 **When to Use**
 
@@ -474,7 +539,8 @@ X_rec = scaler.inverse_transform(Y, mu=mu, sd=sd)
 `cosine_fps_downsample` performs **Farthest-Point Sampling (FPS)** under **hyperspherical geometry** , selecting spectra that are maximally diverse in **direction** .
 
 Internally, all rows are **L2-normalized** for selection, but the returned subset is drawn from the **original-scale** input `X`.
-It supports both NumPy and PyTorch inputs and automatically leverages CUDA when available.
+It supports NumPy and PyTorch inputs with an explicit computation device.
+The default follows a Torch input's device, or uses CPU for NumPy input.
 
 ```python
 import numpy as np
@@ -483,6 +549,9 @@ from chemomae.preprocessing import cosine_fps_downsample
 X = np.random.randn(1000, 128).astype(np.float32)
 X_sub = cosine_fps_downsample(X, ratio=0.1, seed=42)
 ```
+
+Pass `device="cuda"` to request GPU computation, or `device="cpu"` to keep it
+on CPU. A caller-owned `generator` may replace `seed` for initial-point control.
 
 **Key Features**
 
@@ -565,7 +634,10 @@ Utility functions for a standardized Transformer-style optimization pipeline.
 from chemomae.models import ChemoMAE
 from chemomae.training import build_optimizer, build_scheduler
 
-model = ChemoMAE(seq_len=256)
+import torch
+
+device = torch.device("cpu")
+model = ChemoMAE(seq_len=256).to(device)
 optimizer = build_optimizer(model, lr=1.0e-3, weight_decay=0.05)
 scheduler = build_scheduler(
     optimizer,
@@ -574,6 +646,11 @@ scheduler = build_scheduler(
     warmup_epochs=5,
 )
 ```
+
+Inspect `optimizer.param_groups` for actual decay exclusions. The scheduler
+sets a positive initial warmup rate at construction and advances after successful
+updates; its post-step LR belongs to the next update. See the
+[optimizer/scheduler guide](docs/training/optim.md) for the exact indexing.
 
 ---
 
@@ -679,7 +756,9 @@ They provide a fixed-budget training loop with an explicit choice between **mask
 * JSON history logging
 
 ChemoMAE does **not** use validation-loss-based early stopping or best-checkpoint selection.
-Training is controlled by a predefined epoch / step budget, and the final model is selected by an explicit rule such as EMA-last weights.
+`fit(epochs=...)` uses an absolute epoch budget. Configure the scheduler against
+successful optimizer updates; the Trainer does not provide a direct step budget.
+Select and reload the final raw or EMA export before downstream inference.
 
 ```python
 from chemomae.models import ChemoMAE
@@ -692,12 +771,15 @@ from chemomae.training import (
     build_scheduler,
 )
 
-model = ChemoMAE(seq_len=256, latent_dim=16, n_patches=32, n_mask=24)
+import torch
+
+device = torch.device("cpu")
+model = ChemoMAE(seq_len=256, latent_dim=16, n_patches=32, n_mask=24).to(device)
 
 cfg = TrainerConfig(
     out_dir="runs",
-    device="cuda",
-    amp=True,
+    device=str(device),
+    amp=False,
     amp_dtype="bf16",
     enable_tf32=False,
     grad_clip=1.0,
@@ -706,7 +788,7 @@ cfg = TrainerConfig(
     loss_type="mse",
     loss_region="masked",
     reduction="mean",
-    resume_from="auto",
+    resume_from=None,
 )
 
 aug_cfg = SpectraAugmenterConfig(
@@ -739,22 +821,27 @@ trainer = Trainer(
     cfg=cfg,
 )
 
-_ = trainer.fit(epochs=epochs)
+result = trainer.fit(epochs=epochs)
+model.load_state_dict(torch.load(
+    "runs/" + result["final_model"], map_location=device, weights_only=True,
+))
+model.eval()
 ```
 
 For full-spectrum autoencoder training, use `n_mask=0` together with `loss_region="all"`. The loss region is never inferred from `n_mask`.
 
 **Key Features**
 
-* automatic device and precision handling
-* fixed epoch / fixed step SSL pretraining
-* EMA tracking after each optimizer step
+* model-device defaults with AMP disabled; explicit CUDA/precision opt-in
+* explicit epoch-budget SSL pretraining (step-budget support remains pending)
+* EMA tracking after each successful optimizer update
 * EMA-consistent final export behavior:
   * final raw weights → `last_model.pt`
   * final EMA weights → `ema_last_model.pt` if EMA is enabled
 * `checkpoints/last.pt` stores the full resumable training state
 * optional train-time spectral augmentation
-* batch-wise scheduler stepping
+* scheduler stepping after successful optimizer updates
+* public preparation/event/checkpoint hooks and separate update/skip counters
 * atomic JSON history logging
 
 **Outputs**
@@ -804,7 +891,10 @@ runs/
 
 `Tester` provides a lightweight evaluation loop for trained ChemoMAE models.
 
-It computes **masked reconstruction loss** (SSE/MSE) over a DataLoader, with AMP support, optional fixed visible masks, optional `SpectraAugmenter`, and JSON logging.
+It computes **masked or full-spectrum reconstruction loss** over a DataLoader,
+with explicit AMP, optional fixed visible masks/augmentation, and JSON logging.
+Reductions aggregate errors across the complete loader rather than re-averaging
+batch losses; empty selected regions and empty loaders raise errors.
 
 ```python
 from chemomae.training import Tester, TesterConfig
@@ -869,7 +959,9 @@ cfg = ExtractorConfig(
     amp=True,
     amp_dtype="bf16",
     save_path=None,
-    return_numpy=True,
+    representation="normalized_latent",
+    output_type="numpy",
+    output_device="cpu",
 )
 
 extractor = Extractor(
@@ -880,6 +972,19 @@ extractor = Extractor(
 
 Z = extractor(loader)
 ```
+
+For large outputs, stream batches instead of retaining the whole feature array:
+
+```python
+for features in extractor.iter_transform(loader):
+    # Consume features here or write them to your own storage.
+    print(features.shape)
+```
+
+`output_type="tensor"` and `output_device="cuda"` retain batches on GPU.
+Choose `representation="cls"`, `"raw_latent"`, `"normalized_latent"`, or
+`"latent"` (configured model normalization). Direct `model.encode(x, ...)`
+offers the same representations without decoder execution or random masking.
 
 When `augmenter` is provided, `Extractor` applies augmentation before encoder inference.
 
@@ -980,6 +1085,26 @@ labels = np.random.randint(0, 4, size=100)
 score = silhouette_score_cosine_gpu(X, labels, device="cpu")
 print(score)
 ```
+
+### `local_label_agreement`
+
+[Definition and numerical contract](docs/clustering/spatial.md)
+
+```python
+from chemomae.clustering import local_label_agreement
+
+label_map = np.array([[0, 0, 0, 8]], dtype=np.int64)
+valid_mask = np.ones_like(label_map, dtype=bool)
+result = local_label_agreement(label_map, valid_mask, device="cpu")
+for window in result.windows:
+    print(window.window, window.score, window.undefined_reasons)
+```
+
+The corrected `.score` follows Thesis equation (11); `.raw_agreement` is separate.
+Binary class-map convolution supports CPU/CUDA and class chunking. Explicit masks
+exclude background and image boundaries without reserving label zero. Results
+include directed-pair integer counts, occupancy, and reasons for undefined scores.
+LLA measures spatial coherence, so use an actual image's neighbor relationships.
 
 </details>
 

@@ -1,393 +1,182 @@
-# Extractor — Latent Feature Extraction
+# Extractor
 
-> Module: `chemomae.training.extractor`
-
-This document describes the `Extractor` and its configuration (`ExtractorConfig`), which provide an efficient way to extract latent embeddings (`Z`) from trained **ChemoMAE** models under **all-visible mode**.
-
-The current `Extractor` also supports an optional `SpectraAugmenter`.  
-When an augmenter is provided, augmentation is applied to the input spectrum before latent feature extraction.
-
----
-
-## Overview
-
-The `Extractor` obtains **latent representations** from a trained ChemoMAE encoder without ChemoMAE masking.
-
-These embeddings can be used for downstream analysis such as:
-
-* clustering (`CosineKMeans`, vMF Mixture, etc.),
-* dimensionality reduction (`UMAP`, `t-SNE`, PCA),
-* representation inspection,
-* segmentation pipelines,
-* downstream evaluation.
-
-### Key features
-
-* **All-visible encoding** — uses an all-ones visible mask instead of random MAE masking.
-* **Optional `SpectraAugmenter` support** — applies spectral augmentation before encoding when provided.
-* **AMP support** — accelerated inference with `bf16` or `fp16` on CUDA.
-* **Flexible output** — returns `torch.Tensor` or `numpy.ndarray`.
-* **Optional saving** — results can be automatically written to disk (`.npy` or `.pt`).
-* **CPU aggregation** — extracted features are detached and moved to CPU before concatenation.
-
-### Determinism
-
-Without an augmenter, extraction is deterministic with respect to ChemoMAE masking because the extractor always uses an all-visible mask.
-
-With an augmenter, extraction may become stochastic, because `SpectraAugmenter` can sample random shift/noise perturbations.  
-This is intentional when augmented feature extraction is requested.
-
----
-
-## Configuration — `ExtractorConfig`
+`Extractor` calls the public all-visible `ChemoMAE.encode` API for each input
+batch. Use `iter_transform` to consume features without collecting the dataset,
+or `transform` to return one array. `extract` and calling the extractor directly
+are aliases for `transform`.
 
 ```python
-@dataclass
-class ExtractorConfig:
-    device: str | torch.device = "cuda"
-    amp: bool = True
-    amp_dtype: Literal["bf16", "fp16"] = "bf16"
-    save_path: Optional[str | Path] = None
-    return_numpy: bool = False
-```
-
-### Parameters
-
-| Name | Type | Default | Description |
-| --- | --- | --- | --- |
-| `device` | `str` or `torch.device` | `"cuda"` | Device used for feature extraction. |
-| `amp` | `bool` | `True` | Enables automatic mixed precision during CUDA extraction. |
-| `amp_dtype` | `"bf16"` or `"fp16"` | `"bf16"` | Precision type for autocast. `bf16` is recommended on recent GPUs. |
-| `save_path` | `str`, `Path`, or `None` | `None` | Optional output path. If given, results are saved after extraction. |
-| `return_numpy` | `bool` | `False` | If `True`, returns `np.ndarray`; otherwise returns `torch.Tensor`. |
-
----
-
-## Class: `Extractor`
-
-### Initialization
-
-```python
-extractor = Extractor(
-    model,
-    cfg=ExtractorConfig(),
-    augmenter=None,
-)
-```
-
-| Argument | Description |
-| --- | --- |
-| `model` | Trained ChemoMAE model. Must implement `encoder(x, visible_mask) -> z`. |
-| `cfg` | Optional configuration controlling device, AMP, saving, and return format. |
-| `augmenter` | Optional `SpectraAugmenter` applied before encoder inference. |
-
-The model is moved to `cfg.device` and set to `eval()` during extraction.
-
-If `augmenter` is provided, it is also moved to `cfg.device`.
-
----
-
-## Call Interface
-
-```python
-Z = extractor(loader)
-```
-
-The extractor iterates through batches from `loader`.
-
-For each batch:
-
-1. Extracts `x` from the batch.
-2. Moves `x` to `cfg.device`.
-3. Applies optional augmentation:
-
-   ```python
-   x_input = augmenter(x) if augmenter is not None else x
-   ```
-
-4. Constructs an all-ones visible mask:
-
-   ```python
-   visible_mask = torch.ones(B, L, dtype=torch.bool, device=device)
-   ```
-
-5. Calls:
-
-   ```python
-   z = model.encoder(x_input, visible_mask)
-   ```
-
-6. Detaches `z`, casts it to `float32`, moves it to CPU, and appends it to the feature list.
-
-After all batches are processed, all features are concatenated along the sample dimension.
-
----
-
-## Augmenter Handling
-
-`Extractor` supports optional `SpectraAugmenter`:
-
-```python
-from chemomae.training import SpectraAugmenter, SpectraAugmenterConfig
-
-aug_cfg = SpectraAugmenterConfig(
-    shift_prob=0.5,
-    shift_delta_range=(-2.0, 2.0),
-    noise_prob=0.5,
-    noise_angle_deg_range=(0.5, 3.0),
-)
-
-augmenter = SpectraAugmenter(aug_cfg)
-
-extractor = Extractor(
-    model,
-    cfg,
-    augmenter=augmenter,
-)
-```
-
-### Important mode behavior
-
-`SpectraAugmenter` is implemented as an `nn.Module`.
-
-It returns the input unchanged when it is in `eval()` mode.  
-Therefore, when an augmenter is provided, `Extractor` temporarily sets only the augmenter to `train()` during extraction:
-
-```python
-model.eval()
-augmenter.train()
-```
-
-After extraction, the original train/eval state of the augmenter is restored.
-
-This means:
-
-* the ChemoMAE model remains in evaluation mode,
-* the augmenter is active during extraction,
-* the augmenter state is restored after extraction.
-
-### Target semantics
-
-`Extractor` only extracts latent features and does not compute reconstruction loss.  
-Thus, unlike `Trainer` and `Tester`, there is no reconstruction target.
-
-The augmented spectrum is used only as the encoder input:
-
-```python
-z = model.encoder(x_input, visible_mask)
-```
-
----
-
-## Saving Behavior
-
-If `cfg.save_path` is specified:
-
-| File extension | Behavior |
-| --- | --- |
-| `.npy` | Saved using `numpy.save(save_path, Z.numpy())`. |
-| otherwise | Saved using `torch.save(Z, save_path)`. |
-
-Parent directories are created automatically.
-
-The return value is controlled only by `cfg.return_numpy`, not by the saving format.
-
-For example:
-
-```python
-cfg = ExtractorConfig(save_path="latent.npy", return_numpy=False)
-Z = extractor(loader)
-```
-
-This saves `latent.npy` but still returns a `torch.Tensor`.
-
----
-
-## Usage Examples
-
-### Extract features to memory
-
-```python
+import torch
+from torch.utils.data import DataLoader, TensorDataset
+from chemomae.models import ChemoMAE
 from chemomae.training import Extractor, ExtractorConfig
 
-cfg = ExtractorConfig(
-    device="cuda",
-    amp=True,
-    amp_dtype="bf16",
-    return_numpy=True,
-)
-
-extractor = Extractor(model, cfg)
-Z = extractor(loader)  # np.ndarray, shape (N, D)
+model = ChemoMAE(seq_len=64, n_patches=8, d_model=32, num_layers=1, latent_dim=8)
+spectra = torch.randn(100, 64)  # Illustrative spectra; load your selected weights.
+loader = DataLoader(TensorDataset(spectra), batch_size=16, shuffle=False)
+extractor = Extractor(model)
+features = extractor.transform(loader)  # CPU tensor because the model is on CPU.
 ```
 
-### Save features to disk
+## Configuration and defaults
+
+| Setting | Default | Contract |
+| --- | --- | --- |
+| `device` | `None` | Follow the model's device when extraction starts; CPU and CUDA are supported. |
+| `amp` | `False` | CUDA autocast is opt-in. CPU AMP is rejected. |
+| `amp_dtype` | `"bf16"` | `"bf16"` or `"fp16"`; CUDA BF16 support is checked. |
+| `representation` | `"latent"` | Select the output of `ChemoMAE.encode`. |
+| `output_type` | `"tensor"` | `"tensor"` or `"numpy"`, for streaming and aggregate output. |
+| `output_device` | `None` | Follow inference device for tensors; use CPU for NumPy. |
+| `output_dtype` | `torch.float32` | Storage dtype: float16, bfloat16, float32, or float64. |
+| `save_path` | `None` | Aggregate saving only; streaming ignores this setting. |
+| `progress` | `False` | Show a tqdm progress bar when enabled. |
+
+`device=None` does not automatically select CUDA. For explicit GPU inference,
+set `device="cuda"` or move the model to CUDA before constructing the extractor.
+An explicit device move persists after extraction. The helper restores modes,
+but does not move model or augmenter parameters back to their original devices.
+
+Inputs are cast to the model's floating-point parameter dtype. AMP controls
+encoder arithmetic, while `output_dtype` controls the stored result. Converting
+BF16 inference output to float64 cannot recover precision lost during inference.
+With `amp=False`, ambient CPU and CUDA autocast are explicitly disabled for each
+batch, rather than silently inherited from a surrounding context.
+
+NumPy output requires a CPU output device and cannot represent bfloat16. The same
+bfloat16 restriction applies to `.npy` saving, regardless of the returned type.
+
+## Representation contract
+
+| `representation` | Output | Width |
+| --- | --- | --- |
+| `"latent"` | Projected latent, normalized according to the model's `latent_normalize` setting | `latent_dim` |
+| `"raw_latent"` | Projected latent before normalization | `latent_dim` |
+| `"normalized_latent"` | Projected latent with L2 normalization, regardless of the model setting | `latent_dim` |
+| `"cls"` | Encoder CLS output before latent projection | `d_model` |
+
+For raw latent row $z_i$, the normalized output is
+
+$$
+\bar{z}_i = \frac{z_i}{\max(\lVert z_i \rVert_2, \epsilon)}.
+$$
+
+The implementation uses PyTorch's `F.normalize` contract, including its default
+`eps`. All patches are visible; extraction does not draw random masks or run the
+decoder. `ChemoMAE.encode` itself leaves gradients and modes under caller control;
+`Extractor` supplies the inference scopes.
+
+## Stream features and keep memory bounded
 
 ```python
-cfg = ExtractorConfig(
-    device="cuda",
-    amp=True,
-    save_path="latent.npy",
-    return_numpy=False,
-)
-
-extractor = Extractor(model, cfg)
-Z = extractor(loader)  # torch.Tensor
-
-# latent.npy is written to disk.
-```
-
-### Save as Torch tensor
-
-```python
-cfg = ExtractorConfig(
-    device="cuda",
-    save_path="latent.pt",
-)
-
-extractor = Extractor(model, cfg)
-Z = extractor(loader)
-
-# latent.pt contains a torch.Tensor.
-```
-
-### Extract augmented features
-
-```python
-from chemomae.training import (
-    Extractor,
-    ExtractorConfig,
-    SpectraAugmenter,
-    SpectraAugmenterConfig,
-)
-
-aug_cfg = SpectraAugmenterConfig(
-    shift_prob=0.5,
-    shift_delta_range=(-2.0, 2.0),
-    noise_prob=0.5,
-    noise_angle_deg_range=(0.5, 3.0),
-    recenter_after_each_op=True,
-    renorm_to_input_norm=True,
-)
-
-augmenter = SpectraAugmenter(aug_cfg)
-
-cfg = ExtractorConfig(
-    device="cuda",
-    amp=True,
-    amp_dtype="bf16",
-    save_path="latent_aug.npy",
-    return_numpy=True,
-)
+from contextlib import closing
 
 extractor = Extractor(
     model,
-    cfg,
-    augmenter=augmenter,
+    ExtractorConfig(
+        device="cuda",
+        output_device="cuda",
+        representation="normalized_latent",
+        output_dtype=torch.float32,
+    ),
 )
 
-Z_aug = extractor(loader)
+with closing(extractor.iter_transform(loader)) as batches:
+    for feature_batch in batches:
+        # Consume this batch on GPU or write it to your own sink.
+        batch_mean = feature_batch.mean(dim=0)
+        # A caller can stop early here; closing releases the progress bar.
 ```
 
-This can be useful for robustness checks or test-time augmentation style analyses.
+`iter_transform` yields one output per input batch without a full-dataset feature
+list or concatenation. Its feature storage is bounded by the current batches
+and device transfers; the model, input loader/prefetching, and anything retained
+by the consumer still use memory. An empty input batch yields an empty feature
+batch, and an empty loader yields nothing. Streaming never writes `save_path`.
 
----
-
-## Design Notes
-
-### All-visible encoder call
-
-The extractor bypasses ChemoMAE's random mask generation and directly calls:
+For a caller-owned NumPy writer, request CPU arrays explicitly:
 
 ```python
-model.encoder(x_input, visible_mask)
-```
-
-where:
-
-```python
-visible_mask = torch.ones(B, L, dtype=torch.bool, device=device)
-```
-
-This ensures the encoder observes the full spectrum.
-
-### Augmentation and determinism
-
-Without an augmenter, all-visible extraction removes mask randomness.
-
-With an augmenter, the extracted features may vary across calls unless random seeds are controlled.  
-This is expected because spectral shift/noise augmentation is stochastic.
-
-### AMP and dtype handling
-
-Autocast is used only when:
-
-* `cfg.amp=True`, and
-* `cfg.device` resolves to CUDA.
-
-Extracted features are cast to `float32` before CPU aggregation.  
-This avoids issues when saving `bf16` tensors as NumPy arrays.
-
-### Device safety
-
-All extracted features are moved to CPU before concatenation and saving.
-
-### Format flexibility
-
-Saving format and return type are independent.
-
----
-
-## Minimal Tests
-
-### Basic extraction
-
-```python
-cfg = ExtractorConfig(
-    device="cpu",
-    return_numpy=True,
-    save_path=None,
-)
-
-extractor = Extractor(model, cfg)
-Z = extractor(loader)
-
-assert isinstance(Z, np.ndarray)
-assert Z.ndim == 2
-```
-
-### Augmenter path
-
-```python
-augmenter = SpectraAugmenter(SpectraAugmenterConfig())
-
-cfg = ExtractorConfig(
-    device="cpu",
-    return_numpy=False,
-)
-
 extractor = Extractor(
     model,
-    cfg,
-    augmenter=augmenter,
+    ExtractorConfig(output_type="numpy", output_dtype=torch.float32),
 )
-
-Z = extractor(loader)
-
-assert isinstance(Z, torch.Tensor)
-assert Z.ndim == 2
+for feature_batch in extractor.iter_transform(loader):
+    # Pass feature_batch to your own writer. No dataset aggregation occurs here.
+    assert feature_batch.ndim == 2
 ```
 
----
+## Ordering, modes, and early termination
 
-## Version v0.2.0
+Each batch must be a floating-point tensor of shape `(B, model.seq_len)`, or a
+tuple/list with that tensor first. Additional items such as labels or pixel IDs
+are ignored. Dense finite inputs are required; overflow while casting to the
+model dtype, nonfinite augmentation/encoder output, and overflow in the selected
+storage dtype raise errors before saving or yielding that batch. The extractor
+preserves exactly the order supplied by the iterable;
+it does not sort or shuffle. Use `shuffle=False` and retain your own row/pixel
+indices when rebuilding a spatial map. Loader worker behavior and split selection
+remain the caller's responsibility.
 
-Updated for the optional augmenter-enabled ChemoMAE extraction pipeline.
+Each nonempty batch temporarily sets the model to evaluation mode and disables
+gradient recording. All model and augmenter training flags, including mixed
+child modes, are restored before a feature batch is yielded and if encoding
+raises an exception. Grad, inference, and autocast scopes also end before yield.
+Early termination therefore leaves no suspended model-mode changes. Close the
+iterator, preferably with `contextlib.closing`, to release its optional progress
+bar promptly. The helper does not close caller-owned writers or loader resources.
 
-Changes:
+Outputs are ordinary detached tensors, even when extraction is called inside an
+inference-mode context. They can feed a trainable downstream head without cloning
+an inference tensor. Encoder gradients are not recorded. For end-to-end supervised
+fine-tuning, call `model.encode` directly under your own training/grad scopes.
+Do not train or extract concurrently using the same model instance.
 
-* added optional `SpectraAugmenter` support,
-* documented augmenter train/eval mode handling,
-* clarified determinism with and without augmentation,
-* clarified CPU aggregation and dtype handling,
-* added augmented extraction usage examples.
+Without an augmenter, random masking and dropout are disabled. This supports
+repeatable stream/aggregate comparisons under matching conditions; it does not
+promise bitwise equality across devices, Torch versions, precision modes, or
+nondeterministic kernels.
+
+Passing `augmenter=...` explicitly enables augmentation in training mode only
+while each batch is computed. This can be stochastic. Supply a caller-owned
+default generator to `SpectraAugmenter` to control its random stream; it must
+match the inference device. The extractor never seeds or replaces RNG state.
+Callers must choose and record their augmentation/RNG protocol. An augmenter
+must preserve the input tensor's shape.
+
+## Aggregate output and saving
+
+```python
+extractor = Extractor(
+    model,
+    ExtractorConfig(
+        output_type="numpy",
+        output_dtype=torch.float64,
+        representation="raw_latent",
+        save_path="features/latent.npy",
+    ),
+)
+features = extractor(loader)
+```
+
+`transform` holds all batches and then allocates their concatenation on
+`output_device`, so it can require roughly twice the feature-array storage during
+concatenation. Choose streaming when the dataset does not fit that budget.
+An empty loader returns `(0, latent_dim)` or `(0, d_model)` with the configured
+type/device/dtype.
+
+A `.npy` destination saves a NumPy array; other suffixes save a CPU tensor with
+`torch.save`. Saving creates parent directories and overwrites the requested
+file. GPU aggregate output is copied to CPU for saving, but the returned tensor
+stays on the configured device. The saved file contains features only; store
+row IDs, preprocessing, weights, representation, precision, and protocol metadata
+separately when they are needed to interpret it.
+
+## Migration from v0.2.2
+
+The default now follows the model's device with AMP disabled and tensor output
+on the inference device. GPU inference no longer forces whole-dataset CPU
+aggregation. Use `output_type="numpy"` in place of `return_numpy=True`, and
+`output_device="cpu"` when CPU tensors are required. Model training flags are
+restored instead of leaving the model in evaluation mode. Existing completed
+v0.2.2 experiments and their artifacts are not changed by this API.
