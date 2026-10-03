@@ -4,91 +4,131 @@
 [![torch](https://img.shields.io/badge/torch-%E2%89%A52.1.0-orange)](#)
 [![CI](https://github.com/Mantis-Ryuji/ChemoMAE/actions/workflows/ci.yml/badge.svg)](https://github.com/Mantis-Ryuji/ChemoMAE/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/pypi/pyversions/chemomae.svg)](https://pypi.org/project/chemomae/)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/LICENSE)
 
-> **ChemoMAE**: A research-oriented PyTorch toolkit for **1D spectral representation learning, hypersphere-aware augmentation, and hyperspherical clustering** .
+> **ChemoMAE**: A PyTorch toolkit for **self-supervised spectral representation learning and spatial analysis of spectral differences**.
 
-ChemoMAE v0.2.3 is under development in this checkout. New APIs described
-below are not part of PyPI v0.2.2. See [development progress](ToDo.md) for completed
-implementation and pending validation; the historical research release remains
-available independently.
+**Manuscript in preparation.** A paper describing the method and its NIR-HSI
+case study of aged wood is being prepared. Links will be added when available.
+
+* **arXiv preprint:** URL to be added.
+* **Research repository (GitHub):** URL to be added.
+
+<!-- arXiv URL: to be added after the preprint is available. -->
+<!-- Research GitHub repository URL: to be added when available. -->
+
+This documentation describes ChemoMAE v0.2.3. See the
+[release notes](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/CHANGELOG.md)
+for changes to APIs, defaults, and saved artifacts from v0.2.2.
 
 ---
 
 ## Why ChemoMAE?
 
-Traditional chemometrics has long relied on **linear methods** such as PCA and PLS.
-While these methods remain foundational, they often struggle to capture the **nonlinear structures** and **high-dimensional variability** present in modern spectral datasets.
+When chemical states and their categories are not known in advance, spectral
+images can help explore where spectral differences occur and how they are
+organized in space. The representation used to compare spectra determines
+which differences become visible in that analysis.
 
-ChemoMAE is motivated by the geometry induced by **Standard Normal Variate (SNV)**
-preprocessing. For nonconstant spectra with negligible `eps`, SNV centers each
-spectrum and scales it to approximately unit sample variance and a common L2
-norm. This emphasizes relative spectral shape. Constant spectra become zero
-vectors; finite `eps` means the norm is only approximately constant. ChemoMAE
-provides normalized latent representations for directional downstream analysis.
+ChemoMAE learns a low-dimensional representation from unlabeled spectra, then
+provides clustering and spatial evaluation tools for examining the resulting
+partitions. For hyperspectral images, retain the original pixel coordinates so
+that predicted labels can be placed back into each specimen's map. Spectral
+summaries and local chemical measurements can then support interpretation of
+the observed regions.
 
 <p align="center">
-<img src="./images/chemomae.svg">
+<img src="https://raw.githubusercontent.com/Mantis-Ryuji/ChemoMAE/v0.2.3/images/chemomae.svg">
 </p>
 
-### 1. Extending Chemometrics with Deep Learning
+### 1. Learning through Masked Denoising
 
-ChemoMAE introduces a **Transformer-based Masked Autoencoder (MAE)** specialized for **1D spectra** .
+ChemoMAE divides a spectrum into contiguous patches and passes the visible
+patches, together with a CLS token, through a Transformer encoder. A decoder
+reconstructs all spectral channels from one latent vector. Trainer's default loss
+evaluates the hidden channels, encouraging the representation to capture
+relationships across spectral bands.
 
-* spectra are divided into contiguous **patches**
-* masking is applied **patch-wise**
-* training loss can target the **masked spectral regions** (default) or the **full spectrum**
-* the encoder produces latent representations `z` that are naturally compatible with **cosine similarity**
+With `SpectraAugmenter`, the model receives a perturbed spectrum while the
+reconstruction target remains the input before that additional perturbation.
+This **masked denoising** task combines prediction of hidden bands with recovery
+from specified spectral perturbations. The library also supports masked
+reconstruction without augmentation and full-spectrum autoencoder training.
 
-> [!NOTE]
-> The latent embedding `z` can be L2-normalized to unit norm (`latent_normalize=True`, default). Disable this (`latent_normalize=False`) if you prefer unconstrained embeddings.
+The manuscript uses a single affine decoder (`decoder_num_layers=1`). The
+library supports both affine and MLP decoders; its default is a two-layer MLP
+(`decoder_num_layers=2`). The examples below illustrate the library APIs.
 
-This architecture aligns naturally with the **hyperspherical geometry** induced by SNV, making the learned representations well suited for **cosine-based clustering** , retrieval, and downstream analysis.
+### 2. Geometry for Comparing Spectral Shape
 
-### 2. Hypersphere-Aware Augmentation
+For nonconstant spectra with negligible `eps`, **Standard Normal Variate (SNV)**
+centers each spectrum and scales it to approximately unit sample variance and a
+common L2 norm. This emphasizes relative spectral shape. Constant spectra become
+zero vectors, and finite `eps` makes the common-norm relation approximate.
+Choose SNV when removing per-spectrum mean and scale is appropriate for the
+measurement and analysis.
 
-ChemoMAE also provides a **spectral augmenter** designed specifically for SNV-normalized spectra.
+`SpectraAugmenter` provides **fractional shift** through channel interpolation
+and **tangent Gaussian noise** through rotation in a random tangent direction.
+Its default re-centering and norm restoration retain the geometry of
+SNV-transformed inputs, so augmentation varies spectral shape without
+reintroducing the removed mean and scale. These operations define controlled
+perturbations; their relevance to actual measurement variation depends on the
+chosen settings and application.
 
-Instead of applying unconstrained Euclidean perturbations, `SpectraAugmenter` applies weak spectral perturbations while maintaining the geometry induced by SNV preprocessing. In particular, the augmenter can re-center each augmented spectrum to zero mean and re-normalize it to the original per-spectrum L2 norm.
+The encoder's projected latent vector is L2-normalized by default
+(`latent_normalize=True`). Input spectra and latent vectors can therefore both
+be compared by direction using cosine similarity. The latent vector has no
+zero-mean constraint, and the learned mapping need not preserve input cosine
+similarities. Set `latent_normalize=False` to retain unconstrained latents.
 
-The current implementation supports:
+### 3. From Representations to Spatial Maps
 
-* **fractional shift**
-  small wavelength-axis perturbation using interpolation
-* **tangent Gaussian noise**
-  random local perturbation constructed in the tangent space of the hypersphere
+After training, extract features with all patches visible and augmentation
+disabled. **CosineKMeans**, used in the accompanying study, partitions feature
+directions at a chosen observation granularity `K`. **VMFMixture** is an
+additional option for probabilistic modeling of directional features. Cluster
+IDs identify assignments; chemical meaning requires interpretation of the
+spectra and supporting measurements.
 
-Fractional shift is controlled by the shift amount in channel-index units, while tangent Gaussian noise is controlled by a geodesic angle range in degrees.
-
-These augmentations are intended as **auxiliary regularization** for reconstruction training, not as a strong contrastive multi-view augmentation pipeline.
-
-### 3. Hyperspherical Geometry Toolkit
-
-The latent embeddings, when L2-normalized, reside on a **unit hypersphere** .
-Built-in clustering modules — **Cosine K-Means** and **vMF Mixture** — leverage this geometry directly and are therefore more appropriate than Euclidean clustering when the signal is primarily **directional spectral variation** .
+For a spectral image, restore labels to their original pixel positions and use
+**Local Label Agreement (LLA)** to measure local spatial coherence beyond chance
+agreement implied by cluster occupancy. **Cosine silhouette** describes
+separation within the chosen representation. In the study, neither model
+training nor clustering uses spatial coordinates or neighbor relations, allowing
+the maps to be evaluated using spatial information held apart from fitting.
+For unseen-specimen evaluation, fit both the encoder and cluster centers on
+training specimens and keep them fixed during held-out prediction.
 
 ---
 
 ## Quick Start
 
-Install the published research release:
+Install a CPU or CUDA build of PyTorch appropriate for your environment using
+the [official installation selector](https://pytorch.org/get-started/locally/),
+then install ChemoMAE v0.2.3:
 
 ```bash
-pip install chemomae
+python -m pip install "chemomae==0.2.3"
 ```
 
-For the new APIs described in this development checkout, install its source in
-your chosen environment instead:
+The package requires Python >=3.10 and PyTorch >=2.1. CI covers Python
+3.10–3.13 with selected CPU PyTorch builds and a Python 3.10/PyTorch 2.1 lane;
+it does not test every Python/PyTorch combination. If using PyTorch 2.1, keep
+NumPy in the `>=1.24,<2` range for its NumPy interoperability.
+
+For an editable installation, clone the repository, check out `v0.2.3`, and run
+the following from its root in your chosen environment:
 
 ```bash
-pip install -e .
+python -m pip install -e .
 ```
 
 ---
 
 ## ChemoMAE Example
 
-The [step-by-step workflow tutorial](docs/tutorials/workflow.md) explains
+The [step-by-step workflow tutorial](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/docs/tutorials/workflow.md) explains
 preprocessing, augmentation, epoch resume, clean evaluation, representations,
 streaming extraction, clustering, spatial maps, LLA, and saved artifacts. It uses
 small synthetic inputs. Settings illustrate API usage and are not a scientific
@@ -149,9 +189,9 @@ print(test_labels, clusterer.converged_, clusterer.stop_reason_)
 ```
 
 For custom masks, batch ordering, schedules, and caller-owned RNG state, use
-the [public Trainer hooks or plain PyTorch loop](docs/training/trainer.md).
-[Model persistence](docs/models/persistence.md) explains inference artifacts and
-training checkpoints. [API documentation](docs/README.md) covers the full library.
+the [public Trainer hooks or plain PyTorch loop](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/docs/training/trainer.md).
+[Model persistence](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/docs/models/persistence.md) explains inference artifacts and
+training checkpoints. [API documentation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/docs/README.md) covers the full library.
 
 ---
 
@@ -162,8 +202,8 @@ training checkpoints. [API documentation](docs/README.md) covers the full librar
 
 ### `SNVScaler`
 
-* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/preprocessing/snv.md)
-* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/preprocessing/snv.py)
+* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/docs/preprocessing/snv.md)
+* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/src/chemomae/preprocessing/snv.py)
 
 `SNVScaler` performs **row-wise mean subtraction and variance scaling**. Each
 spectrum is divided by its sample standard deviation (`ddof=1` for `L>=2`)
@@ -202,17 +242,21 @@ X_rec = scaler.inverse_transform(Y, mu=mu, sd=sd)
 
 **When to Use**
 
-* Standard preprocessing for NIR spectra
-* Before cosine-based modeling or clustering
+* comparing relative spectral shapes when per-spectrum mean and scale should be removed
+* preparing spectra for directional analysis under that preprocessing choice
 
 ---
 
 ### `cosine_fps_downsample`
 
-* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/preprocessing/dowmsampling.md)
-* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/preprocessing/downsampling.py)
+* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/docs/preprocessing/dowmsampling.md)
+* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/src/chemomae/preprocessing/downsampling.py)
 
-`cosine_fps_downsample` performs **Farthest-Point Sampling (FPS)** under **hyperspherical geometry** , selecting spectra that are maximally diverse in **direction** .
+`cosine_fps_downsample` performs **Farthest-Point Sampling (FPS)** using cosine
+dissimilarity. Starting from one sampled row, it greedily adds the row with the
+greatest cosine distance to its nearest selected row. It is an optional way to
+cover spectral directions with fewer rows; the selected subset does not preserve their density
+or spatial distribution.
 
 Internally, all rows are **L2-normalized** for selection, but the returned subset is drawn from the **original-scale** input `X`.
 It supports NumPy and PyTorch inputs with an explicit computation device.
@@ -247,15 +291,21 @@ on CPU. A caller-owned `generator` may replace `seed` for initial-point control.
 
 ### `ChemoMAE`
 
-* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/models/chemo_mae.md)
-* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/models/chemo_mae.py)
+* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/docs/models/chemo_mae.md)
+* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/src/chemomae/models/chemo_mae.py)
 
 `ChemoMAE` is a **Masked Autoencoder for 1D spectra**.
 
-It adopts a **patch-token formulation** , where contiguous spectral bands are grouped into patches and masking is performed **at the patch level** .
-The encoder processes only the **visible patch tokens** together with a CLS token, and the decoder reconstructs the full spectrum using a **lightweight MLP decoder** .
+Contiguous spectral bands are grouped into patches and masked at the patch level.
+The encoder processes the **visible patch tokens** together with a CLS token.
+The CLS output is projected to a `latent_dim` vector, and the decoder
+reconstructs the full spectrum from that single bottleneck. Use
+`decoder_num_layers=1` for the manuscript's affine decoder or a larger value for
+an MLP; the library default is `2`.
 
-The CLS output is projected to a `latent_dim` vector and may be **L2-normalized**, yielding embeddings naturally suited to cosine similarity and hyperspherical clustering.
+Optional **L2 normalization** expresses the latent representation as a direction
+for cosine comparison. Train with hidden-band loss to learn cross-band
+relationships, then extract all-visible features for downstream analysis.
 
 ```python
 import torch
@@ -282,13 +332,13 @@ x_rec, z, visible = mae(x)
 
 * patch-wise masking
 * Transformer encoder over visible tokens
-* lightweight MLP decoder
+* configurable affine or MLP decoder
 * optional L2-normalized latent
 * cosine-friendly embeddings
 
 **When to Use**
 
-* learning geometry-aware spectral representations
+* learning spectral representations through masked reconstruction or masked denoising
 * downstream clustering, visualization, or supervised fine-tuning
 
 </details>
@@ -298,10 +348,10 @@ x_rec, z, visible = mae(x)
 
 ### `build_optimizer` & `build_scheduler`
 
-* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/training/optim.md)
-* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/training/optim.py)
+* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/docs/training/optim.md)
+* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/src/chemomae/training/optim.py)
 
-Utility functions for a standardized Transformer-style optimization pipeline.
+Utility functions for configurable AdamW optimization and learning-rate scheduling.
 
 * `build_optimizer` creates grouped **AdamW**
 * `build_scheduler` creates **linear warmup → cosine decay**
@@ -326,19 +376,24 @@ scheduler = build_scheduler(
 Inspect `optimizer.param_groups` for actual decay exclusions. The scheduler
 sets a positive initial warmup rate at construction and advances after successful
 updates; its post-step LR belongs to the next update. See the
-[optimizer/scheduler guide](docs/training/optim.md) for the exact indexing.
+[optimizer/scheduler guide](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/docs/training/optim.md) for the exact indexing.
+
+**When to Use**
+
+* building AdamW parameter groups with explicit weight-decay exclusions
+* scheduling warmup and cosine decay over successful optimizer updates
 
 ---
 
 ### `SpectraAugmenterConfig` & `SpectraAugmenter`
 
-* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/training/augmenter.md)
-* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/training/augmenter.py)
+* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/docs/training/augmenter.md)
+* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/src/chemomae/training/augmenter.py)
 
 `SpectraAugmenter` provides **SNV-geometry-aware augmentation** for SNV-normalized spectra.
 
-After SNV preprocessing, each spectrum is approximately mean-centered and has a fixed per-spectrum norm.
-Instead of applying unconstrained Euclidean perturbations, `SpectraAugmenter` applies weak spectral perturbations and optionally projects the result back toward the SNV-compatible geometry by:
+SNV-transformed nonconstant spectra are mean-centered with approximately a common
+norm. The default augmentation settings retain that geometry by:
 
 * re-centering each spectrum to mean zero
 * re-normalizing each spectrum to the original per-spectrum L2 norm
@@ -352,6 +407,12 @@ The current implementation supports two augmentations:
   A random local perturbation constructed by projecting Gaussian noise onto the tangent space and rotating the spectrum by a sampled angle.
 
 Fractional shift is controlled by `shift_delta_range`, while tangent Gaussian noise is controlled by `noise_angle_deg_range`.
+
+For masked denoising, augmentation is applied before patch masking, while the
+target remains the spectrum before augmentation. Keeping mean and norm fixed
+allows these operations to vary spectral shape without restoring the offsets
+and scale that SNV removed. Choose strengths for the intended application;
+mean and norm preservation alone does not ensure chemical-state preservation.
 
 ```python
 from chemomae.training import SpectraAugmenter, SpectraAugmenterConfig
@@ -414,8 +475,8 @@ For example, `Extractor` and `Tester` temporarily set the augmenter to `train()`
 
 ### `TrainerConfig` & `Trainer`
 
-* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/training/trainer.md)
-* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/training/trainer.py)
+* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/docs/training/trainer.md)
+* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/src/chemomae/training/trainer.py)
 
 `TrainerConfig` and `Trainer` form the **core training engine** of ChemoMAE.
 
@@ -430,6 +491,10 @@ They provide a fixed-budget training loop with an explicit choice between **mask
 * checkpointing and resume
 * weights-only export for final model variants
 * JSON history logging
+
+When an augmenter is supplied, the default preparation step perturbs the model
+input and retains the original batch as the reconstruction target. This supports
+the masked denoising task without requiring labels or spatial coordinates.
 
 ChemoMAE does **not** use validation-loss-based early stopping or best-checkpoint selection.
 `fit(epochs=...)` uses an absolute epoch budget. Configure the scheduler against
@@ -513,7 +578,7 @@ For full-spectrum autoencoder training, use `n_mask=0` together with `loss_regio
 **Key Features**
 
 * model-device defaults with AMP disabled; explicit CUDA/precision opt-in
-* explicit epoch-budget SSL pretraining (step-budget support remains pending)
+* explicit epoch-budget SSL pretraining
 * EMA tracking after each successful optimizer update
 * EMA-consistent final export behavior:
   * final raw weights → `last_model.pt`
@@ -564,7 +629,7 @@ runs/
 
 These are the default paths. Each output can be relocated or disabled through
 `TrainerConfig`; setting `model_artifacts=False` disables the inference bundles.
-See the [artifact guide](docs/models/persistence.md) for loading and resume rules.
+See the [artifact guide](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/docs/models/persistence.md) for loading and resume rules.
 
 **When to Use**
 
@@ -577,8 +642,8 @@ See the [artifact guide](docs/models/persistence.md) for loading and resume rule
 
 ### `TesterConfig` & `Tester`
 
-* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/training/tester.md)
-* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/training/tester.py)
+* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/docs/training/tester.md)
+* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/src/chemomae/training/tester.py)
 
 `Tester` provides a lightweight evaluation loop for trained ChemoMAE models.
 
@@ -586,6 +651,8 @@ It computes **masked or full-spectrum reconstruction loss** over a DataLoader,
 with explicit AMP, optional fixed visible masks/augmentation, and JSON logging.
 Reductions aggregate errors across the complete loader rather than re-averaging
 batch losses; empty selected regions and empty loaders raise errors.
+Reconstruction error describes the prediction task. Evaluate the spatial maps
+and their chemical interpretation separately from this loss.
 
 ```python
 from chemomae.training import Tester, TesterConfig
@@ -633,12 +700,16 @@ tester = Tester(
 
 ### `ExtractorConfig` & `Extractor`
 
-* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/training/extractor.md)
-* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/training/extractor.py)
+* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/docs/training/extractor.md)
+* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/src/chemomae/training/extractor.py)
 
 `Extractor` provides a latent extraction pipeline from trained ChemoMAE models in **all-visible mode**.
 
 It directly calls the encoder with an all-visible mask, so ChemoMAE masking is not used during extraction. Without an augmenter, this gives deterministic latent embeddings with respect to masking.
+
+Use the selected inference artifact to extract features before fitting a
+clusterer. Retain the association between rows, specimens, and pixel coordinates
+when those features will be used to construct spatial maps.
 
 It supports AMP inference, Torch/NumPy return types, optional saving, and optional `SpectraAugmenter`.
 
@@ -705,10 +776,14 @@ With an augmenter, extracted embeddings may vary across calls because spectral s
 
 ### `CosineKMeans` & `elbow_ckmeans`
 
-* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/clustering/cosine_kmeans.md)
-* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/clustering/cosine_kmeans.py)
+* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/docs/clustering/cosine_kmeans.md)
+* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/src/chemomae/clustering/cosine_kmeans.py)
 
-`CosineKMeans` implements **hyperspherical k-means** with cosine similarity.
+`CosineKMeans` implements **hyperspherical k-means** with cosine similarity and
+unit-norm nonzero centroids. It quantizes spectral feature directions into `K`
+assignments. `K` controls the granularity of the resulting map, and the cluster
+IDs carry no predefined chemical meaning. `elbow_ckmeans` provides an exploratory
+candidate from the inertia curve.
 
 ```python
 import torch
@@ -723,24 +798,26 @@ labels = ckm.predict(X)
 **When to Use**
 
 * clustering unit-sphere embeddings
-* model selection of `K` under cosine geometry
+* examining partitions at prescribed values of `K` or exploring an inertia curve
 
 ---
 
 ### `VMFMixture` & `elbow_vmf`
 
-* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/clustering/vmf_mixture.md)
-* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/clustering/vmf_mixture.py)
+* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/docs/clustering/vmf_mixture.md)
+* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/src/chemomae/clustering/vmf_mixture.py)
 
-`VMFMixture` fits a **von Mises–Fisher mixture model** on the unit hypersphere.
+`VMFMixture` fits a **von Mises–Fisher mixture model** on the unit hypersphere,
+estimating component directions, concentrations, weights, and soft
+responsibilities. It is an additional library option; the accompanying study
+uses CosineKMeans for its main analysis.
 
-Since **v0.2.2**, vMF uses CPU float64 scaled Bessel calculations with an underflow-safe
-series fallback, fixes CUDA k-means++ seeding and CPU checkpoint restoration, and
-keeps valid unit directions for degenerate components. `lower_bound_` describes the
-final model; `converged_` and `stop_reason_` distinguish tolerance, likelihood decrease
-and iteration limit. The concentration update remains approximate. See the
-[vMF documentation](docs/clustering/vmf_mixture.md) for precision, persistence and
-regression-test details.
+The implementation uses CPU float64 scaled Bessel calculations with an
+underflow-safe series fallback and retains valid unit directions for degenerate
+components. `lower_bound_` describes the final model; `converged_` and
+`stop_reason_` distinguish tolerance, likelihood decrease, and iteration limit.
+The concentration update remains approximate. The linked documentation explains
+precision, persistence, and the interpretation of `elbow_vmf`.
 
 ```python
 import torch
@@ -755,16 +832,19 @@ labels = vmf.predict(X)
 **When to Use**
 
 * probabilistic clustering of unit-sphere embeddings
-* BIC / NLL-based model selection under cosine geometry
+* comparing directional mixture fits using BIC or NLL curves
 
 ---
 
 ### `silhouette_samples_cosine_gpu` & `silhouette_score_cosine_gpu`
 
-* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/clustering/metric.md)
-* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/clustering/metric.py)
+* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/docs/clustering/metric.md)
+* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/src/chemomae/clustering/metric.py)
 
-Cosine-based GPU-accelerated silhouette metrics for clustering evaluation.
+Cosine silhouette metrics on CPU or CUDA describe within-cluster compactness
+relative to separation from other clusters in the supplied representation.
+Use them as a diagnostic alongside spatial maps and occupancy; separation in
+feature space and spatial coherence describe different properties.
 
 ```python
 import numpy as np
@@ -777,9 +857,25 @@ score = silhouette_score_cosine_gpu(X, labels, device="cpu")
 print(score)
 ```
 
+**When to Use**
+
+* inspecting separation within a spectral or latent representation
+* comparing partitions at different observation granularities
+
+---
+
 ### `local_label_agreement`
 
-[Definition and numerical contract](docs/clustering/spatial.md)
+* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/docs/clustering/spatial.md)
+* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/src/chemomae/clustering/spatial.py)
+
+`local_label_agreement` measures local spatial coherence beyond the chance
+agreement implied by cluster occupancy. Its corrected `.score` follows the
+definition in the linked document; `.raw_agreement` is reported separately.
+Binary class-map convolution supports CPU/CUDA and class chunking. Explicit
+masks exclude background without reserving label zero, and only valid neighbor
+pairs within the image contribute. Results include directed-pair integer counts,
+occupancy, and reasons for undefined scores.
 
 ```python
 from chemomae.clustering import local_label_agreement
@@ -791,11 +887,10 @@ for window in result.windows:
     print(window.window, window.score, window.undefined_reasons)
 ```
 
-The corrected `.score` follows Thesis equation (11); `.raw_agreement` is separate.
-Binary class-map convolution supports CPU/CUDA and class chunking. Explicit masks
-exclude background and image boundaries without reserving label zero. Results
-include directed-pair integer counts, occupancy, and reasons for undefined scores.
-LLA measures spatial coherence, so use an actual image's neighbor relationships.
+**When to Use**
+
+* evaluating predicted label maps at specified neighborhood widths
+* assessing coherence using an image's original pixel relationships
 
 </details>
 
@@ -804,8 +899,8 @@ LLA measures spatial coherence, so use an actual image's neighbor relationships.
 
 ### `set_global_seed`
 
-* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/utils/seed.md)
-* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/src/chemomae/utils/seed.py)
+* [Document](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/docs/utils/seed.md)
+* [Implementation](https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/src/chemomae/utils/seed.py)
 
 Unified seeding for **Python**, **NumPy**, and **PyTorch**, with optional CuDNN determinism.
 

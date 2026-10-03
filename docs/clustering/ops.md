@@ -8,7 +8,11 @@ This document describes utility functions supporting **hyperspherical k-means** 
 
 ## Overview
 
-These operations provide the numerical foundation for `CosineKMeans` and `elbow_ckmeans`, ensuring stable and geometry-aware computation on the unit hypersphere.
+These operations provide row normalization, directional comparisons, and an
+inertia-curve diagnostic for `CosineKMeans` and `elbow_ckmeans`. On nonzero
+unit-norm vectors, cosine similarity is the dot product. The same comparison
+measure can be used in the input and latent spaces without requiring an encoder
+to preserve the similarity values between those spaces.
 
 ---
 
@@ -54,7 +58,12 @@ Compute cosine dissimilarity ($1 - \cos$).
 
 `find_elbow_curvature(k_list: List[int], inertia_list: List[float], smooth: bool = True, window_length: int = 5, polyorder: int = 2) -> Tuple[int, int, float]`
 
-Estimate the optimal cluster count via **curvature-based elbow detection** using the **Savitzky–Golay derivative method**.
+Find an interior elbow in a supplied objective curve via **curvature-based elbow
+detection**, using **Savitzky–Golay derivatives** when the curve supports them.
+The returned `optimal_k` is a heuristic candidate at the chosen curvature
+maximum. In spectral mapping, $K$ determines the granularity at which a
+representation is partitioned; the elbow is not a count of chemically distinct
+states or evidence that those states form separate populations.
 
 #### Steps
 

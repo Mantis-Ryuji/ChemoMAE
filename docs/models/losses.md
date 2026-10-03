@@ -9,8 +9,17 @@ These functions compute squared errors wherever the supplied `mask` is `True`. T
 
 ## Overview
 
-During MAE training, a large portion of each spectral sequence is randomly masked.
-The model should be penalized **only for reconstructing the hidden (masked) regions**, not for simply copying visible inputs.<br>
+The decoder returns every channel, while the selection mask determines which
+channels contribute to the loss. For masked reconstruction, selecting hidden
+channels asks the bottleneck to predict omitted bands from visible context.
+For masked denoising, compare those predictions with the input from before the
+added spectral perturbation; the target is not an independently measured
+noise-free spectrum.
+
+For an unmasked autoencoder or denoising autoencoder, select every channel.
+Changing from that objective to masked reconstruction changes both the available
+input and the loss region. These helpers implement the selected squared error;
+they do not choose the scientific comparison or preprocessing.
 
 Two loss functions are provided:
 
@@ -32,7 +41,7 @@ Both functions support multiple reduction modes to control how losses are aggreg
 | Parameter   | Type                                 | Description                                                                                                                                                                                                                    |
 | ----------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `x_recon`   | `torch.Tensor`, shape `(B, L)`       | Reconstructed sequence.                                                                                                                                                                                                        |
-| `x`         | `torch.Tensor`, shape `(B, L)`       | Ground-truth input sequence.                                                                                                                                                                                                   |
+| `x`         | `torch.Tensor`, shape `(B, L)`       | Target spectrum before added augmentation.                                                                                                                                                                                                   |
 | `mask`      | `torch.Tensor`, shape `(B, L)`, bool | `True` = masked positions (loss applied); `False` = visible positions (ignored).                                                                                                                                               |
 | `reduction` | `{"sum", "mean", "batch_mean"}`      | Aggregation mode:<br>• `"sum"` — total sum of masked errors.<br>• `"mean"` — average over all masked elements.<br>• `"batch_mean"` — sum over masked elements divided by batch size `B` (independent of mask count). |
 
@@ -51,7 +60,7 @@ If `mask.sum() == 0`, returns `0.0` to avoid NaN.
 | Parameter   | Type                                 | Description                                                                                                                                                                       |
 | ----------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `x_recon`   | `torch.Tensor`, shape `(B, L)`       | Reconstructed sequence.                                                                                                                                                           |
-| `x`         | `torch.Tensor`, shape `(B, L)`       | Ground-truth input sequence.                                                                                                                                                      |
+| `x`         | `torch.Tensor`, shape `(B, L)`       | Target spectrum before added augmentation.                                                                                                                                                      |
 | `mask`      | `torch.Tensor`, shape `(B, L)`, bool | `True` = masked positions (loss applied).                                                                                                                                         |
 | `reduction` | `{"mean", "sum", "batch_mean"}`      | Aggregation mode:<br>• `"mean"` — average over all masked elements.<br>• `"sum"` — total SSE over masked elements.<br>• `"batch_mean"` — sum divided by batch size `B`. |
 
@@ -121,5 +130,5 @@ assert masked_mse(x_recon, x, mask, reduction="mean").item() >= 0
 
 ## Version
 
-* v0.2.1 documents Trainer-driven masked/full-region selection; the loss function signatures are unchanged.
-* Introduced in `chemomae.models.losses` — initial public draft.
+This page describes the v0.2.3 loss API, including explicit masked and
+full-spectrum selection through Trainer.

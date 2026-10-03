@@ -2,7 +2,10 @@
 
 > Module: `chemomae.clustering.metric`
 
-This document describes the **cosine-based silhouette score** functions implemented with GPU acceleration for clustering evaluation.
+The **cosine-based silhouette score** describes within-cluster compactness
+relative to separation from other clusters in a given feature space. These
+functions evaluate that diagnostic on CPU or CUDA using cluster sums rather
+than a full pairwise distance matrix.
 
 ---
 
@@ -147,11 +150,27 @@ s = silhouette_samples_cosine_gpu(X, labels, device="cuda", chunk=5_000_000)
 
 ---
 
-## When to Use in ChemoMAE
+## Interpretation in ChemoMAE
 
-* **Cluster validation:** Evaluate compactness and separation after `CosineKMeans` or any cosine-based clustering in latent embeddings.
-* **Model selection:** Compare silhouette scores across different cluster counts.
-* **Unsupervised evaluation:** Quantify structure quality in latent hyperspherical spaces.
+ChemoMAE learns a spectral representation that can be quantized at a chosen
+granularity $K$. This use of clustering does not require clearly separated
+populations or maximization of silhouette. Use cosine silhouette as a diagnostic
+of separation within each representation. Different encoders or preprocessing
+choices produce different distance structures, so a larger score alone does not
+establish a better representation of chemical-state differences.
+
+Spatial coherence is a separate property of the resulting label map, evaluated
+by [Local Label Agreement](spatial.md). Inspect both diagnostics with cluster
+occupancy and the map when interpreting a partition. Neither metric measures
+agreement with chemical ground truth.
+
+The sample function returns one coefficient per supplied row. Its distance
+averages use all supplied members of each cluster. For specimen-level analysis,
+retain the row-to-specimen mapping and average the returned coefficients within
+each specimen before any equal-weight specimen aggregation. The scalar score
+function instead averages all rows, giving specimens with more rows more weight.
+Equal-weight final aggregation does not remove that row-count influence from
+the distances used to compute the coefficients.
 
 ---
 

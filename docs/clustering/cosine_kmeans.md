@@ -2,7 +2,26 @@
 
 > Module: `chemomae.clustering.cosine_kmeans`
 
-This document describes **CosineKMeans**, an implementation of **hyperspherical k-means** using cosine similarity, and the helper function **`elbow_ckmeans`** for model selection.
+**CosineKMeans** implements spherical k-means: it partitions feature directions
+using cosine similarity and normalizes each nonzero centroid after updating it.
+Ordinary Euclidean k-means uses arithmetic-mean centroids whose lengths can differ
+even when the input rows have unit norm. Normalizing the centroids keeps the
+assignment rule based on direction.
+
+In the ChemoMAE workflow, the encoder first learns a low-dimensional spectral
+representation. With the learned model fixed, extract features without spectral
+augmentation and with all patches visible, then fit the clustering model. The
+unit-norm latent representation concentrates information in direction, matching
+the use of cosine similarity for SNV-transformed spectra. It has no zero-mean
+constraint, and the encoder need not preserve input cosine similarities.
+
+Clustering quantizes this representation at an observation granularity $K$ so
+that the spatial distributions of spectral differences can be examined. Cluster
+IDs are assignment identifiers; they do not encode known chemical states or an
+ordered degree of degradation. Spatial coordinates can be used to place labels
+back into an image after prediction; `CosineKMeans` does not use coordinates or
+neighbor relations in fitting. The optional **`elbow_ckmeans`** helper explores
+the objective curve over several values of $K$.
 
 ---
 
@@ -11,7 +30,7 @@ This document describes **CosineKMeans**, an implementation of **hyperspherical 
 * **Objective** — minimize mean cosine dissimilarity:
 
   $$
-  J = \mathrm{mean}\,(1 - \cos(x, c))
+  J = \mathrm{mean}(1 - \cos(x, c))
   $$
 
 * **E-step:** Assign each sample to the centroid with the highest cosine similarity.
@@ -48,7 +67,7 @@ ckm = CosineKMeans(
 | ------------------ | ------- | ------------- | ------------------------------------------------------------ |
 | `n_components`     | `int`   | —             | Number of clusters  $K$.                                   |
 | `tol`              | `float` | `1e-4`        | Convergence tolerance on inertia.                            |
-| `max_iter`         | `int`   | `500`         | Maximum number of EM iterations.                             |
+| `max_iter`         | `int`   | `500`         | Maximum number of centroid updates.                          |
 | `device`           | `str` or `torch.device` | `"cuda"` | Device for computation.                           |
 | `random_state`     | `int` or `None`         | `42`   | Initialization stream seed.                     |
 
@@ -115,12 +134,19 @@ labels, dist = ckm.predict(X, return_dist=True)
 
 ---
 
-## Model Selection — `elbow_ckmeans`
+## Exploring Cluster Count — `elbow_ckmeans`
+
+The helper fits a separate model for each tested $K$ and returns a curvature-based
+elbow of the mean cosine-inertia curve. The API name `optimal_k` denotes that
+heuristic candidate. It does not estimate the true number of chemical states.
+For comparisons at a prescribed observation granularity, fit `CosineKMeans`
+directly with the same `n_components` across conditions. A sweep can then describe
+how the partition depends on that granularity.
 
 ```python
 from chemomae.clustering.cosine_kmeans import elbow_ckmeans
 
-# Automatically detects the optimal K by curvature
+# Find a heuristic elbow candidate from the inertia curve
 k_list, inertias, optimal_k, elbow_idx, kappa = elbow_ckmeans(CosineKMeans, X, k_max=30, chunk=1_000_000)
 ```
 
@@ -142,8 +168,8 @@ k_list, inertias, optimal_k, elbow_idx, kappa = elbow_ckmeans(CosineKMeans, X, k
 | ----------- | ------------- | ------------------------------------------ |
 | `k_list`    | `list[int]`   | Values of K tested.                        |
 | `inertias`  | `list[float]` | Corresponding mean inertia values.         |
-| `optimal_k` | `int`         | Selected cluster count (curvature method). |
-| `elbow_idx` | `int`         | Index of the optimal K in `k_list`.        |
+| `optimal_k` | `int`         | Heuristic cluster-count candidate at the curvature-based elbow. |
+| `elbow_idx` | `int`         | Index of that candidate in `k_list`.        |
 | `kappa`     | `float`       | Curvature score at the elbow.              |
 
 ---
@@ -177,7 +203,7 @@ assert torch.allclose(ckm.centroids, ckm2.centroids)
 
 ## Version
 
-### Product release in development
+### v0.2.3
 
 `inertia_` is recomputed against the exact final prediction buffer after the last
 centroid update. Stopping still uses the existing objective-tolerance test; the

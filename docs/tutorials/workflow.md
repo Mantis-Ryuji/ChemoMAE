@@ -8,17 +8,26 @@ Read the code blocks in order in one Python session.
 The chosen seeds, model size, augmentation strengths, two epochs, and K=3 are
 illustrative API settings. They do not define a validated experimental recipe.
 
+The workflow follows the research method's purpose: learn a spectral
+representation through reconstruction, cluster the fixed representation at a
+chosen observation granularity, and inspect its spatial distribution. Cluster
+IDs support exploration when chemical-state categories are not known in advance;
+they do not supply chemical labels. The synthetic example demonstrates API use
+without reproducing the paper's data, architecture, or experimental protocol.
+
 ## 1. Install the matching version
 
-These APIs target v0.2.3. In a development checkout, install from its root:
+Install the version used by this tutorial:
 
 ```bash
-pip install -e .
+python -m pip install "chemomae==0.2.3"
 ```
 
-After v0.2.3 is published, install that version with `pip install chemomae==0.2.3`.
-Use an appropriate CPU or CUDA PyTorch installation for your environment. This
-tutorial explicitly uses CPU and disables AMP/TF32.
+For an editable installation, check out the `v0.2.3` Git tag and run
+`python -m pip install -e .` from the repository root. See the
+[installation guide](../../README.md#quick-start) for PyTorch build selection and
+the NumPy constraint when using PyTorch 2.1. This tutorial explicitly uses CPU
+and disables AMP/TF32.
 
 ```python
 import json
@@ -108,6 +117,12 @@ per patch. Four patches are hidden during ordinary training. Attention heads
 must divide `d_model`. The library validates these settings before construction.
 It does not change the channel count of your data to match a model default.
 
+Visible patch tokens and their original wavelength positions enter the encoder
+with a CLS token. The decoder predicts every channel from the projected CLS
+bottleneck, while `loss_region="masked"` selects only hidden channels for the
+loss. This example uses the configurable two-layer MLP decoder; the paper's
+single affine decoder is selected with `decoder_num_layers=1`.
+
 ```python
 model_config = {
     "seq_len": length, "n_patches": 8, "n_mask": 4,
@@ -144,9 +159,12 @@ when changing weight decay or the learning-rate recipe. The scheduler and EMA
 advance only after successful optimizer updates; AMP overflow skips are counted
 separately. See [optimizer/scheduler details](../training/optim.md).
 
-The default augmenter receives clean targets from Trainer and perturbs only the
-inputs. Here its randomness uses standard Torch streams, which checkpoints
-capture. If supplying an independent `torch.Generator`, persist it through the
+Trainer gives the augmenter the complete input before masking and keeps the
+pre-augmentation input as the target. This is masked denoising: predict hidden
+channels of that target from the perturbed visible channels. The target retains
+any measurement variation present in the original input. Here the augmenter's
+randomness uses standard Torch streams, which checkpoints capture. If supplying
+an independent `torch.Generator`, persist it through the
 [public checkpoint hooks](../training/trainer.md#custom-ordering-masks-and-caller-state).
 
 ## 4. Train and resume at a completed epoch
@@ -202,6 +220,10 @@ Use an all-visible mask and `loss_region="all"` for deterministic full-spectrum
 MSE. No augmenter is supplied to this evaluation. Validation/test spectra do not
 fit the model or the cluster centers in this example.
 
+This full-spectrum reconstruction check differs from the masked training loss.
+It is a reconstruction diagnostic, not a measure of spatial coherence or
+chemical-state classification accuracy.
+
 ```python
 tester = Tester(
     inference_model,
@@ -239,6 +261,10 @@ Representations are `cls`, `raw_latent`, `normalized_latent`, and `latent`
 (which follows the model's normalization setting). Extraction makes all patches
 visible, uses eval mode, and restores original submodule modes. Zero projected
 vectors remain zero; normalization does not invent a direction for them.
+
+All-visible, unperturbed extraction is the representation used for downstream
+analysis. Its normalization allows cosine-based comparison without constraining
+the latent to have zero mean or preserving input-space similarities.
 
 For larger inputs, consume one output batch at a time:
 
@@ -279,8 +305,12 @@ if 2 <= used_classes < len(test_labels):
 print("Cosine silhouette:", silhouette, "used classes:", used_classes)
 ```
 
-Cluster IDs are local numeric assignments. Choose K without tuning on final test
-scores. A one-class prediction has undefined silhouette; preserve that fact.
+Cluster IDs are local numeric assignments, and K controls the granularity at
+which spectral differences are observed. It is not an inferred number of true
+chemical states. Choose K without tuning on final test scores. Cosine silhouette
+describes separation within this representation; clearly separated populations
+are not required for exploratory quantization. A one-class prediction has
+undefined silhouette; preserve that fact.
 The elbow helper is a heuristic and validates finite, ordered curves, including
 nonuniform K spacing. [vMF mixtures](../clustering/vmf_mixture.md) provide an
 optional probabilistic alternative with their own fit/selection costs.
@@ -323,7 +353,7 @@ print("Occupancy:", lla.occupancy)
 
 The validity mask, rather than label zero, defines excluded pixels. LLA counts
 valid directed neighbor pairs, excludes the center and image/mask boundaries,
-and applies the finite-sample chance correction in Thesis equation (11).
+and applies the [finite-sample chance correction](../clustering/spatial.md).
 Neighborhood values 3/5/9 are widths, not radii. Negative corrected scores are
 retained. Undefined scores are NaN with explicit reasons; do not replace them
 with zero. High spatial agreement does not establish chemical correctness.

@@ -2,9 +2,15 @@
 
 > Module: chemomae.training.tester
 
-Tester evaluates clean reconstruction targets, optionally from perturbed inputs.
-It supports both masked and full-spectrum loss. It performs no training or
-checkpoint selection.
+Tester evaluates reconstruction against the input from before any added
+augmentation, optionally using perturbed inputs. It supports both masked and
+full-spectrum loss and performs no training or checkpoint selection.
+
+Reconstruction error describes the chosen prediction task. For spatial
+exploration, assess the subsequent clustering separately: [LLA](../clustering/spatial.md)
+describes local spatial coherence, while spectral inspection and appropriate
+local measurements inform chemical interpretation. A lower reconstruction error
+does not by itself establish a chemically meaningful partition.
 
 ## Basic use
 
@@ -92,7 +98,7 @@ the encoder/decoder directly and consumes no model masking RNG.
 
 An explicitly supplied SpectraAugmenter is temporarily active in training mode.
 The model itself runs in evaluation mode. Inputs are augmented, and targets remain
-clean:
+the spectra supplied by the loader before that added perturbation:
 
 ```python
 from chemomae.training import SpectraAugmenter, SpectraAugmenterConfig

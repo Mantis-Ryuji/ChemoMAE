@@ -2,7 +2,10 @@
 
 > Module: `chemomae.preprocessing.downsampling`
 
-This document describes **`cosine_fps_downsample`**, a diversity-first subsampling method that selects spectra maximally spread in *direction* under cosine geometry.
+This document describes **`cosine_fps_downsample`**, a greedy subsampling method
+that favors diversity of spectral directions under cosine geometry. It is an
+optional way to reduce a set of spectra before a downstream analysis; it is
+separate from ChemoMAE representation learning and spatial evaluation.
 The implementation uses an explicit CPU/CUDA computation device and returns data
 in the original scale. With `device=None`, Torch input uses its current device and
 NumPy input uses CPU. CUDA is never chosen merely because it is available.
@@ -18,10 +21,11 @@ NumPy input uses CPU. CUDA is never chosen merely because it is available.
 Consider a collection of spectra:
 
 $$
-X = \{\mathbf{x}_1, \dots, \mathbf{x}_N\} \subset \mathbb{R}^L
+X = \lbrace\mathbf{x}_1, \dots, \mathbf{x}_N\rbrace \subset \mathbb{R}^L
 $$
 
-Each spectrum is **internally** projected onto the unit hypersphere via L2 normalization (for selection only):
+Each nonzero spectrum is **internally** approximately normalized to unit length
+(for selection only):
 
 $$
 \tilde{\mathbf{x}}_i = \frac{\mathbf{x}_i}{\lVert \mathbf{x}_i \rVert_2 + \varepsilon},
@@ -48,13 +52,13 @@ Interpretation:
 The objective of FPS is to select a diverse subset of size
 
 $$
-k = \min\!\bigl(N,\ \max(1,\ \mathrm{round}(\rho N))\bigr)
+k = \min\bigl(N,\ \max(1,\ \mathrm{round}(\rho N))\bigr)
 $$
 
 Let the selected indices be
 
 $$
-\mathcal{S}_k = \{s_1, \dots, s_k\}
+\mathcal{S}_k = \lbrace s_1, \dots, s_k\rbrace
 $$
 
 The greedy selection proceeds as follows:
@@ -72,7 +76,18 @@ Intuitively:
 * Record the **minimum** distance (its nearest neighbor in the subset).
 * Add the candidate whose nearest distance is **largest overall**.
 
-Thus, FPS iteratively adds the sample **farthest from all selected points**, ensuring the chosen subset covers the hypersphere as uniformly as possible.
+Thus, FPS iteratively adds the sample whose distance to its **nearest selected
+point** is largest. This encourages coverage of the supplied spectral
+directions. It is a greedy procedure, not a guarantee of globally optimal or
+uniform coverage.
+
+For SNV-transformed nonconstant spectra, mean removal and approximately common
+norm make direction a natural comparison of spectral shape. FPS does not apply
+SNV itself: choose the input representation before sampling, and keep the
+returned indices associated with specimen and pixel metadata. Its directional
+coverage is distinct from spatial coverage or an estimate of how frequently
+each spectral pattern occurs; specimen splitting and sampling weights remain
+decisions for the consuming workflow.
 
 ---
 
@@ -209,17 +224,21 @@ X_sub = cosine_fps_downsample(X_snv, ratio=0.1)
 
 ## When to Use `cosine_fps_downsample` in ChemoMAE Pipelines
 
-* **Goal = maximize diversity, not density**
-  FPS excels in *directional diversity*. It avoids redundancy in datasets like NIR-HSI, where many spectra are nearly identical. This makes it ideal for **efficient self-supervised training**.
-  However, it is *not* suited for preserving sample *density* distributions.
+* **Directional coverage:**
+  FPS can reduce redundancy when many spectra have similar directions. It may
+  provide a compact set for training or visualization, but it changes the
+  frequency of spectral patterns and does not preserve their density.
 
 * **Typical placement in preprocessing:**
-  Apply **after SNV or L2 normalization**, i.e., once spectra are mapped onto the hypersphere.
-  FPS then produces a compact, diversity-balanced subset for training or visualization.
+  If the analysis uses SNV-transformed spectral shape, apply SNV before FPS.
+  The helper performs its own L2 normalization for selection; an additional
+  L2 normalization of the supplied rows is not required.
 
 * **Granularity:**
-  Recommended at the **per-sample or per-tile level** (e.g., within each image or batch).
-  This ensures consistent angular coverage and prevents overrepresentation of similar spectra.
+  Choose whether to sample within each specimen, image, or tile, or from a
+  pooled training set according to the analysis goal. This grouping and the
+  selected counts determine how specimens contribute to training. FPS does
+  not make the split or balance specimens automatically.
 
 ---
 

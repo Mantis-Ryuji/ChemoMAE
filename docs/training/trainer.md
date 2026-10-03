@@ -7,6 +7,14 @@ gradient clipping, scheduler stepping, history, epoch checkpoints, and final
 raw/EMA weight exports. Customization uses public methods instead of copying the
 backward/optimizer loop or overriding private checkpoint helpers.
 
+For ChemoMAE's masked denoising task, an optional spectral augmenter transforms
+the complete input before masking, and the loss compares hidden-channel
+predictions with the input from before that added perturbation. Reconstruction
+learning is intended to gather relationships among spectral bands into the
+shared bottleneck; spatial coordinates and cluster assignments are not training
+targets. The model, augmenter, and loss functions can also be used directly in a
+caller-owned PyTorch loop.
+
 It has no validation loop, early stopping, or validation-based model selection.
 `fit(epochs=N)` means the **final absolute epoch**, including completed epochs
 when resuming. It is not a budget of successful optimizer updates.
@@ -89,9 +97,11 @@ spectra of shape `(B, L)`, with matching input/target shapes and finite stored v
 has the same shape and bool dtype: **true means visible**.
 
 The ordinary loader path takes a Tensor or the first Tensor in a tuple/list.
-Its clean target stays unchanged; the optional augmenter creates only the model
-input. A `PreparedBatch` bypasses augmentation because its input is already
-prepared. The loop moves all returned fields to `trainer.device` together,
+Its target stays unchanged; the optional augmenter creates only the model
+input. Here a clean target means the input before added augmentation, including
+any measurement variation still present after preprocessing. A `PreparedBatch`
+bypasses augmentation because its input is already prepared. The loop moves all
+returned fields to `trainer.device` together,
 without changing dtype or detaching caller-provided tensors.
 
 The default model returns `(reconstruction, latent, actual_visible_mask)`.
@@ -101,7 +111,10 @@ prepared mask is passed through `model(..., visible_mask=...)`.
 
 For `loss_region="masked"`, at least one nonvisible element is required.
 For full-spectrum AE reconstruction, use `n_mask=0` and `loss_region="all"`
-explicitly. Empty loaders and nonfinite/scalar-invalid loss outputs fail.
+explicitly; supplying an augmenter gives the corresponding denoising AE task.
+Switching from this task to masked reconstruction changes both the visible
+input and the loss region, so a comparison cannot attribute its effects to
+masking alone. Empty loaders and nonfinite/scalar-invalid loss outputs fail.
 Prepared inputs, targets, and standard-loss reconstructions must be finite over
 the entire spectrum, including positions outside the loss mask: nonfinite values
 there can still contaminate gradients. CUDA validity checks may synchronize.

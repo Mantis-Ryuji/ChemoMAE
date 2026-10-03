@@ -6,6 +6,11 @@ Module: `chemomae.preprocessing.snv`.
 stay on the input device and preserve autograd; they do not detach the tensor,
 convert it to NumPy, or move spectral data to CPU.
 
+In the ChemoMAE workflow, SNV removes each spectrum's mean and scale so that
+normalized spectral shape can be compared by direction. This preprocessing is
+a choice for the measured spectra and the analysis goal; it does not identify
+chemical states or remove every source of measurement variation.
+
 ## Mathematical definition
 
 For a spectrum $x_i$ with $L$ channels, define
@@ -47,6 +52,18 @@ The norm is therefore close to $\sqrt{L-1}$ only when $s_i$ is much larger than
 $\varepsilon$. SNV does not produce unit-length vectors, and centering can change
 angles between spectra. Apply a separate L2 normalization when a downstream
 method requires unit vectors; constant spectra still have zero norm.
+
+In the idealized nonconstant case without epsilon, mean removal places spectra
+in the zero-mean hyperplane, and sample-standard-deviation scaling places them
+on a common-radius sphere within that hyperplane. The implementation above
+retains this interpretation approximately, with the norm correction explicitly
+given by epsilon. Its degenerate zero outputs are outside that nonzero sphere.
+
+This geometry motivates the mean/norm-preserving
+[spectral augmentations](../training/augmenter.md) and the use of cosine
+similarity for spectral shape. ChemoMAE separately normalizes its latent
+representation to unit length; the latent vector has no zero-mean constraint,
+and the encoder does not preserve input cosine similarities by construction.
 
 ## Input and precision contract
 

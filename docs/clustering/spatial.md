@@ -2,10 +2,15 @@
 
 > Module: `chemomae.clustering.spatial`
 
-`local_label_agreement` evaluates a spatial label map using the occupancy-corrected
-LLA in Thesis equation (11). It uses binary class-map convolutions on CPU or CUDA.
-The labels need not be consecutive, and label zero is a valid class. The evaluated
-region is always supplied explicitly as `valid_mask`.
+`local_label_agreement` evaluates the local spatial coherence of a label map
+using the occupancy-corrected LLA defined below. It measures agreement
+between neighboring labels beyond the chance agreement implied by class counts.
+This gives a spatial diagnostic of a partition derived from spectra, complementing
+the within-representation separation described by [cosine silhouette](metric.md).
+
+The function uses binary class-map convolutions on CPU or CUDA. The labels need
+not be consecutive, and label zero is a valid class. The evaluated region is
+always supplied explicitly as `valid_mask`.
 
 ## Example
 
@@ -120,9 +125,29 @@ Raw agreement is NaN only when no valid pair exists. A single-class map with
 neighbors has raw agreement 1 and undefined corrected LLA. An empty mask is an
 input error. Defined negative LLA is retained without clipping.
 
-LLA describes spatial coherence conditioned on occupancy. It does not establish
-chemical correctness, semantic label accuracy, or the best clustering setting.
-Specify window widths and undefined-value aggregation in the experiment protocol.
+Under uniformly random label placement over the valid pixels with fixed class
+counts, expected LLA is zero. A positive value indicates more local agreement
+than expected by chance; a negative value indicates less. An increase therefore
+describes greater local spatial coherence at the specified neighborhood width.
+Report each width separately with used class counts, occupancy, and undefined
+values.
+
+LLA does not identify the chemical meaning of a cluster. Spatially continuous
+measurement variation can also produce a coherent map, and excessive merging
+of regions can obscure state differences. Interpret the map with spectral
+summaries, specimen information, and available local chemical measurements.
+Neither LLA nor local measurements alone establish the correctness of every
+mapped pixel or an optimal clustering setting.
+
+To evaluate coherence on unseen specimens, fit the representation and cluster
+centers using the training specimens and keep both fixed for held-out prediction.
+Preserve the original pixel coordinates and evaluate each specimen map separately.
+When spatial coherence is intended as evidence independent of fitting, do not
+use those neighborhoods for training, clustering, or label smoothing. Maps from
+fitting that includes the evaluated specimens instead describe their spatial
+organization; they provide a different assessment from held-out prediction.
+Specify this distinction, window widths, and undefined-value aggregation in the
+experiment protocol. The function performs no splitting or protocol selection.
 
 ## Precision and memory
 

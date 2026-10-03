@@ -2,7 +2,11 @@
 
 > Module: `chemomae.models.chemo_mae`
 
-This document describes **ChemoMAE**, a Transformer-based masked autoencoder specialized for **one-dimensional spectral data**.
+**ChemoMAE** learns low-dimensional representations of one-dimensional spectra
+for exploring spectral differences and their spatial distributions. It uses a
+reconstruction task when chemical-state categories and suitable invariances are
+not known in advance. Clustering is applied to the learned representation after
+training; it is not part of the model's training objective.
 
 Use `ChemoMAE.get_config()`, `save()`, and `load()` for complete, versioned
 configuration-and-weights persistence. See [model artifacts](persistence.md)
@@ -17,11 +21,24 @@ between inference artifacts and training checkpoints.
 
 ## Overview
 
-**ChemoMAE** adapts the **Masked Autoencoder (MAE)** framework (He et al., 2022) to *1D spectral sequences*.
-Each spectrum of length `L` is divided into **`n_patches` contiguous patches**, and a subset of them is randomly masked at training time.
+ChemoMAE adapts the Masked Autoencoder (MAE) framework to spectral sequences.
+Each spectrum of length `L` is divided into `n_patches` contiguous patches. In
+stochastic masked training, `n_mask` patches are hidden independently for each
+spectrum on each forward call.
+Visible patches retain their original wavelength-position embeddings and enter
+the Transformer together with a CLS token; hidden patch tokens do not enter it.
 
-Only **visible patches** are passed to the Transformer encoder, while the decoder reconstructs the **entire sequence** from the latent embedding.
-The Trainer computes reconstruction loss on masked regions by default, or on the full spectrum when configured with `loss_region="all"`. The model's forward return value is unchanged.
+The projected CLS output is the shared bottleneck from which the decoder
+reconstructs the entire spectrum. In masked training, the loss selects only the
+hidden channels. With a spectral augmenter, this becomes masked denoising:
+perturb the complete input before masking, then predict hidden channels of the
+input from before the added perturbation. The target is the observed input,
+not a measured noise-free spectrum. See [spectral augmentation](../training/augmenter.md).
+
+The model returns reconstruction, latent representation, and the actual visible
+mask; it does not calculate a loss. [Trainer](../training/trainer.md) selects
+hidden channels by default, or all channels with `loss_region="all"`. The model,
+augmenter, and [loss functions](losses.md) can also be composed in a custom loop.
 
 ---
 
@@ -36,7 +53,9 @@ The sequence is reshaped into:
 ```
 
 Then `n_mask` patches are randomly hidden per sample.
-This creates a reconstruction task at the patch level, encouraging the model to use broader spectral context rather than pointwise cues.
+The task asks the model to predict omitted bands from relationships among
+visible bands. Whether those relationships yield useful representations for a
+particular material must be assessed on that material's data.
 
 ### Encoder
 
@@ -49,8 +68,12 @@ This creates a reconstruction task at the patch level, encouraging the model to 
 
 ### Decoder
 
-A lightweight **MLP decoder** that maps the latent vector directly to the full-length spectrum `(B, L)`.
-The decoder intentionally avoids any patch reconstruction structure to place the learning burden on the encoder.
+The decoder maps one latent vector directly to the full-length spectrum `(B, L)`.
+It uses no input skip connections, per-patch encoder outputs, or decoder mask
+tokens, so the reconstruction must pass through the shared bottleneck.
+`decoder_num_layers=1` gives the single affine decoder used in the paper;
+larger values give an MLP, with two layers as the library default. The paper's
+architecture and training settings must therefore be supplied explicitly.
 
 ---
 
@@ -109,7 +132,7 @@ make_patch_mask(batch_size, seq_len, n_patches, n_mask)
 **Output**
 `(B, L)` full-length reconstruction
 
-The decoder is intentionally simple to emphasize encoder learning.
+All channels are returned regardless of which channels enter the loss.
 
 ---
 
@@ -159,7 +182,11 @@ mae = ChemoMAE(
 ### All-visible representations
 
 `encode` uses every patch and bypasses both the decoder and random masking.
-No internal hooks are required. The representation is explicit:
+For spatial analysis, fix the learned weights and extract unperturbed spectra
+with every patch visible before fitting or applying a clusterer. This makes the
+representation used for analysis distinct from the partially visible input used
+for reconstruction training. No internal hooks are required. The representation
+is explicit:
 
 | Representation | Shape | Meaning |
 | --- | --- | --- |
@@ -212,8 +239,11 @@ For full-spectrum autoencoder training, use `n_mask=0` and `TrainerConfig(loss_r
 ## Downstream Applications
 
 * **Clustering:**
-  - If `latent_normalize=True`: CosineKMeans, vMF mixture → latent is hyperspherical
-  - If `latent_normalize=False`: normalize on the user side if your downstream assumes cosine geometry
+  CosineKMeans and vMF mixtures partition directions in the learned representation.
+  Choose the cluster count as an observation granularity for spectral differences;
+  cluster IDs are not known chemical-state labels or an ordering of degradation.
+  If `latent_normalize=False`, normalize explicitly when the downstream method
+  requires unit-length input.
 
 * **Visualization:**
   UMAP / t-SNE using `metric="cosine"` (recommended when using normalized latent)
@@ -232,8 +262,12 @@ $$
 \lVert z \rVert_2 = 1, \qquad \cos(z_i,z_j) = z_i^\top z_j.
 $$
 
-This is ideal for cosine geometry and directional clustering.
-If disabled, the latent is unconstrained in norm.
+For SNV-transformed nonconstant spectra, centering and scaling place information
+about spectral shape in the input direction. A normalized latent likewise
+concentrates information in direction, allowing cosine similarity to be used as
+a common comparison measure in input and latent spaces. The latent has no
+zero-mean constraint, and normalization does not preserve the numerical cosine
+similarities across the encoder. If disabled, the latent is unconstrained in norm.
 
 ### Clean architecture
 
@@ -288,5 +322,5 @@ assert torch.isfinite(loss)
 
 ## Version
 
-* v0.2.1 adds Trainer support for explicit masked or full-spectrum loss; the model API is unchanged.
-* v0.1.6
+This page describes the v0.2.3 API. Paper configurations and library defaults are
+distinct; persist the actual model configuration with its selected weights.

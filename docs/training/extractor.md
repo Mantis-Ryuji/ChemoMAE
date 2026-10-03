@@ -5,6 +5,12 @@ batch. Use `iter_transform` to consume features without collecting the dataset,
 or `transform` to return one array. `extract` and calling the extractor directly
 are aliases for `transform`.
 
+For exploratory mapping, the analysis representation is obtained from fixed
+learned weights, unperturbed input spectra, and every patch visible. Cluster
+these features after extraction, then return their labels to the original pixel
+coordinates. The coordinates provide spatial context for evaluation and
+interpretation; they are not inputs to this spectral encoder.
+
 ```python
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -65,6 +71,12 @@ The implementation uses PyTorch's `F.normalize` contract, including its default
 `eps`. All patches are visible; extraction does not draw random masks or run the
 decoder. `ChemoMAE.encode` itself leaves gradients and modes under caller control;
 `Extractor` supplies the inference scopes.
+
+The normalized latent concentrates information in direction for cosine-based
+comparison, following the directional description of SNV-transformed spectra.
+It is not constrained to have zero mean, and its cosine similarities need not
+equal those in input space. Choose a representation explicitly and keep it
+fixed when comparing cluster counts or applying saved centers to new spectra.
 
 ## Stream features and keep memory bounded
 

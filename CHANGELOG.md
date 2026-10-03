@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.3 — unreleased
+## 0.2.3
 
 This release improves the public spectral-learning workflow and adds spatial
 Local Label Agreement.
@@ -40,7 +40,7 @@ Local Label Agreement.
 
 ### Migration and limits
 
-v0.2.2 API, default, and artifact compatibility is not a release constraint.
+v0.2.3 does not guarantee API, default, or artifact compatibility with v0.2.2.
 Use the documented v0.2.3 signatures and save new model/training artifacts;
 old raw weights do not supply missing constructor configuration automatically.
 Trainer remains specific to reconstruction, with completed-epoch resume.

@@ -2,20 +2,29 @@
 
 > Module: `chemomae.clustering.vmf_mixture`
 > Purpose: Probabilistic clustering of L2-normalized features on $S^{d-1}$ via an EM algorithm.
-> API reference for ChemoMAE v0.2.3; the v0.2.2 verification history is retained below.
+> API reference for ChemoMAE v0.2.3.
 
-This document describes **VMFMixture**, an implementation of the **von Mises–Fisher mixture model** for clustering unit-norm features on the hypersphere.
-It provides EM-based parameter estimation, model selection through `elbow_vmf`, and visualization utilities via `plot_elbow_vmf`.
+**VMFMixture** fits a **von Mises–Fisher mixture model** to feature directions on
+the unit hypersphere. Unlike hard nearest-direction assignments, it estimates
+component weights and concentrations and returns soft responsibilities under
+the fitted mixture. Responsibilities express membership under that model;
+they are not probabilities of known chemical states.
+
+The accompanying ChemoMAE study uses [CosineKMeans](cosine_kmeans.md) for its main
+analysis. `VMFMixture` is an additional library option for directional analyses
+that call for a probabilistic mixture. It provides EM-based parameter estimation,
+objective-curve exploration through `elbow_vmf`, and visualization through
+`plot_elbow_vmf`.
 
 ---
 
 ## Overview
 
-* **Likelihood (unit vectors, $|x_i|=1$)**
+* **Likelihood (unit vectors, $\lVert x_i\rVert_2=1$)**
 
 $$
-\max_{\pi_k,\mu_k,\kappa_k}\ \sum_{i=1}^N \log\!\Big(\sum_{k=1}^K 
-\pi_k\,C_d(\kappa_k)\,e^{\kappa_k\,\mu_k^\top x_i}\Big),\quad
+\max_{\pi_k,\mu_k,\kappa_k}\ \sum_{i=1}^N \log\Big(\sum_{k=1}^K
+\pi_k\thinspace C_d(\kappa_k)\thinspace e^{\kappa_k\thinspace\mu_k^\top x_i}\Big),\quad
 C_d(\kappa)=\frac{\kappa^\nu}{(2\pi)^{\nu+1}I_\nu(\kappa)},\ 
 \nu=\tfrac{d}{2}-1
 $$
@@ -25,7 +34,7 @@ where $\mu_k$ are **unit directions**, $\kappa_k>0$ are **concentrations**, and 
 * **E-step (responsibilities)**
 
 $$
-\gamma_{ik}\propto \pi_k\,C_d(\kappa_k)\,e^{\kappa_k\,\mu_k^\top x_i}, 
+\gamma_{ik}\propto \pi_k\thinspace C_d(\kappa_k)\thinspace e^{\kappa_k\thinspace\mu_k^\top x_i},
 \qquad \sum_k \gamma_{ik}=1
 $$
 
@@ -35,13 +44,13 @@ Let $N_k=\sum_i\gamma_{ik}$. For a nonzero resultant:
 
 $$
 \tilde\mu_k=\frac{\sum_i\gamma_{ik}x_i}{N_k}, \quad
-\mu_k = \frac{\tilde\mu_k}{\|\tilde\mu_k\|_2}
+\mu_k = \frac{\tilde\mu_k}{\lVert\tilde\mu_k\rVert_2}
 $$
 
-The resultant length $\bar R_k=\|\sum_i\gamma_{ik}x_i\|/N_k$ gives a **closed-form approximation** for $\kappa_k$:
+The resultant length $\bar R_k=\lVert\sum_i\gamma_{ik}x_i\rVert_2/N_k$ gives a **closed-form approximation** for $\kappa_k$:
 
 $$
-\kappa_k \approx \frac{\bar R_k\,(d-\bar R_k^2)}{1-\bar R_k^2},\qquad
+\kappa_k \approx \frac{\bar R_k\thinspace(d-\bar R_k^2)}{1-\bar R_k^2},\qquad
 \pi_k = N_k / N.
 $$
 
@@ -173,6 +182,12 @@ k_list, scores, optimal_k, elbow_idx, kappa = elbow_vmf(
 Calling `fit` does not select K. Fixed-K comparisons should construct a model with
 the prescribed `n_components` directly.
 
+The return name `optimal_k` refers to the curvature-based elbow, not the minimum
+BIC or NLL and not an identified number of chemical states. These criteria
+describe fit under the mixture model; they do not evaluate spatial coherence or
+chemical interpretation. Use the score curve as an exploratory diagnostic when
+deciding how finely to partition a representation.
+
 ---
 
 ### `plot_elbow_vmf`
@@ -201,13 +216,13 @@ resp = vmf.predict_proba(X, chunk=1000000)
 print(vmf.stop_reason_, vmf.converged_, vmf.lower_bound_)
 ```
 
-### Model selection (elbow of the BIC curve)
+### Exploring component count (elbow of the BIC curve)
 
 ```python
 ks, scores, K, idx, curv = elbow_vmf(
     VMFMixture, X, device="cuda", k_max=30, chunk=1000000, criterion="bic"
 )
-print("Optimal K:", K)
+print("Elbow candidate K:", K)
 ```
 
 ### Save & load
@@ -240,8 +255,8 @@ assert torch.allclose(vmf.mus.cpu(), vmf2.mus, atol=1e-6)
 The regression suite uses synthetic CPU data and optional small CUDA checks. It
 does not run research training or evaluate real datasets. Run from the repository
 root with the test environment activated and existing development dependencies
-installed. After changing the package version, refresh the editable installation
-so that the installed metadata also reports v0.2.3:
+installed. Use an editable installation of the `v0.2.3` Git tag so that package
+metadata and source match:
 
 ```powershell
 python -m pip install --no-deps -e .
@@ -268,8 +283,7 @@ The CUDA cases skip when CUDA is unavailable. Test definitions cover:
 | Chunk and persistence | Fixed-parameter sufficient statistics, probabilities and likelihood; parameter/RNG round trips; CPU restoration of CUDA device metadata; legacy cache invalidation; optional actual CUDA round trip. |
 
 These tolerances define regression acceptance at the listed points, not a global
-error guarantee. The execution record below is separate from these acceptance
-criteria. Float32 parameters/statistics and approximate concentration updates
+error guarantee. Float32 parameters/statistics and approximate concentration updates
 remain sources of numerical error.
 
 ```python
@@ -288,52 +302,6 @@ vmf.save("tmp_vmf.pt")
 vmf2 = VMFMixture.load("tmp_vmf.pt")
 assert torch.allclose(vmf.mus, vmf2.mus, atol=1e-6)
 ```
-
-### v0.2.2 verification record (2026-09-07)
-
-The user executed the tests on Windows in `torch_env`, with Python 3.13.2,
-pytest 8.4.2 and the editable ChemoMAE v0.2.2 working tree, and shared the terminal
-output. These results are from that user-run verification.
-
-| Selection / condition | Reported result |
-| --- | --- |
-| CPU selection, original environment | Aborted in `test_elbow_vmf_smoke_cpu`: `OMP: Error #15`, duplicate initialization of `libiomp5md.dll`, during SciPy's Savitzky–Golay coefficient calculation. |
-| `-k "not cuda and not elbow"`, original environment | `72 passed, 4 deselected in 1.65s`. |
-| `-k "not cuda"`, `MKL_THREADING_LAYER=SEQUENTIAL` | `74 passed, 2 deselected in 2.30s`, including the elbow tests. |
-| `-k cuda`, VMF test file only, separate invocation | `2 passed, 72 deselected in 2.25s`. |
-
-The complete VMF/import CPU selection passed under the stated sequential-MKL
-condition. The two CUDA cases subsequently passed in a separate invocation,
-covering k-means++ initialization, short fits and CUDA-to-CPU restoration with
-`chunk=None` and `chunk=7`. Across these runs, all 76 cases in
-`tests/clustering/test_vmf_mixture.py` and `tests/test_import.py` passed. This
-verification covers those two test files and does not establish that the original
-environment's OpenMP conflict is resolved.
-
-The reported CUDA run used:
-
-```powershell
-python -m pytest -q -ra tests/clustering/test_vmf_mixture.py -k cuda
-```
-
-To reproduce the passing CPU run, temporarily select MKL's sequential threading
-layer before starting Python, then restore the prior environment-variable value:
-
-```powershell
-$vmfPreviousMklLayer = $env:MKL_THREADING_LAYER
-try {
-    $env:MKL_THREADING_LAYER = "SEQUENTIAL"
-    python -m pytest -q -ra tests/clustering/test_vmf_mixture.py tests/test_import.py -k "not cuda"
-}
-finally {
-    $env:MKL_THREADING_LAYER = $vmfPreviousMklLayer
-}
-```
-
-This uses the [Intel-supported sequential MKL mode](https://www.intel.com/content/www/us/en/docs/onemkl/developer-guide-windows/2023-0/call-onemkl-functions-from-multi-threaded-apps.html),
-which disables MKL's internal parallelism for this run. The library and tests do
-not set this environment variable themselves. `KMP_DUPLICATE_LIB_OK=TRUE` was not
-used; the OpenMP diagnostic warns that it can allow crashes or incorrect results.
 
 ---
 

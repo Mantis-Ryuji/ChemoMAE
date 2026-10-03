@@ -9,9 +9,18 @@ The implementation provides two lightweight training-time augmentations:
 - **Fractional shift**
 - **Tangent Gaussian noise**
 
-Both transformations are designed for spectra that have already been standardized by SNV. After each augmentation, the spectrum can be re-centered and re-normalized so that the augmented sample remains compatible with the SNV-induced geometry.
+Both transformations are designed for spectra that have already been
+standardized by SNV. With re-centering and re-normalization enabled, they
+preserve the input mean and norm instead of reintroducing the offset and scale
+variation removed by preprocessing. They supply controlled changes of
+normalized spectral shape for a reconstruction task.
 
-The intended role of this module is **auxiliary regularization** for masked or full-spectrum reconstruction. It is not designed as a strong multi-view augmentation pipeline for contrastive learning.
+The intended role of this module is **additional input corruption for masked
+denoising**, or for full-spectrum denoising when that loss region is selected.
+The reconstruction target is the spectrum before these additional
+perturbations. The operations are inspired by signal variation and wavelength
+misalignment, but they do not constitute a calibrated measurement-error model
+or guarantee preservation of chemical state.
 
 ---
 
@@ -31,7 +40,8 @@ $$
 
 for some nearly constant radius $r > 0$.
 
-Under exact SNV with population standard deviation, each spectrum lies on the intersection of:
+In the idealized nonconstant case of SNV with sample standard deviation and no
+epsilon, each spectrum lies on the intersection of:
 
 1. the zero-mean hyperplane, and
 2. a fixed-radius hypersphere.
@@ -41,6 +51,14 @@ That is,
 $$
 \mathbf{x}_i \in \mathcal{M}=\left\lbrace\mathbf{x} \in \mathbb{R}^L\quad\middle|\quad\mathbf{1}^{\top}\mathbf{x}=0,\quad\lVert \mathbf{x} \rVert_2=r\right\rbrace.
 $$
+
+This is a sphere within the zero-mean hyperplane. For the idealized SNV
+definition its radius is $r=\sqrt{L-1}$. The library's
+[SNV implementation](../preprocessing/snv.md) adds epsilon to the sample
+standard deviation, so actual norms are approximately common for nonconstant
+spectra. The augmenter restores each input spectrum's own norm rather than
+forcing all rows to this ideal radius. Constant and length-one SNV outputs
+have zero norm and do not satisfy the nonzero-sphere assumption.
 
 A naive Euclidean perturbation,
 
@@ -61,7 +79,11 @@ generally violates this structure because it may change both the sample mean and
 
 The main learning signal in ChemoMAE is reconstruction over the region selected by `TrainerConfig.loss_region`.
 
-In masked mode, the model receives a partially visible spectrum and learns to reconstruct masked wavelength regions. In all-region mode, every output element is compared with the clean spectrum. Augmentation is used only as a secondary regularizer, and the reconstruction target remains the unaugmented input in both modes:
+In masked mode, augmentation is applied to the full input before masking. The
+model uses the transformed visible bands to predict the original masked bands.
+In all-region mode, every output element is compared with the unaugmented
+spectrum. In both modes, the target is the observed input before augmentation,
+not an independently measured noise-free spectrum. The masked task is:
 
 $$
 A(\mathbf{x})_{\Omega_v}\longrightarrow\mathbf{x}_{\Omega_m},
@@ -73,15 +95,20 @@ where:
 * $\Omega_v$ is the visible wavelength region,
 * $\Omega_m$ is the masked wavelength region.
 
-Thus, the module should perturb spectra enough to improve robustness, but not so strongly that it destroys chemically or physically meaningful degradation-related variation.
+The additional denoising task is intended to encourage predictive relationships
+between bands that remain useful under the specified perturbations. Whether
+this also improves the spatial coherence of a downstream clustering is an
+empirical question; stability under these perturbations and spatial coherence
+are different properties.
 
-For this reason, the recommended augmentation set is intentionally compact:
+The module supplies two operations:
 
 $$
 \text{fractional shift} + \text{tangent Gaussian noise}.
 $$
 
-Structured low-frequency augmentations such as tilt or quadratic baseline are intentionally excluded from this version because they may interfere with degradation-related low-frequency spectral changes.
+The choice to preserve mean and norm defines the neighborhood of inputs used
+for training; it is a design choice for this reconstruction task.
 
 ---
 
@@ -126,6 +153,13 @@ noise_angle_deg_range: tuple[float, float]
 Internally, sampled angles are converted to radians.
 
 Angle-based control is appropriate for tangent Gaussian noise because the perturbation direction is random and does not have a natural physical unit like channel displacement.
+
+The associated research protocol used a uniform TGN angle from 0 to 5 degrees
+and a uniform FS displacement from -2 to 2 channels. Each enabled operation
+was applied independently with probability 0.5 per spectrum, with the order
+randomized per batch. These are experiment settings: the library's default
+`noise_angle_deg_range` is `(0.5, 3.0)`. Set the configuration explicitly when
+reproducing a particular protocol.
 
 ---
 
@@ -177,7 +211,10 @@ $$
 \mathbf{v}=\mathbf{d}-\frac{\mathbf{d}^{\top}\mathbf{x}}{\lVert \mathbf{x} \rVert_2^2}\mathbf{x}.
 $$
 
-In this implementation, the random direction is first centered before tangent projection. This makes the perturbation more compatible with the zero-mean SNV hyperplane.
+In this implementation, the random direction is first centered before tangent
+projection. For a zero-mean input, the projected direction is both zero-mean
+and orthogonal to the input, so it belongs to the tangent space of the sphere
+within the zero-mean hyperplane.
 
 ---
 
@@ -199,9 +236,12 @@ This geodesic rotation is used for tangent Gaussian noise, not for fractional sh
 
 ### Idea
 
-Fractional shift models small wavelength-axis misalignment.
+Fractional shift supplies a controlled displacement along the channel axis.
 
-This is useful for spectra because small peak-position or wavelength-grid deviations can occur due to measurement conditions, interpolation, calibration, or instrument-related variability.
+On an equally spaced wavelength grid, channel displacement also describes a
+wavelength displacement. It is inspired by wavelength-position variation;
+the sampled displacement range is a training choice, not an estimate of the
+instrument's error distribution.
 
 Unlike `torch.roll`, fractional shift supports non-integer shifts and uses linear interpolation.
 
@@ -239,14 +279,14 @@ where $\Pi_{\mathcal{M}}$ denotes the optional re-centering and re-normalization
 
 ### Practical Role
 
-Use fractional shift to improve robustness to:
+Fractional shift varies the alignment of spectral features while retaining
+the configured mean/norm geometry after reprojection. A fixed channel shift
+can produce different angular changes for different spectral shapes, so its
+strength is specified in channel units rather than as a spherical angle.
 
-* small wavelength-axis misalignment,
-* peak-position jitter,
-* interpolation differences,
-* mild calibration variability.
-
-For ChemoMAE, this is usually more appropriate than artificial low-frequency tilt because shift does not directly impose a global baseline trend.
+Because this operation precedes masking, interpolation can move information
+across the boundary of a masked band. The training task uses the shifted
+visible bands to reconstruct the original target bands, including this effect.
 
 ---
 
@@ -254,7 +294,10 @@ For ChemoMAE, this is usually more appropriate than artificial low-frequency til
 
 ### Idea
 
-Tangent Gaussian noise introduces small random local perturbations while respecting the spherical geometry.
+Tangent Gaussian noise rotates the input within the sphere in its zero-mean
+hyperplane. The Gaussian distribution supplies the random direction before
+projection; it does not describe an additive Gaussian error on each output
+channel.
 
 Instead of adding Euclidean Gaussian noise directly,
 
@@ -314,13 +357,10 @@ Finally, $\mathbf{x}_{\mathrm{noise}}$ is reprojected to the SNV-compatible geom
 
 ### Practical Role
 
-Use tangent Gaussian noise to improve robustness to:
-
-* small observation noise,
-* weak local fluctuations,
-* minor random spectral variations that should not change the semantic identity of the spectrum.
-
-This augmentation is the spherical analogue of Gaussian noise, but with magnitude controlled by geodesic angle instead of Euclidean variance.
+Tangent Gaussian noise provides random changes of normalized spectral shape
+with magnitude controlled by geodesic angle. For a valid tangent direction,
+this angle is the angular separation from the input before numerical
+reprojection. It preserves mean and norm under the stated assumptions.
 
 ---
 
@@ -593,15 +633,18 @@ Thus, small degree values correspond to very high cosine similarity.
 
 ### Why fractional shift?
 
-Fractional shift is a physically plausible spectral augmentation. It models small wavelength-axis variation without imposing an artificial global baseline trend.
-
-It is especially suitable when spectra are smooth and peak locations may shift slightly due to measurement or interpolation effects.
+Fractional shift introduces wavelength-axis variation without directly adding
+a baseline offset or slope. Linear interpolation and endpoint clamping define
+the actual transformation, so its suitability and strength should be assessed
+for the supplied wavelength grid and spectral features.
 
 ---
 
 ### Why tangent Gaussian noise?
 
-Tangent Gaussian noise improves robustness to small random variations while preserving the main geometry of SNV-normalized spectra.
+Tangent Gaussian noise introduces random variation within the geometry of
+SNV-transformed spectra when the input is zero-mean and the direction is
+nondegenerate.
 
 Because it operates through tangent-space rotation, it avoids unconstrained additive noise that would otherwise change the norm and potentially the mean.
 
@@ -609,7 +652,9 @@ Because it operates through tangent-space rotation, it avoids unconstrained addi
 
 ### Why keep augmentations weak?
 
-ChemoMAE already receives a strong reconstruction learning signal. Augmentation should not dominate this task.
+The reconstruction target remains the unaugmented spectrum. Mild settings
+retain a close neighborhood of that target while adding variation to the
+visible input.
 
 The intended role is:
 
@@ -617,7 +662,10 @@ $$
 \text{reconstruction}+\text{weak denoising regularization}.
 $$
 
-Strong augmentations may cause the model to reconstruct targets from overly distorted inputs and could suppress degradation-related structure.
+Stronger settings change the reconstruction task and may alter which spectral
+differences the representation retains. The appropriate strength depends on
+the data and evaluation goal; the API defaults are not an empirically optimal
+setting for every dataset.
 
 ---
 

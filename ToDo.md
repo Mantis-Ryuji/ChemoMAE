@@ -1,9 +1,18 @@
 # ChemoMAE v0.2.3 Release ToDo
 
-This v0.2.3 release plan was refined on 2026-10-04. Checked implementation items
+Checked implementation items
 mean that source, focused tests, and associated documentation have been written.
-Checked validation items indicate completed checks. Final-commit CI, GitHub math rendering,
-final contents/metadata review, and publication remain pending.
+Checked validation items indicate completed checks. Implementation and prior
+regression/CI checks are complete. Final distributions, the latest documentation
+rendering, final-commit CI, and publication remain pending.
+
+## Backlog lifecycle
+
+Keep tasks for the active release until its publication is confirmed. Then clear
+the completed release plan, leaving an empty backlog if no agreed work remains.
+Keep change history in `CHANGELOG.md` and Git. Triage incoming GitHub issues and
+add accepted improvements or fixes here with issue links; remove completed tasks
+after their release.
 
 ## Current implementation status
 
@@ -35,14 +44,18 @@ final contents/metadata review, and publication remain pending.
 - [x] Prepare direct Markdown-example execution, bounded LLA measurements, and
   minimum-Torch/supported-Python CI; gate publication on CI at the tagged commit.
 - [x] Run minimum-Torch CPU regression and bounded CPU/CUDA LLA measurements.
-- [ ] Run final-commit CI and check actual GitHub math rendering.
+- [x] Run the compatibility CI matrix and fix the reported GitHub math rendering
+  issues in clustering, model, SNV, augmentation, and optimizer documentation.
+- [x] Review release contents, installation instructions, and versioned links;
+  prepare production metadata.
+- [ ] Check the latest documentation rendering and rerun CI at the final commit.
 
 ## Agreed direction and product scope
 
 User decisions:
 
 - Deliver the changes in this plan as ChemoMAE v0.2.3. The package metadata,
-  public version string, version test, and development documentation use this
+  public version string, version test, and release documentation use this
   target; release validation and publication remain pending.
 - Finish a coherent production-ready library, documentation, and document-based
   tutorials as one release effort.
@@ -158,7 +171,8 @@ workflows.
 - [x] Audit the advertised fixed-step budget: the current `fit` API takes an epoch
   budget. Either document that limit accurately or add an explicit step
   budget with clearly defined attempted-step/successful-update semantics. This
-  implementation keeps an absolute epoch budget; direct step budgets are pending.
+  implementation keeps an absolute epoch budget; direct step budgets are outside
+  the v0.2.3 scope.
 - [x] Explain and expose optimizer parameter-group choices and LR indexing.
   The native helper excludes CLS/position embeddings from weight decay and its
   warmup differs from the experiment recipe. Define clear product defaults,
@@ -253,7 +267,8 @@ or using private methods.
 Source docstrings/comments are translated, and README/docs are English. The
 updated API signatures/defaults, local links, and math delimiters have been
 reviewed in source. Runnable tutorial/documentation checks are complete.
-Final-commit CI and actual rendered-math checks remain gates.
+Compatibility CI and the reported rendering fixes are complete. Rendering of
+the latest documentation edits and final-commit CI remain gates.
 
 - [x] Translate Japanese public/module docstrings into English throughout
   `src/chemomae`, using NumPy-style sections for documented public interfaces.
@@ -267,6 +282,9 @@ Final-commit CI and actual rendered-math checks remain gates.
 - [x] Expand English API documentation with input/output shapes, mask and label
   conventions, dtype/device behavior, numerical precision, memory cost,
   randomness, side effects, errors, persistence, and runnable examples.
+- [x] Refresh the research explanations from Thesis, distinguish experiment
+  settings from library defaults, add manuscript/link placeholders, and use
+  consistent Document/Implementation links throughout the README API catalog.
 - [x] Write a complete English README tutorial linked to a detailed Markdown
   workflow. Include understandable setup and core code examples;
   preserve a small synthetic example for offline smoke tests and debugging.
@@ -288,28 +306,29 @@ Final-commit CI and actual rendered-math checks remain gates.
 - [x] Keep the synthetic workflow within runtime dependencies; no separate
   tutorial extras are required. Reference comparisons using scikit-learn are
   explicitly development-only examples.
-- [ ] Validate supported Python/Torch combinations and document
-  environment-specific CPU/CUDA installation against tested versions. CI now
-  includes Python 3.10–3.13/current CPU Torch and Python 3.10/Torch 2.1.0 with
-  NumPy `<2` as an environment constraint, without changing runtime metadata.
-  These are selected pairs, not every Python/Torch combination. The Ubuntu CI
-  matrix still requires execution.
+- [x] Validate the selected Python/Torch combinations and document CPU/CUDA
+  build selection. CI covers Python 3.10–3.13/current CPU Torch and Python
+  3.10/Torch 2.1.0 with NumPy `<2` as an environment constraint, without changing
+  runtime dependencies. These are selected pairs, not every Python/Torch
+  combination; repeat CI after the final release edits.
 - [x] Add a runtime-dependency-only runner that reads the actual selected README,
   workflow, Trainer customization/plain-loop, and optimizer Markdown blocks.
 - [x] Execute the selected Markdown recipes against the installed package;
   catalog fragments, shell fences, and other API reference snippets are excluded.
 - [x] Add a documentation index linking tutorials, API references, customization,
   numerical notes, and troubleshooting. Make source docstrings and Markdown docs
-  agree on terminology. Release-specific ref pinning remains a publication gate;
-  current documents explicitly describe development source.
+  agree on terminology. README and package metadata pin release references to
+  `v0.2.3`; confirm these links resolve after the release tag is pushed.
 - [x] Document new APIs as available only after implementation. Include migration
   or release notes explaining the new contracts without promising old-format/API
   support. Keep the v0.2.2 historical experiment reference separate.
 - [x] Use `$...$` and blank-line-separated `$$...$$` with MathJax-supported TeX
   in README, docs, and tutorial Markdown. Avoid package/custom-macro dependencies,
   unsupported equation/reference commands, and non-rendering math code fences.
-  Actual rendering remains unverified.
-- [ ] Check rendered formulas on GitHub, including the full LLA definition.
+  Fix Markdown interference with braces, spacing, text identifiers, row breaks,
+  and standalone operators; preserve the mathematical definitions.
+- [ ] Check the latest rendered formulas on GitHub, including LLA, vMF,
+  CosineKMeans, and FPS after the final documentation edits.
   [GitHub's native renderer uses MathJax](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/writing-mathematical-expressions);
   use [MathJax TeX and LaTeX support](https://docs.mathjax.org/en/latest/input/tex/index.html)
   as the authoring reference. Verify host-specific support; do not assume every
@@ -318,9 +337,9 @@ Final-commit CI and actual rendered-math checks remain gates.
 ## 7. Installed-package and production release gates
 
 - [x] Set the release target to v0.2.3 and align package metadata, the public
-  version string, the version test, and development documentation.
-- [ ] Update the current alpha status, supported-version claims, and remaining
-  release metadata only when they match the release's actual readiness.
+  version string, the version test, and release documentation.
+- [x] Replace alpha metadata with the agreed production status, document the
+  supported-version scope, and prepare release-facing documentation.
 - [x] Add a runtime-only installed-package CPU workflow and CI job that builds
   wheel/sdist, installs the wheel without dev extras, and runs outside the checkout.
 - [x] Verify wheel/sdist contents, public imports, `py.typed`, license/notice files,
@@ -332,8 +351,10 @@ Final-commit CI and actual rendered-math checks remain gates.
 - [x] Extend CI with runtime-only documentation execution, a minimum-Torch lane,
   and reusable validation at the same tagged commit. Exclude RC tags from PyPI
   production publication; retain the existing TestPyPI base-version convention.
-- [ ] Verify the new CI jobs and publication dependency/filter behavior. Do not
-  create/push a release tag before the final review and readiness decision.
+- [x] Review publication dependencies and tag filters: validation runs at the
+  tagged commit before publishing, and RC tags are excluded from production PyPI.
+- [ ] Verify final-commit CI and the reviewed release workflow at publication.
+  Create/push the release tag only after the remaining gates and readiness decision.
 - [x] Validate versioned artifacts with round-trip outputs, configuration errors,
   missing/corrupt state, and unsupported schema versions. Saving/loading must not
   change fitted predictions through implicit re-normalization or reconstruction.
@@ -341,6 +362,8 @@ Final-commit CI and actual rendered-math checks remain gates.
   excluded catalog fragments remain outside the runner's scope.
 - [ ] Verify final package/version alignment and rendered English Markdown/math
   before release.
+- [ ] Publish v0.2.3, confirm the PyPI package and versioned documentation links,
+  and clear the completed release plan from this backlog.
 - [x] Document numerical and memory limits. Keep tutorial results illustrative
   rather than presenting them as universal performance rankings.
 
