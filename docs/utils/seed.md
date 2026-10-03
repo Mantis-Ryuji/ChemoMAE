@@ -122,7 +122,8 @@ Independent generators, worker RNG, MPS RNG, and external state remain caller-ow
 
 Trainer checkpoints use these snapshots automatically. Read
 [model/training persistence](../models/persistence.md) for resume boundaries and
-extension hooks. Snapshot and resumed-trajectory tests are written but unrun.
+extension hooks. Matching seeds alone do not guarantee identical trajectories
+across devices or software versions.
 
 ---
 

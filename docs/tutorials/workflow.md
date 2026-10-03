@@ -3,8 +3,7 @@
 This tutorial explains preprocessing, reconstruction training, epoch-boundary
 resume, evaluation, feature extraction, clustering, spatial LLA, and persistence.
 The examples use small synthetic spectra and only ChemoMAE's runtime dependencies.
-Read the code blocks in order in one Python session. They are written examples;
-execution, timings, and CPU/CUDA equivalence have not yet been verified.
+Read the code blocks in order in one Python session.
 
 The chosen seeds, model size, augmentation strengths, two epochs, and K=3 are
 illustrative API settings. They do not define a validated experimental recipe.
@@ -170,7 +169,9 @@ Checkpoints validate the schema, full ChemoMAE configuration, training settings,
 component types, and saved tensors. They restore optimizer/scheduler/scaler/EMA
 state and standard global RNG. Independent generators and worker/external state
 need caller-owned hooks. Exact resumed trajectories require matching software,
-device, data, and deterministic conditions; the corresponding tests remain unrun.
+device, data, and deterministic conditions. Arbitrary worker/external state
+needs caller-owned restoration; matching seeds alone do not guarantee identical
+trajectories across devices or software versions.
 
 Use `progress=False` for batch progress and `verbose=False` for epoch summaries.
 History/checkpoint/raw/EMA paths are configurable separately. Setting an output
@@ -376,6 +377,26 @@ result. The report is illustrative; a research project must additionally record
 its data identities, acquisition grouping, preprocessing settings, and selection
 protocol. These small examples make no claims about performance or superiority.
 
+Finish by checking the expected workflow outputs. These assertions check API
+behavior and finite reconstruction losses; metric quality is not a pass condition.
+
+```python
+assert result["completed"] and result["epochs"] == 2
+assert result["optimizer_updates"] == 8
+assert result["amp_skips"] == 0
+assert result["final_model"] == "ema_last_model.pt"
+assert train_features.shape == (64, 8)
+assert test_features.shape == (16, 8)
+assert label_map.shape == (12, 16)
+assert lla.valid_pixels == 172
+assert math.isfinite(validation_mse) and math.isfinite(test_mse)
+assert selected_artifact.is_file()
+assert (run_dir / "report.json").is_file()
+assert (run_dir / "spatial_map.pt").is_file()
+print("Tutorial workflow passed.")
+print("Outputs:", run_dir)
+```
+
 ## Custom loops and troubleshooting
 
 Use the [Trainer hooks and plain PyTorch example](../training/trainer.md) when
@@ -388,6 +409,3 @@ without Trainer. Supervised fine-tuning remains a separate consuming workflow.
 - A checkpoint-config mismatch requires the original architecture/training recipe.
 - Undefined LLA or silhouette needs its recorded reason, rather than a substituted score.
 - Set device, precision, and output storage deliberately when moving this CPU example to CUDA.
-
-Focused tests, documented examples, actual GitHub math rendering, and installed
-package checks remain release gates. Do not treat source review as execution.

@@ -181,6 +181,43 @@ class OrderedTrainer(Trainer):
         self.order_generator.set_state(generator_state)
 ```
 
+The following setup runs that adapter on 12 synthetic spectra, then resumes at
+epoch two. Run it in the same session as the class definition above. Its explicit
+mask hides the final four channels, while the clean reconstruction target stays
+unchanged. The caller-owned ordering stream is saved by the adapter's hooks.
+
+```python
+import tempfile
+from pathlib import Path
+from chemomae.models import ChemoMAE
+from chemomae.training import build_optimizer
+
+device = torch.device("cpu")
+data_stream = torch.Generator().manual_seed(8)
+spectra = torch.randn(12, 16, generator=data_stream)
+run_dir = Path(tempfile.mkdtemp(prefix="chemomae-ordered-"))
+
+def make_ordered_trainer(resume_from: Path | None = None) -> OrderedTrainer:
+    model = ChemoMAE(
+        seq_len=16, n_patches=4, n_mask=1, d_model=16,
+        nhead=4, num_layers=1, latent_dim=8, dropout=0.0,
+    ).to(device)
+    return OrderedTrainer(
+        model, build_optimizer(model, lr=1e-3), spectra,
+        cfg=TrainerConfig(
+            out_dir=run_dir, device=device, resume_from=resume_from,
+            amp=False, use_ema=False, progress=False, verbose=False,
+        ),
+    )
+
+first = make_ordered_trainer()
+first.fit(epochs=1)
+resumed = make_ordered_trainer(run_dir / "checkpoints" / "last.pt")
+result = resumed.fit(epochs=2)
+assert result["optimizer_updates"] == 6
+assert resumed.history[-1]["application_note"] == "explicit masks and caller-owned ordering"
+```
+
 The extension payload cannot replace core checkpoint keys such as `model` or
 `progress`. Use string keys and Tensor/primitive containers suitable for Torch
 serialization. Extension tensors load on CPU; the restore hook owns any required

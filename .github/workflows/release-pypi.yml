@@ -3,13 +3,24 @@ name: Publish (PyPI)
 on:
   push:
     tags:
-      - 'v*.*.*'       # e.g., v0.1.0, v1.2.3  (※ rc は別ワークフローへ)
+      - 'v*.*.*'       # e.g., v0.2.3, v1.2.3
+      - '!v*.*.*-rc*'  # RC tags are handled by release-testpypi.yml.
+
+permissions:
+  contents: read
 
 jobs:
+  validate:
+    # Local reusable workflows run the CI defined at this tagged commit.
+    uses: ./.github/workflows/ci.yml
+
   build-and-publish:
+    needs: validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-python@v5
         with:

@@ -5,11 +5,21 @@ on:
     tags:
       - 'v*.*.*-rc*'   # e.g., v0.1.0-rc1, v1.2.3-rc4
 
+permissions:
+  contents: read
+
 jobs:
+  validate:
+    # Local reusable workflows run the CI defined at this tagged commit.
+    uses: ./.github/workflows/ci.yml
+
   build-and-publish:
+    needs: validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-python@v5
         with:

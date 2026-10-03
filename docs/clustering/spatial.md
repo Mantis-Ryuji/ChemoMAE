@@ -149,10 +149,5 @@ Class chunking bounds temporary class-map storage by the chunk size, not the
 complete computation's memory. Full labels/masks and dense class indices remain
 resident, and convolution workspace is backend-dependent. No `unfold` tensor
 of shape proportional to image pixels times neighborhood area is constructed.
-Image tiling is not implemented. CUDA speed and memory benchmarks remain pending;
-small images can favor CPU once transfer overhead is included.
-
-The focused tests contain an independent pixel-pair enumeration oracle, boundary
-and mask cases, finite-sample and negative-score checks, class-chunk invariance,
-large-integer finalization, and optional CPU/CUDA comparison. They have not been
-executed as part of this implementation update.
+Image tiling is not implemented. Small images can favor CPU once transfer
+overhead is included.

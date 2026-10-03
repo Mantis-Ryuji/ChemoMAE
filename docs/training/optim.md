@@ -11,7 +11,7 @@ import torch
 from chemomae.models import ChemoMAE
 from chemomae.training import build_optimizer
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cpu")
 model = ChemoMAE(seq_len=256).to(device)
 optimizer = build_optimizer(model, lr=1.5e-4, weight_decay=0.05)
 
@@ -21,8 +21,9 @@ for index, group in enumerate(optimizer.param_groups):
     print(index, "weight_decay=", group["weight_decay"], "parameters=", names)
 ```
 
-Move the model to its training device and configure `requires_grad` before
-constructing the optimizer. Frozen parameters are omitted.
+This inspection example uses CPU. Move the model to your chosen training device
+and configure `requires_grad` before constructing the optimizer. Frozen
+parameters are omitted.
 
 | Argument | Default | Meaning |
 | --- | --- | --- |
@@ -42,8 +43,12 @@ every model yields two groups.
 ## Epoch-sized scheduler budgets
 
 ```python
+from torch.utils.data import DataLoader, TensorDataset
 from chemomae.training import build_scheduler
 
+train_loader = DataLoader(
+    TensorDataset(torch.randn(12, 256)), batch_size=4, shuffle=False,
+)
 scheduler = build_scheduler(
     optimizer,
     steps_per_epoch=len(train_loader),
@@ -53,7 +58,9 @@ scheduler = build_scheduler(
 )
 ```
 
-`train_loader` above is the caller's training iterable. The wrapper sets
+The small synthetic `train_loader` above makes the budget example runnable in
+the same session as the optimizer setup. Replace it with your training iterable
+for a real application. The wrapper sets
 `total_steps = steps_per_epoch * epochs` and
 `warmup_steps = steps_per_epoch * warmup_epochs`, then delegates to
 `build_warmup_cosine`. Each group receives the same multiplier relative to its
@@ -157,7 +164,3 @@ checkpoint extension hooks for caller-owned state such as generators; do not
 expect a scheduler constructor alone to restore an advanced stream or step index.
 
 See [Trainer](trainer.md) for the public loop/customization contract.
-
-The MathJax `$...$`/`$$...$$` source has been updated, but GitHub
-rendering has not been verified. The snippets and scheduler trace have not been
-executed for this documentation change.

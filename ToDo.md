@@ -1,9 +1,9 @@
 # ChemoMAE v0.2.3 Release ToDo
 
-This v0.2.3 release plan was refined on 2026-10-03. Checked implementation items
-mean that source, focused tests, and the associated documentation have been written.
-They do not mean that tests, CUDA, example execution, or rendered
-math have passed. Those validation and publication gates remain unchecked.
+This v0.2.3 release plan was refined on 2026-10-04. Checked implementation items
+mean that source, focused tests, and associated documentation have been written.
+Checked validation items indicate completed checks. Final-commit CI, GitHub math rendering,
+final contents/metadata review, and publication remain pending.
 
 ## Current implementation status
 
@@ -28,9 +28,14 @@ math have passed. Those validation and publication gates remain unchecked.
   move the existing Torch requirement into runtime dependencies.
 - [x] Translate remaining source docstrings/comments into English and audit
   updated example signatures against their APIs; source-language search finds no Japanese
-  in `src/chemomae`. Example execution remains unperformed.
-- [ ] Run focused tests, installed-package checks, and documented examples.
-- [ ] Validate actual GitHub math rendering and measure CPU/CUDA cost.
+  in `src/chemomae`.
+- [x] Run focused/full regression tests and CUDA fp16/bf16 smoke checks.
+- [x] Check wheel/sdist contents and execute an isolated runtime-only wheel workflow.
+- [x] Execute the detailed synthetic tutorial and selected documentation recipes.
+- [x] Prepare direct Markdown-example execution, bounded LLA measurements, and
+  minimum-Torch/supported-Python CI; gate publication on CI at the tagged commit.
+- [x] Run minimum-Torch CPU regression and bounded CPU/CUDA LLA measurements.
+- [ ] Run final-commit CI and check actual GitHub math rendering.
 
 ## Agreed direction and product scope
 
@@ -109,14 +114,16 @@ References:
   mathematical contract. Use the existing CPU implementation as a reference,
   including near-one chance agreement; its FP32 final ratio is not a required
   product default and matching its rounding is not a compatibility obligation.
-- [ ] Validate exact counts against an independent pixel-pair oracle and the
-  existing CPU implementation. Cover boundaries, holes, diagonal neighbors,
-  isolated pixels, one pixel, one class, negative scores, extreme imbalance,
-  label permutations, and class-chunk/tile invariance.
-- [ ] Benchmark synthetic maps with different image sizes, class counts, and
-  windows. Report kernel time, end-to-end time including transfer, and peak GPU
-  memory separately. Retain a usable CPU path; do not assume CUDA is faster for
-  every input size.
+- [x] Validate exact counts against the independent pixel-pair oracle. Cover
+  boundaries, holes, diagonal neighbors, isolated
+  pixels, one pixel, one class, negative scores, extreme imbalance, label
+  permutations, class-chunk invariance, and CPU/CUDA comparison. Historical CPU
+  implementation results remain reference evidence, not a rounding contract;
+  tile invariance is inapplicable because image tiling is not implemented.
+- [x] Run bounded synthetic CPU/CUDA measurements with `tests/benchmark_lla.py`
+  across image sizes, class counts, windows, and class chunks. Check exact
+  diagnostics before measuring resident calls, transfer-inclusive calls, and
+  allocator peaks. Keep a usable CPU path without a universal speed claim.
 
 Acceptance: integer counts agree exactly with the reference definition; scores
 agree under the documented precision contract; memory-control settings do not
@@ -171,8 +178,7 @@ or using private methods.
 
 - [x] Support reconstruction evaluation with `loss_region="masked" | "all"`.
   Masked evaluation uses `~visible_mask`; full evaluation uses every element.
-  Added full-spectrum MSE cases and augmented-input/clean-target documentation;
-  execution is pending.
+  Include full-spectrum MSE and augmented-input/clean-target tests and examples.
 - [x] Define and implement empty-mask and empty-loader behavior in evaluation
   helpers; do not let undefined evaluation appear to be a successful zero loss.
 - [x] Add public all-visible `ChemoMAE.encode(...)` access to CLS features,
@@ -187,7 +193,7 @@ or using private methods.
   mandatory whole-dataset CPU accumulation.
 - [x] Specify dtype, input ordering, model/augmenter mode handling, and iterator
   cleanup, including early termination; write focused deterministic stream tests.
-- [ ] Execute streamed-versus-aggregate and iterator/mode restoration tests.
+- [x] Execute streamed-versus-aggregate and iterator/mode restoration tests.
 - [x] Audit device/AMP resolution and validation across Trainer, Tester, and
   Extractor. Explain CPU use and unsupported precision/device combinations;
   avoid silently changing arithmetic or running stochastic augmentation.
@@ -208,8 +214,9 @@ or using private methods.
   global streams and validate the full ChemoMAE configuration.
 - [x] Define completed-epoch resume and write synthetic uninterrupted-versus-resumed
   tests for owned streams and standard masking/dropout/loader randomness.
-- [ ] Execute resume trajectory tests under matching conditions; do not promise
-  restoration of arbitrary DataLoader worker or external state.
+- [x] Execute resume trajectory tests under matching CPU conditions.
+  Do not promise restoration of arbitrary DataLoader
+  worker/external state or matching trajectories across devices/versions.
 - [x] Document raw-last versus EMA-last selection. Ensure examples explicitly
   load the selected exported weights before downstream evaluation/extraction;
   the in-memory training model and the selected export may differ.
@@ -236,7 +243,7 @@ or using private methods.
   full curvature array; source/doc behavior must agree.
 - [x] Make Torch SNV operate natively without CPU/NumPy conversion.
   Define `ddof`, `sd + eps`, length-one/constant inputs, statistics, dtype/device,
-  and numerical differences. Focused tests are written; runtime verification is pending.
+  and numerical differences; run focused regression tests.
 - [x] Audit FPS controls and validation: explicit computation device, ratio and
   initial-index validation, zero-vector handling, return types, and seed/generator
   behavior. Resolve documentation/implementation mismatches against the new API.
@@ -245,7 +252,8 @@ or using private methods.
 
 Source docstrings/comments are translated, and README/docs are English. The
 updated API signatures/defaults, local links, and math delimiters have been
-reviewed in source. Example execution and actual rendered-math checks remain gates.
+reviewed in source. Runnable tutorial/documentation checks are complete.
+Final-commit CI and actual rendered-math checks remain gates.
 
 - [x] Translate Japanese public/module docstrings into English throughout
   `src/chemomae`, using NumPy-style sections for documented public interfaces.
@@ -275,12 +283,21 @@ reviewed in source. Example execution and actual rendered-math checks remain gat
   cluster centers on held-out evaluation data as a default evaluation procedure.
 - [x] Declare the existing `torch>=2.1` requirement as a runtime dependency rather
   than only a development extra. Keep the declared minimum working with a
-  legacy CUDA GradScaler fallback; actual minimum-version execution is pending.
+  legacy CUDA GradScaler fallback.
+- [x] Run the declared minimum-Torch CPU regression suite.
 - [x] Keep the synthetic workflow within runtime dependencies; no separate
   tutorial extras are required. Reference comparisons using scikit-learn are
   explicitly development-only examples.
 - [ ] Validate supported Python/Torch combinations and document
-  environment-specific CPU/CUDA installation against tested versions.
+  environment-specific CPU/CUDA installation against tested versions. CI now
+  includes Python 3.10–3.13/current CPU Torch and Python 3.10/Torch 2.1.0 with
+  NumPy `<2` as an environment constraint, without changing runtime metadata.
+  These are selected pairs, not every Python/Torch combination. The Ubuntu CI
+  matrix still requires execution.
+- [x] Add a runtime-dependency-only runner that reads the actual selected README,
+  workflow, Trainer customization/plain-loop, and optimizer Markdown blocks.
+- [x] Execute the selected Markdown recipes against the installed package;
+  catalog fragments, shell fences, and other API reference snippets are excluded.
 - [x] Add a documentation index linking tutorials, API references, customization,
   numerical notes, and troubleshooting. Make source docstrings and Markdown docs
   agree on terminology. Release-specific ref pinning remains a publication gate;
@@ -306,22 +323,26 @@ reviewed in source. Example execution and actual rendered-math checks remain gat
   release metadata only when they match the release's actual readiness.
 - [x] Add a runtime-only installed-package CPU workflow and CI job that builds
   wheel/sdist, installs the wheel without dev extras, and runs outside the checkout.
-- [ ] Verify wheel/sdist contents, public imports, `py.typed`, license/notice files,
+- [x] Verify wheel/sdist contents, public imports, `py.typed`, license/notice files,
   and dependency declarations. Install the built wheel in a clean environment and
   run a minimal public-API CPU workflow without editable installs, development
   extras, or access to the source checkout.
-- [ ] Extend validation beyond the current CI's editable/development installation:
-  focused units, installed-package smoke, public workflow integration,
-  save/load/resume, and documentation example execution. Define the supported Python/Torch
-  matrix and record which CUDA environments were actually exercised.
-- [ ] Validate versioned artifacts with round-trip outputs, configuration errors,
+- [ ] Rebuild distributions and repeat the installed-wheel check after final
+  release changes.
+- [x] Extend CI with runtime-only documentation execution, a minimum-Torch lane,
+  and reusable validation at the same tagged commit. Exclude RC tags from PyPI
+  production publication; retain the existing TestPyPI base-version convention.
+- [ ] Verify the new CI jobs and publication dependency/filter behavior. Do not
+  create/push a release tag before the final review and readiness decision.
+- [x] Validate versioned artifacts with round-trip outputs, configuration errors,
   missing/corrupt state, and unsupported schema versions. Saving/loading must not
   change fitted predictions through implicit re-normalization or reconstruction.
-- [ ] Verify documented examples, package/version alignment, and rendered
-  English Markdown/math before release.
-- [ ] Publish measured runtime/memory and known limitations. Treat tutorial
-  results as examples of the documented protocol, not a replacement for the
-  completed thesis experiments or a universal ranking of methods.
+- [x] Verify the selected documented recipes and installed package version;
+  excluded catalog fragments remain outside the runner's scope.
+- [ ] Verify final package/version alignment and rendered English Markdown/math
+  before release.
+- [x] Document numerical and memory limits. Keep tutorial results illustrative
+  rather than presenting them as universal performance rankings.
 
 ## Delivery order and validation
 
@@ -333,16 +354,19 @@ reviewed in source. Example execution and actual rendered-math checks remain gat
   diagnostics, and write synthetic public-workflow examples.
 - [x] Develop the English README tutorial, detailed Markdown guide, API docs, and
   docstrings alongside implementation.
-- [ ] Execute the synthetic workflow and complete every production gate before
-  declaring the product release ready.
-- [ ] Start validation with focused synthetic unit tests, then related existing
+- [x] Execute the detailed synthetic workflow.
+- [x] Execute the selected additional recipes and minimum-Torch CPU regression.
+- [x] Execute the bounded LLA correctness/time/memory checks.
+- [ ] Complete final-commit compatibility CI, GitHub math, and final contents/
+  metadata review before declaring release ready.
+- [x] Start validation with focused synthetic unit tests, then related existing
   tests. Benchmark GPU behavior only when explicitly authorized, using bounded
-  synthetic inputs rather than rerunning completed research experiments. This
-  implementation update does not authorize GPU training, package installation, or publication.
+  synthetic inputs rather than rerunning completed research experiments.
+  Execution remains user-controlled under the repository policy.
 - [x] Report performed and unperformed checks separately. Do not claim tutorial,
   CUDA, resume, or numerical equivalence validation from source review alone.
 
-### Focused validation commands (not executed)
+### Development checks
 
 Run from the repository root in an already prepared development environment.
 These tests use synthetic inputs. CUDA-specific cases can run/skip according to
@@ -363,8 +387,11 @@ checkpoint restoration; exact fitted-center persistence. Only after these pass,
 broaden to related tests and installed-package/example release gates. Test and
 example execution remain with the user under the repository execution policy.
 
-Performed for this implementation update: source/API review,
-`git diff --check`, removal/reference searches, source-language search, and
-display-math delimiter/blank-line checks. No project code, tests, lint, builds,
-package installs, training, GPU benchmarks, or actual GitHub math rendering were
-executed.
+The standalone documentation runner reads selected actual Markdown Python blocks;
+the benchmark reports public-API intervals and allocator peaks. CUDA-event spans
+are not pure kernel times, and allocator statistics exclude other processes.
+
+```powershell
+python -B tests/documentation_examples.py
+python -B tests/benchmark_lla.py --device both --threads 1
+```

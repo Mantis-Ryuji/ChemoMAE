@@ -3,9 +3,7 @@
 ## 0.2.3 — unreleased
 
 This release improves the public spectral-learning workflow and adds spatial
-Local Label Agreement. The source and focused tests are written; runtime,
-CUDA, installed-package, and rendered-math validation remain pending.
-Completed v0.2.2 research experiments and their artifacts are unchanged.
+Local Label Agreement.
 
 ### Added
 
@@ -19,6 +17,10 @@ Completed v0.2.2 research experiments and their artifacts are unchanged.
 - All-visible CLS/raw/normalized representations and streamed feature extraction.
 - CosineKMeans convergence diagnostics and exact fitted-center persistence.
 - A detailed Markdown workflow tutorial and a standalone installed-package smoke check.
+- Direct execution checks for selected Markdown examples and a bounded synthetic
+  CPU/CUDA LLA benchmark runner.
+- Same-commit CI gates for publication, an explicit minimum-Torch CPU lane, and
+  separation of production and RC tag triggers.
 
 ### Changed
 
@@ -44,5 +46,3 @@ old raw weights do not supply missing constructor configuration automatically.
 Trainer remains specific to reconstruction, with completed-epoch resume.
 Direct step budgets, validation-based selection, arbitrary worker recovery,
 MPS RNG restoration, and image tiling for LLA are not supplied by this release.
-No benchmark result or cross-device/version reproducibility claim follows from
-the implementation alone. GPU cost and supported environment checks are pending.

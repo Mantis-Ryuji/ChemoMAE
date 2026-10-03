@@ -94,6 +94,4 @@ otherwise an enabled raw export, otherwise `None`.
 
 Both filenames and each output's enablement are configurable in TrainerConfig.
 Read the [workflow tutorial](../tutorials/workflow.md) for a complete resume and
-selected-artifact example. Regression tests are written in
-`tests/models/test_chemo_mae_persistence.py`, `tests/utils/test_rng_state.py`, and
-`tests/training/test_trainer_smoke.py`; execution remains pending.
+selected-artifact example.

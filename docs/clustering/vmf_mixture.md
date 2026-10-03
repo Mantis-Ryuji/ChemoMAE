@@ -2,7 +2,7 @@
 
 > Module: `chemomae.clustering.vmf_mixture`
 > Purpose: Probabilistic clustering of L2-normalized features on $S^{d-1}$ via an EM algorithm.
-> Updated for ChemoMAE v0.2.2.
+> API reference for ChemoMAE v0.2.3; the v0.2.2 verification history is retained below.
 
 This document describes **VMFMixture**, an implementation of the **von Mises–Fisher mixture model** for clustering unit-norm features on the hypersphere.
 It provides EM-based parameter estimation, model selection through `elbow_vmf`, and visualization utilities via `plot_elbow_vmf`.
@@ -241,7 +241,7 @@ The regression suite uses synthetic CPU data and optional small CUDA checks. It
 does not run research training or evaluate real datasets. Run from the repository
 root with the test environment activated and existing development dependencies
 installed. After changing the package version, refresh the editable installation
-so that the installed metadata also reports v0.2.2:
+so that the installed metadata also reports v0.2.3:
 
 ```powershell
 python -m pip install --no-deps -e .

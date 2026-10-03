@@ -5,18 +5,31 @@ on:
     branches: ["**"]
   pull_request:
     branches: ["**"]
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
   tests:
+    name: Python ${{ matrix.python-version }} / ${{ matrix.torch-requirement }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
+        torch-requirement: ["torch>=2.2,<3"]
+        include:
+          - python-version: "3.10"
+            torch-requirement: "torch==2.1.0"
+            # Torch 2.1 predates the NumPy 2 ABI. This is a CI constraint only.
+            numpy-requirement: "numpy<2"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -35,22 +48,23 @@ jobs:
         run: |
           python -m pip install -U pip wheel
 
+      - name: Set environment constraints
+        run: |
+          printf '%s\n' "${{ matrix.numpy-requirement || 'numpy>=1.24' }}" > "$RUNNER_TEMP/chemomae-constraints.txt"
+          printf 'PIP_CONSTRAINT=%s\n' "$RUNNER_TEMP/chemomae-constraints.txt" >> "$GITHUB_ENV"
+
       - name: Install PyTorch (CPU)
         env:
           PIP_DISABLE_PIP_VERSION_CHECK: "1"
         run: |
-          python -m pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2,<3"
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu "${{ matrix.torch-requirement }}"
 
       - name: Install project and test deps
         env:
           PIP_DISABLE_PIP_VERSION_CHECK: "1"
         run: |
-          # プロジェクト（開発用extrasを定義している前提）
           python -m pip install -e ".[dev]"
-          # 念のため sklearn を明示（テストで必須）
-          python -m pip install "scikit-learn>=1.2,<1.6"
-          # 追加で使う可能性のあるツール
-          python -m pip install "pytest>=7,<9" matplotlib
+          python -m pip check
 
       - name: Show library versions (debug)
         run: |
@@ -66,13 +80,15 @@ jobs:
         env:
           MPLBACKEND: Agg
         run: |
-          pytest -q -ra
+          python -m pytest -q -ra -p no:cacheprovider tests
 
   installed-package:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -89,10 +105,37 @@ jobs:
           python -m venv "$RUNNER_TEMP/chemomae-wheel"
           "$RUNNER_TEMP/chemomae-wheel/bin/python" -m pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2,<3"
           "$RUNNER_TEMP/chemomae-wheel/bin/python" -m pip install dist/*.whl
+          "$RUNNER_TEMP/chemomae-wheel/bin/python" -m pip check
 
       - name: Verify installed public CPU workflow outside checkout
         env:
           MPLBACKEND: Agg
         run: |
           cd "$RUNNER_TEMP"
-          "$RUNNER_TEMP/chemomae-wheel/bin/python" "$GITHUB_WORKSPACE/tests/installed_package_smoke.py"
+          "$RUNNER_TEMP/chemomae-wheel/bin/python" -I "$GITHUB_WORKSPACE/tests/installed_package_smoke.py"
+
+  documentation-examples:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package without development extras
+        run: |
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2,<3"
+          python -m pip install .
+          python -m pip check
+
+      - name: Run public documentation examples outside checkout
+        env:
+          MPLBACKEND: Agg
+        run: |
+          cd "$RUNNER_TEMP"
+          python -I "$GITHUB_WORKSPACE/tests/documentation_examples.py"

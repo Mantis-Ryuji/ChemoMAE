@@ -1,8 +1,8 @@
 # ChemoMAE Documentation
 
 These documents describe ChemoMAE v0.2.3 under development. PyPI v0.2.2 does
-not include newly added APIs. Implementation status and unperformed release checks
-are recorded in [ToDo](../ToDo.md).
+not include newly added APIs. Implementation status is recorded in
+[ToDo](../ToDo.md).
 
 ## Tutorial and protocol
 
@@ -24,11 +24,11 @@ are recorded in [ToDo](../ToDo.md).
 
 ## Numerical and experimental notes
 
-SNV acts independently on each spectrum, after the tutorial's wavelength
-interpolation. All-visible features are distinct from randomly masked training
-features. Fit model weights and cluster centers only on the training specimens
+SNV acts independently on each spectrum. The tutorial uses already aligned
+synthetic spectra of length 64. All-visible features are distinct from randomly
+masked training features. Fit model weights and cluster centers only on the training specimens
 when describing held-out generalization. LLA measures spatial coherence and
-occupancy rather than chemical or mineral annotation correctness.
+occupancy rather than chemical correctness.
 
 Math is authored for MathJax using inline `$...$` and display `$$...$$` with blank
 lines. Actual GitHub rendering must be verified before release.

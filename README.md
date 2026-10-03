@@ -153,9 +153,6 @@ the [public Trainer hooks or plain PyTorch loop](docs/training/trainer.md).
 [Model persistence](docs/models/persistence.md) explains inference artifacts and
 training checkpoints. [API documentation](docs/README.md) covers the full library.
 
-Examples and focused regression tests are written; execution and release
-validation remain pending.
-
 ---
 
 ## Library Features
@@ -737,7 +734,7 @@ labels = ckm.predict(X)
 
 `VMFMixture` fits a **von Mises–Fisher mixture model** on the unit hypersphere.
 
-In **v0.2.2**, vMF uses CPU float64 scaled Bessel calculations with an underflow-safe
+Since **v0.2.2**, vMF uses CPU float64 scaled Bessel calculations with an underflow-safe
 series fallback, fixes CUDA k-means++ seeding and CPU checkpoint restoration, and
 keeps valid unit directions for degenerate components. `lower_bound_` describes the
 final model; `converged_` and `stop_reason_` distinguish tolerance, likelihood decrease
