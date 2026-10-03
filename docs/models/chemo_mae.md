@@ -229,7 +229,7 @@ If `latent_normalize=True`, L2 normalization ensures:
 For projections whose norm is at least the `F.normalize` epsilon:
 
 $$
-\lVert z \rVert_2 = 1, \qquad \operatorname{cos}(z_i,z_j) = z_i^\top z_j.
+\lVert z \rVert_2 = 1, \qquad \cos(z_i,z_j) = z_i^\top z_j.
 $$
 
 This is ideal for cosine geometry and directional clustering.

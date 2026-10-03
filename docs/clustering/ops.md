@@ -106,9 +106,12 @@ $$
 6. **Elbow Selection**
 
 $$
-   \text{optimal\_k} = k_{\arg\max \kappa}, \quad
-   \text{elbow\_idx} = \arg\max \kappa
+   k_{\mathrm{opt}} = k_{\arg\max \kappa}, \quad
+   i_{\mathrm{elbow}} = \arg\max \kappa
 $$
+
+Here $k_{\mathrm{opt}}$ and $i_{\mathrm{elbow}}$ correspond to the returned
+`optimal_k` and `elbow_idx`, respectively.
 
 #### Parameters
 

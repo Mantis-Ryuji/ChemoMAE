@@ -13,7 +13,10 @@ For a spectrum $x_i$ with $L$ channels, define
 $$
 \mu_i = \frac{1}{L}\sum_{j=1}^{L}x_{ij},
 \qquad
-d = \begin{cases}1, & L \geq 2,\\0, & L=1,\end{cases}
+d = \begin{cases}
+1, & L \geq 2, \cr
+0, & L=1,
+\end{cases}
 \qquad
 s_i = \sqrt{\frac{1}{L-d}\sum_{j=1}^{L}(x_{ij}-\mu_i)^2}.
 $$

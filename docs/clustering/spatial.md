@@ -55,9 +55,9 @@ The total valid directed pairs $D_w$, matching directed pairs $Q_w$, raw agreeme
 $A_w$, and finite-sample chance agreement $P$ are:
 
 $$
-D_w = \sum_p M(p)\,(K_w * M)(p),
+D_w = \sum_p M(p)\thinspace(K_w * M)(p),
 \qquad
-Q_w = \sum_k \sum_p B_k(p)\,(K_w * B_k)(p).
+Q_w = \sum_k \sum_p B_k(p)\thinspace(K_w * B_k)(p).
 $$
 
 $$
@@ -65,7 +65,7 @@ A_w = \frac{Q_w}{D_w},
 \qquad
 P = \frac{\sum_k n_k(n_k-1)}{N(N-1)},
 \qquad
-\operatorname{LLA}_w = \frac{A_w-P}{1-P}.
+\mathrm{LLA}_w = \frac{A_w-P}{1-P}.
 $$
 
 Each directed neighbor pair has equal weight. This is not an average of
@@ -136,7 +136,7 @@ unbounded integer products before the final division:
 
 $$
 T=N(N-1),\qquad S=\sum_k n_k(n_k-1),\qquad
-\operatorname{LLA}_w = \frac{Q_wT-D_wS}{D_w(T-S)}.
+\mathrm{LLA}_w = \frac{Q_wT-D_wS}{D_w(T-S)}.
 $$
 
 This avoids int64 product overflow and cancellation from subtracting a rounded

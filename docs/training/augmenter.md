@@ -20,7 +20,7 @@ The intended role of this module is **auxiliary regularization** for masked or f
 Consider a batch of SNV-normalized spectra
 
 $$
-X = \{\mathbf{x}_1, \dots, \mathbf{x}_B\} \subset \mathbb{R}^L
+X = \lbrace\mathbf{x}_1, \dots, \mathbf{x}_B\rbrace \subset \mathbb{R}^L
 $$
 
 where each spectrum satisfies approximately
@@ -39,7 +39,7 @@ Under exact SNV with population standard deviation, each spectrum lies on the in
 That is,
 
 $$
-\mathbf{x}_i \in \mathcal{M}=\left\{\mathbf{x} \in \mathbb{R}^L\;\middle|\;\mathbf{1}^{\top}\mathbf{x}=0,\;\lVert \mathbf{x} \rVert_2=r\right\}.
+\mathbf{x}_i \in \mathcal{M}=\left\lbrace\mathbf{x} \in \mathbb{R}^L\quad\middle|\quad\mathbf{1}^{\top}\mathbf{x}=0,\quad\lVert \mathbf{x} \rVert_2=r\right\rbrace.
 $$
 
 A naive Euclidean perturbation,
@@ -168,7 +168,7 @@ For tangent Gaussian noise, the implementation constructs a perturbation directi
 At a spectrum $\mathbf{x}$, the tangent space of the sphere is
 
 $$
-T_{\mathbf{x}}\mathbb{S}^{L-1}(r)=\left\{\mathbf{v} \in \mathbb{R}^L\;\middle|\;\mathbf{v}^{\top}\mathbf{x}=0\right\}.
+T_{\mathbf{x}}\mathbb{S}^{L-1}(r)=\left\lbrace\mathbf{v} \in \mathbb{R}^L\quad\middle|\quad\mathbf{v}^{\top}\mathbf{x}=0\right\rbrace.
 $$
 
 Given an arbitrary direction $\mathbf{d}$, the projection onto this tangent space is
@@ -281,12 +281,7 @@ $$
 Center the direction:
 
 $$
-\tilde{\mathbf{g}}
-=
-\mathbf{g}
--
-\frac{1}{L}
-(\mathbf{1}^{\top}\mathbf{g})\mathbf{1}.
+\tilde{\mathbf{g}}=\mathbf{g}-\frac{1}{L}(\mathbf{1}^{\top}\mathbf{g})\mathbf{1}.
 $$
 
 Project it onto the tangent space:
@@ -298,9 +293,7 @@ $$
 Normalize the tangent direction:
 
 $$
-\mathbf{u}
-=
-\frac{\mathbf{v}}{\lVert \mathbf{v} \rVert_2}.
+\mathbf{u}=\frac{\mathbf{v}}{\lVert \mathbf{v} \rVert_2}.
 $$
 
 Then sample an angle:

@@ -94,12 +94,12 @@ $$
 $$
 \lambda(s) =
 \begin{cases}
-\max\left(10^{-8},\frac{s+1}{\max(1,W)}\right), & s<W, \\
+\max\left(10^{-8},\frac{s+1}{\max(1,W)}\right), & s\lt W, \cr
 \alpha+\frac{1-\alpha}{2}\left(1+\cos(\pi t(s))\right), & s\ge W.
 \end{cases}
 $$
 
-The rate at that index is $\mathrm{base\_lr}\,\lambda(s)$.
+The rate at that index is the base learning rate multiplied by $\lambda(s)$.
 
 `LambdaLR` applies index **0 during construction**. With positive warmup, the
 first optimizer update therefore uses the positive multiplier
