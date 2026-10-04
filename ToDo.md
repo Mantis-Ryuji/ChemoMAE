@@ -10,12 +10,6 @@ available.
   section when its public URL is available. Keep the link as optional research
   background for the general-purpose library.
 
-## v0.2.4 publication
-
-- [ ] Publish `v0.2.4` through the tag-triggered PyPI workflow.
-- [ ] Verify the published package metadata, README rendering, versioned
-  documentation link, and installed-package CPU smoke test in a clean environment.
-
 ## Clustering follow-up
 
 - [ ] Low-priority consideration: a label-only `VMFMixture.predict` path that
