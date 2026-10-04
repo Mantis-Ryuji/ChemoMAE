@@ -152,6 +152,15 @@ bundle: `last_model.pt` / `last_model.artifact.pt`, and
 raw weights unchanged. `result["final_model"]` selects an enabled EMA export,
 otherwise an enabled raw export, otherwise `None`.
 
+`result["final_artifact"]` returns the absolute path to the artifact containing
+that same selected snapshot. Load it directly with
+`ChemoMAE.load(result["final_artifact"], device=...)` when it is not `None`.
+It is `None` when `model_artifacts=False`, for custom model classes (including
+ChemoMAE subclasses), or when no raw/EMA export is enabled. If EMA tracking is
+enabled but EMA export is disabled, the result selects the raw artifact when
+raw export is enabled. Relative and absolute custom export filenames follow
+the same rule; the returned artifact path is always absolute.
+
 With the default filenames and enabled outputs, choose a file by purpose:
 
 | Purpose | File relative to `out_dir` | How to use it |
@@ -164,10 +173,11 @@ With the default filenames and enabled outputs, choose a file by purpose:
 **`result["final_model"]` names the weight file, not the inference artifact.**
 With default exports it is `"ema_last_model.pt"` when `use_ema=True` (the default),
 or `"last_model.pt"` when `use_ema=False`. Resolve a relative name below
-`trainer.out_dir`; an absolute configured path remains absolute. Pass the
-corresponding `.artifact.pt` sibling to `ChemoMAE.load`, or use `load_state_dict`
-as shown in the table. `model_artifacts=False` disables artifact siblings, and
-disabling both weight exports makes `final_model` equal to `None`.
+`trainer.out_dir`; an absolute configured path remains absolute. Pass
+`result["final_artifact"]` to `ChemoMAE.load` when available, or use
+`load_state_dict` as shown in the table. `model_artifacts=False` disables artifact
+siblings without changing `final_model`; disabling both weight exports makes
+both result paths equal to `None`.
 
 Both filenames and each output's enablement are configurable in TrainerConfig.
 See [Trainer](../training/trainer.md) for configuration and extension hooks, or

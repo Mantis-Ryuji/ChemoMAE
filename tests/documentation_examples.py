@@ -71,11 +71,16 @@ def check_readme(namespace: Mapping[str, object]) -> None:
     assert labels.shape == (16,) and labels.device.type == "cpu"
     assert torch.isfinite(train).all() and torch.isfinite(test).all()
     run_dir = require(namespace, "run_dir", Path)
+    result = require(namespace, "result", dict)
+    artifact = require(result, "final_artifact", str)
+    assert Path(artifact).is_absolute()
+    assert Path(artifact) == (run_dir / "last_model.artifact.pt").resolve()
     assert (run_dir / "last_model.artifact.pt").is_file()
     assert (run_dir / "clusters.pt").is_file()
 
 
 def check_workflow(namespace: Mapping[str, object]) -> None:
+    import numpy as np
     import torch
     from chemomae.clustering import LLAResult
 
@@ -83,6 +88,10 @@ def check_workflow(namespace: Mapping[str, object]) -> None:
     assert result["completed"] and result["epochs"] == 2
     assert result["optimizer_updates"] == 8 and result["amp_skips"] == 0
     assert result["final_model"] == "last_model.pt"
+    artifact = require(result, "final_artifact", str)
+    assert Path(artifact).is_absolute() and Path(artifact).is_file()
+    assert require(namespace, "train_array", np.ndarray).dtype == np.float64
+    assert require(namespace, "train_x", torch.Tensor).dtype == torch.float32
     resumed_result = require(namespace, "resumed_result", dict)
     assert resumed_result["completed"] and resumed_result["epochs"] == 2
     assert resumed_result["optimizer_updates"] == 8
@@ -98,7 +107,7 @@ def check_workflow(namespace: Mapping[str, object]) -> None:
     assert require(namespace, "selected_artifact", Path).is_file()
     run_dir = require(namespace, "run_dir", Path)
     report = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
-    assert report["chemomae_version"] == "0.2.3" and report["device"] == "cpu"
+    assert report["chemomae_version"] == "0.2.4" and report["device"] == "cpu"
     assert report["synthetic_counts"] == {"train": 64, "validation": 16, "test": 16}
     saved_map = torch.load(run_dir / "spatial_map.pt", map_location="cpu", weights_only=True)
     assert torch.equal(saved_map["labels"], namespace["label_map"])
@@ -106,14 +115,20 @@ def check_workflow(namespace: Mapping[str, object]) -> None:
 
 
 def check_trainer(namespace: Mapping[str, object]) -> None:
+    import numpy as np
     import torch
 
     result = require(namespace, "result", dict)
     assert result["completed"] and result["epochs"] == 2
     assert result["optimizer_updates"] == 6 and result["amp_skips"] == 0
     assert result["final_model"] == "last_model.pt"
-    assert require(namespace, "selected", Path).is_file()
-    assert not require(namespace, "model", torch.nn.Module).training
+    selected = require(namespace, "selected", Path)
+    assert selected.is_absolute() and selected.is_file()
+    assert result["final_artifact"] == str(selected)
+    model = require(namespace, "model", torch.nn.Module)
+    assert not model.training
+    assert require(namespace, "numpy_spectra", np.ndarray).dtype == np.float64
+    assert require(namespace, "spectra", torch.Tensor).dtype == next(model.parameters()).dtype
 
 
 def check_custom_trainer(namespace: Mapping[str, object]) -> None:
@@ -190,8 +205,10 @@ RECIPES = (
         ("Optional: evaluate a spatial label map", 2),
         ("Optional: save a workflow report", 1),
     ), check_workflow),
+    # The NumPy subsection belongs to this level-two section in python_blocks.
     Recipe("trainer-minimal", "docs/training/trainer.md",
-           (("Configuration and the simple path", 1),), check_trainer),
+           (("Configuration and the simple path", 2),),
+           check_trainer),
     Recipe("trainer-custom", "docs/training/trainer.md",
            (("Custom ordering, masks, and caller state", 2),), check_custom_trainer),
     Recipe("trainer-plain", "docs/training/trainer.md",

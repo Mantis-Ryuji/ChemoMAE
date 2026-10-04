@@ -1,6 +1,7 @@
 # Spectral learning and optional downstream workflows
 
-This tutorial uses the v0.2.3 APIs on small synthetic CPU inputs. Complete
+This tutorial uses the v0.2.4 APIs being prepared in this checkout on small
+synthetic CPU inputs. v0.2.4 has not been published to PyPI. Complete
 sections 1–4 to train a model and extract features. The later sections show
 optional preprocessing, augmentation, resume, evaluation, clustering, spatial
 analysis, and reporting. You can also run all Python blocks in order in one
@@ -13,17 +14,18 @@ and metrics can each be used without the complete workflow.
 ## 1. Set up and prepare spectra
 
 See the [installation guide](../../README.md#quick-start) for Python/PyTorch
-requirements and build selection. To install the matching release:
+requirements and build selection. After installing the appropriate PyTorch
+build, install this source revision from the repository root:
 
 ```bash
-python -m pip install "chemomae==0.2.3"
+python -m pip install -e .
 ```
 
 Every row is a spectrum, with shape `(N, L)`. The example generates independent
 rows from three templates. It uses SNV to compare relative spectral shapes;
 omit or replace this preprocessing when mean and scale carry useful information.
 All samples passed to a given model need the same channel count and ordering.
-For held-out evaluation on measured data, define the appropriate independent
+For held-out evaluation, define the appropriate independent
 group splits before fitting learned components or sampling training pixels.
 
 ```python
@@ -31,6 +33,7 @@ import math
 import tempfile
 from pathlib import Path
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -43,8 +46,9 @@ from chemomae.training import (
 )
 from chemomae.utils import set_global_seed
 
-assert chemomae.__version__ == "0.2.3"
+assert chemomae.__version__ == "0.2.4"
 device = torch.device("cpu")
+model_dtype = torch.float32
 set_global_seed(42)
 run_dir = Path(tempfile.mkdtemp(prefix="chemomae-workflow-"))
 length = 64
@@ -61,9 +65,14 @@ def sample_spectra(count: int) -> torch.Tensor:
     noise = 0.03 * torch.randn(count, length, generator=data_stream)
     return templates[identities] + noise
 
-train_x = snv(sample_spectra(64), eps=snv_eps)
-validation_x = snv(sample_spectra(16), eps=snv_eps)
-test_x = snv(sample_spectra(16), eps=snv_eps)
+# Simulate arrays from a NumPy-based measurement pipeline.
+train_array = sample_spectra(64).numpy().astype(np.float64)
+validation_array = sample_spectra(16).numpy().astype(np.float64)
+test_array = sample_spectra(16).numpy().astype(np.float64)
+train_x = torch.as_tensor(snv(train_array, eps=snv_eps), dtype=model_dtype)
+validation_x = torch.as_tensor(snv(validation_array, eps=snv_eps), dtype=model_dtype)
+test_x = torch.as_tensor(snv(test_array, eps=snv_eps), dtype=model_dtype)
+assert train_x.dtype == model_dtype
 
 def ordered_loader(spectra: torch.Tensor) -> DataLoader:
     return DataLoader(TensorDataset(spectra), batch_size=16, shuffle=False, num_workers=0)
@@ -77,6 +86,14 @@ print("Outputs:", run_dir)
 SNV has no fitted population statistics. Constant rows become zero; see its
 [precision, epsilon, and short-spectrum contract](../preprocessing/snv.md).
 The template identities are not supplied to training or clustering.
+
+When replacing these arrays with your NumPy spectra, keep the explicit dtype
+conversion. SNV preserves NumPy float64, and `torch.from_numpy` alone also
+preserves it. Here `model_dtype` controls both the input conversion and model
+construction; the CPU DataLoader batches are then transferred by Trainer.
+With ChemoMAE, Trainer preserves input dtype and reports incompatible
+input/model dtypes; Extractor casts floating inputs to its model's dtype.
+Explicit preparation makes the same arrays suitable for both paths.
 
 The same explicit `device` is used for the model, training, extraction, and
 clustering. Keep it at `"cpu"` for this walkthrough. When adapting to CUDA, move
@@ -109,7 +126,7 @@ def make_trainer(
     resume_from: Path | None = None,
     augmenter: SpectraAugmenter | None = None,
 ) -> Trainer:
-    model = ChemoMAE(**model_config).to(device)
+    model = ChemoMAE(**model_config).to(device=device, dtype=model_dtype)
     optimizer = build_optimizer(model, lr=1e-3, weight_decay=0.01)
     scheduler = build_scheduler(
         optimizer, steps_per_epoch=len(train_loader), epochs=2,
@@ -150,14 +167,16 @@ Trainer's default outputs include weights, a config-and-weights artifact,
 history, and a training checkpoint. This example selects raw final weights.
 Choose raw or EMA weights deliberately before downstream inference.
 Here `use_ema=False`, so `result["final_model"]` is `"last_model.pt"`.
-That is a weight file for `load_state_dict`; `ChemoMAE.load` needs the sibling
-`last_model.artifact.pt` used below. With the default EMA enabled and exported,
-the selected pair would be `ema_last_model.pt` / `ema_last_model.artifact.pt`.
+That is a weight file for `load_state_dict`. Use `result["final_artifact"]` to
+load the corresponding config-and-weights artifact directly; it is an absolute
+path, including when output filenames are customized. With EMA enabled and
+exported, it selects the corresponding EMA artifact instead.
 
 ```python
 assert result["final_model"] == "last_model.pt"
-selected_artifact = run_dir / "last_model.artifact.pt"
-inference_model = ChemoMAE.load(selected_artifact, device=device)
+assert result["final_artifact"] is not None
+inference_model = ChemoMAE.load(result["final_artifact"], device=device)
+selected_artifact = Path(result["final_artifact"])
 assert not inference_model.training
 assert selected_artifact.is_file()
 ```
@@ -166,6 +185,8 @@ assert selected_artifact.is_file()
 moves the model to the requested device, and returns it in eval mode. Training
 checkpoints additionally retain optimizer and progress state for resume. Output
 paths and enablement are configurable. See [persistence](../models/persistence.md).
+`final_artifact` is `None` when no selected artifact was exported, such as when
+artifact export is disabled or the model does not support that format.
 
 ## 4. Extract features
 
@@ -235,7 +256,7 @@ loader's length for the scheduler. Keep indices when rows have associated metada
 This section uses the factory from section 2 to configure a separate run.
 Fractional shifts and tangent noise perturb the model input before masking;
 Trainer retains the input from before augmentation as the reconstruction target.
-That target still contains any variation present in the measured input.
+That target still contains any variation present in the original input.
 
 ```python
 from chemomae.training import SpectraAugmenterConfig
@@ -344,10 +365,13 @@ test scores. Silhouette describes compactness and separation in the supplied
 representation. One-class predictions have undefined silhouette.
 
 [VMFMixture](../clustering/vmf_mixture.md) provides a probabilistic alternative;
-read the current `elbow_vmf` limitation before interpreting its returned K.
+its `elbow_vmf` helper selects curve curvature, not the minimum BIC or an
+application-specific optimum. Inspect its score curve and documented edge cases.
 CPU CosineKMeans does not chunk its similarity matrix. CUDA fitting can stream
 CPU feature chunks, while retaining the full CPU input. Requested distances
 still occupy `(N, K)` memory. Silhouette chunks only its similarity tile.
+See the [memory budget example](first_experiment.md#estimate-memory-by-operation)
+before scaling these calls to a full image collection.
 
 ## Optional: evaluate a spatial label map
 
@@ -422,7 +446,8 @@ def json_ready(value: object) -> object:
 
 report = {
     "chemomae_version": chemomae.__version__, "torch_version": str(torch.__version__),
-    "device": str(device), "global_seed": 42, "data_seed": 24,
+    "device": str(device), "model_dtype": str(model_dtype),
+    "global_seed": 42, "data_seed": 24,
     "model_config": inference_model.get_config(),
     "preprocessing": {"method": "snv", "eps": snv_eps},
     "selected_artifact": selected_artifact.name, "clustering": {"k": 3, "seed": 42},
@@ -448,8 +473,12 @@ establish API behavior, not a claim about representation or clustering quality.
 - A patch-divisibility error means the spectrum length and patch count disagree.
 - An existing-output error requires an explicit resume checkpoint or a fresh directory.
 - A checkpoint mismatch requires the saved architecture and compatible training recipe.
+- An input/model dtype error requires explicit conversion at the data boundary;
+  for the FP32 model above, use `torch.as_tensor(array, dtype=model_dtype)`.
 - Undefined LLA or silhouette should retain its reason, rather than become a zero score.
 - Choose device, precision, and storage explicitly when moving these CPU examples to CUDA.
 
 For custom masks, ordering, or random streams, use the
 [Trainer hooks and plain PyTorch loop](../training/trainer.md).
+For configuration comparisons and memory estimates, see
+[planning a first experiment](first_experiment.md).

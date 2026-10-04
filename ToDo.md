@@ -4,35 +4,34 @@ Track unfinished work here. Keep completed release history in `CHANGELOG.md`
 and Git. Add accepted fixes and improvements with GitHub issue links when
 available.
 
-## Documentation review
-
-- [ ] User: review `README.md` and all of `docs/` for wording, scientific
-  explanations, example clarity, links, and GitHub MathJax rendering.
-- [ ] Verify the revised formulas in GitHub's rendered Markdown or unsaved
-  Preview. MathJax command support and source syntax have been checked, but
-  the changed pages still need actual GitHub display verification. CPU example
-  execution and local link checks do not establish rendering correctness.
-
-Keep this review open until the user confirms completion. Add corrections
-identified during the review as individual tasks and remove them once resolved.
-
 ## Publication and repository links
 
-- [ ] Add the manuscript/publication and research-repository links to
-  `README.md`'s Research background section when their public URLs are available.
-  Use confirmed URLs and keep the links as optional research background for the
-  general-purpose library.
+- [ ] Add the manuscript/publication link to `README.md`'s Research background
+  section when its public URL is available. Keep the link as optional research
+  background for the general-purpose library.
 
-## Clustering
+## v0.2.4 release preparation
 
-- [ ] Fix the score-direction mismatch in `elbow_vmf` before relying on its
-  returned elbow K. `src/chemomae/clustering/vmf_mixture.py` negates BIC/mean NLL
-  before passing the curve to `find_elbow_curvature`, which enforces a
-  nonincreasing curve with `np.minimum.accumulate`. For monotonically decreasing
-  scores such as `[500, 410, 360, 340, 335, 334]` at K=1..6, the negated curve
-  becomes constant after that operation, discarding the bend and returning
-  K=2 with zero curvature. Confirm the intended treatment of decreasing and
-  nonmonotonic BIC/NLL curves; add a regression check that covers score
-  direction, not only return types/ranges; then synchronize the API docs.
-  This documentation revision records the limitation without changing the
-  algorithm or choosing a new model-selection rule.
+The source version is 0.2.4; publication is deferred. The elbow score-direction
+fix, selected-artifact return path, dtype diagnostics, and usage guides are
+implemented. User-reported targeted/full tests and the selected documentation
+recipes have passed in `chemomae-test`. The wheel and source distribution have
+been built and passed `twine check`. The selected documentation recipes also
+passed against installed ChemoMAE 0.2.4 in `chemomae-min` with Torch 2.1.0 on
+CPU. The dedicated installed-package CPU smoke check and `pip check` also
+passed in that environment; see `CHANGELOG.md` for the recorded results.
+The planned local validation is complete. Publication preparation remains below.
+
+- [ ] Before an explicitly authorized publication, complete the same-commit CI
+  gates, update preparation-only installation/status wording, and pin the
+  package documentation URL to the confirmed v0.2.4 snapshot. Rebuild the wheel
+  and source distribution after the final documentation edits, then rerun
+  `twine check`.
+
+## Clustering follow-up
+
+- [ ] Low-priority consideration: a label-only `VMFMixture.predict` path that
+  avoids the full N-by-K responsibility matrix. The current need is limited;
+  implementation is not a v0.2.4 release requirement. Preserve labels, tie
+  behavior, and chunk semantics if this path is changed. Caller-side slicing is
+  documented as the current alternative.

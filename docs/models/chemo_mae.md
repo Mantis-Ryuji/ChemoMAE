@@ -164,7 +164,7 @@ mask alone does not make train-mode execution deterministic.
 ## Architecture
 
 <p align="center">
-<img src="../../images/chemomae.svg" alt="ChemoMAE spectral patch encoder and shared latent reconstruction bottleneck">
+<img src="../../images/chemomae_model.png" alt="ChemoMAE spectral patch encoder and shared latent reconstruction bottleneck">
 </p>
 
 ### Encoder

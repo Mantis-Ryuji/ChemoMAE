@@ -856,7 +856,7 @@ def elbow_vmf(
     device : str, default="cuda"
         Training device for each K.
     k_max : int, default=50
-        Sweep K from 1..k_max.
+        Sweep K from 1..k_max. Must be an integer >= 3.
     chunk : int | None, default=None
         None transfers `X` to device once for reuse across K, trading VRAM for speed.
         With an int, `X` may remain on CPU while fit/predict stream chunked E-steps.
@@ -875,7 +875,7 @@ def elbow_vmf(
     scores : list[float]
         Score for each K, depending on criterion; lower is better.
     K_elbow : int
-        Optimal K from curvature-based elbow estimation.
+        Heuristic K from curvature-based elbow estimation, not the minimum-score K.
     idx_elbow : int
         Elbow index in `k_list`.
     curvature : float
@@ -883,20 +883,26 @@ def elbow_vmf(
 
     Notes
     -----
-    - Curvature uses `find_elbow_curvature`, treating the negated score series as
-      an increasing sequence (implementation-dependent).
-    - BIC and elbow estimates can select different K; choose the criterion for the application.
+    - Both criteria pass their lower-is-better scores directly to
+      `find_elbow_curvature`; returned scores are unchanged.
+    - The helper replaces score increases with the cumulative minimum before
+      estimating curvature. Inspect the original curve because this can hide
+      nonmonotonic behavior. A flat curve selects K=2 with zero curvature and
+      does not provide evidence for a preferred K.
+    - Minimum-score and elbow estimates can select different K; use the
+      comparison protocol chosen for the application.
     """
     if X.ndim != 2:
         raise ValueError("X must be 2D")
+    if isinstance(k_max, bool) or not isinstance(k_max, (int, np.integer)) or k_max < 3:
+        raise ValueError("k_max must be an integer >= 3")
+    if criterion not in ("bic", "nll"):
+        raise ValueError("criterion must be 'bic' or 'nll'")
 
     if chunk is None:
         X_input = X.to(device, non_blocking=True)
     else:
         X_input = X
-
-    if criterion not in ("bic", "nll"):
-        raise ValueError("criterion must be 'bic' or 'nll'")
 
     scores: List[float] = []
     k_list = list(range(1, k_max + 1))
@@ -929,8 +935,7 @@ def elbow_vmf(
             torch.cuda.empty_cache()
 
     from .ops import find_elbow_curvature
-    series_for_curv = [-s for s in scores]
-    K, idx, kappa = find_elbow_curvature(k_list, series_for_curv)
+    K, idx, kappa = find_elbow_curvature(k_list, scores)
 
     if verbose:
         best_idx = int(min(range(len(scores)), key=lambda i: scores[i]))

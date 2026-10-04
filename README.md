@@ -9,11 +9,21 @@
 Its preprocessing, model, training, clustering, and metric components can be used
 independently or combined in a pipeline.
 
-These guides cover the **v0.2.3 API**. README links lead to the maintained
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Mantis-Ryuji/ChemoMAE/main/images/chemomae.svg" alt="Example hyperspectral spatial mapping workflow: encoder, masked spectral reconstruction, and clustering with labels mapped back to pixel locations" width="640">
+</p>
+
+> **Example application: unsupervised spatial mapping of hyperspectral images.**
+> (a) A Transformer encoder projects spectra into L2-normalized representations.
+> (b) In the illustrated training setup, augmented visible patches are used to reconstruct the masked regions of the original spectra.
+> (c) The trained encoder receives complete spectra; their representations are clustered, and the cluster labels are mapped back to the original pixel locations.
+
+These guides cover **v0.2.4, in preparation and not yet published to PyPI**.
+README links lead to the maintained
 repository documentation; the [v0.2.3 snapshot](https://github.com/Mantis-Ryuji/ChemoMAE/tree/v0.2.3/docs)
 retains the documentation distributed with that release. See the
 [release notes](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/CHANGELOG.md)
-for compatibility changes from v0.2.2.
+for changes and compatibility notes.
 
 ## Choose the components you need
 
@@ -36,18 +46,18 @@ learning and feature extraction require no pixel coordinates.
 
 Install a CPU or CUDA build of PyTorch appropriate for your environment using
 the [official installation selector](https://pytorch.org/get-started/locally/),
-then install ChemoMAE:
+then install this v0.2.4 source checkout from the repository root:
 
 ```bash
-python -m pip install "chemomae==0.2.3"
+python -m pip install -e .
 ```
 
 Python >=3.10 and PyTorch >=2.1 are required. CI covers Python 3.10–3.13 with
 selected CPU PyTorch builds, including Python 3.10/PyTorch 2.1; it does not test
 every combination. With PyTorch 2.1, use NumPy `>=1.24,<2` for NumPy interoperability.
 
-For development, use `python -m pip install -e .` from a checkout in your chosen
-environment. Check out `v0.2.3` when you need the exact release source.
+For the published v0.2.3 package, use `python -m pip install "chemomae==0.2.3"`
+and its versioned documentation. The examples below use the new v0.2.4 API.
 
 ## ChemoMAE Example
 
@@ -90,9 +100,10 @@ trainer = Trainer(
         progress=False, verbose=False,
     ),
 )
-trainer.fit(epochs=2)
+result = trainer.fit(epochs=2)
 
-inference_model = ChemoMAE.load(run_dir / "last_model.artifact.pt", device=device)
+assert result["final_artifact"] is not None
+inference_model = ChemoMAE.load(result["final_artifact"], device=device)
 extractor = Extractor(
     inference_model,
     ExtractorConfig(representation="normalized_latent", output_device="cpu"),
@@ -119,7 +130,8 @@ Keep these choices explicit when adapting it:
 | --- | --- |
 | Start a fresh training run | Use a new `out_dir` and `resume_from=None`. Existing training artifacts cause an error. The default `resume_from="auto"` can resume an earlier run in the same directory. |
 | Continue a saved run | Create a new Trainer with `resume_from=checkpoint_path`. `fit(epochs=10)` trains through epoch 10: a checkpoint after epoch 7 leaves epochs 8–10 to run. |
-| Reload for inference | Pass the chosen `.artifact.pt` file to `ChemoMAE.load`. The `final_model` field returned by `fit` names a weight file, which uses `load_state_dict` instead. |
+| Reload for inference | Pass `result["final_artifact"]` directly to `ChemoMAE.load`; it is an absolute path to the selected raw/EMA artifact, or `None` when no artifact is exported. `final_model` continues to name a weight file for `load_state_dict`. |
+| Bring NumPy spectra | Explicitly convert to the model's floating dtype before training, for example `torch.as_tensor(array, dtype=next(model.parameters()).dtype)`. NumPy arrays often start as float64 and remain float64 through SNV. |
 | Choose CPU or CUDA | Move the model to the chosen device before constructing the optimizer, and pass `device` to the clusterer. Trainer/Extractor follow the model by default; CosineKMeans/VMFMixture default to `"cuda"`, including on a CPU-only machine. |
 
 See [starting or resuming training](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/training/trainer.md#starting-fresh-or-resuming)
@@ -131,6 +143,8 @@ Continue with the [staged workflow tutorial](https://github.com/Mantis-Ryuji/Che
 for reconstruction evaluation and optional augmentation, resume, clustering,
 spatial analysis, and reporting. The [documentation index](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/README.md)
 also provides direct routes to each API.
+For configuration comparisons and memory estimates, see
+[planning a first experiment](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/tutorials/first_experiment.md).
 
 ## Model and workflow choices
 
@@ -164,9 +178,11 @@ the diagnostics that address your intended use.
 ## Research background
 
 ChemoMAE was extracted into a reusable library from spectral representation
-learning research. A manuscript with an NIR-HSI case study is in preparation;
-publication and research-repository links will be added when available. Library
-defaults and examples are documented independently of that study's settings.
+learning research. The associated research repository is
+[WoodDegradationMap](https://github.com/Mantis-Ryuji/WoodDegradationMap).
+A manuscript with an NIR-HSI case study is in preparation; its publication link
+will be added when available. Library defaults and examples are documented
+independently of that study's settings.
 
 ## License
 

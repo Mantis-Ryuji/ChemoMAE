@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chemomae"
-version = "0.2.3"
+version = "0.2.4"
 description = "ChemoMAE: 1D Spectral Masked Autoencoder + Hyperspherical Clustering Toolkit"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -62,7 +62,7 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/Mantis-Ryuji/ChemoMAE"
-Documentation = "https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.3/docs/README.md"
+Documentation = "https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/README.md"
 Issues = "https://github.com/Mantis-Ryuji/ChemoMAE/issues"
 
 [tool.setuptools]

@@ -96,14 +96,50 @@ trainer = Trainer(
     ),
 )
 result = trainer.fit(epochs=2)
-selected = trainer.out_dir / str(result["final_model"])
-model.load_state_dict(torch.load(selected, map_location=device, weights_only=True))
-model.eval()
+assert isinstance(result["final_artifact"], str)
+selected = Path(result["final_artifact"])
+model = ChemoMAE.load(selected, device=device)
 ```
 
 Auto resume also rejects stranded history or weight exports with no checkpoint.
 The checkpoint is the authoritative source for history and progress, even if a
 JSON history file was written just before an interrupted checkpoint save.
+
+### NumPy inputs and dtype
+
+NumPy arrays commonly use float64. `snv` preserves float64, and
+`torch.from_numpy` preserves it too. Convert explicitly when constructing a
+loader for an FP32 model; for example, using the model above:
+
+```python
+import numpy as np
+from chemomae.preprocessing import snv
+
+numpy_spectra = np.random.default_rng(7).normal(size=(12, 16))
+spectra = torch.from_numpy(snv(numpy_spectra)).to(
+    dtype=model.encoder.patch_proj.weight.dtype,
+)
+loader = DataLoader(TensorDataset(spectra), batch_size=4, shuffle=False)
+```
+
+SNV is optional; the explicit dtype conversion is the same without it.
+The default `forward_batch` checks the input dtype before calling a standard
+ChemoMAE and reports both the supplied and expected dtypes when incompatible.
+This applies to ordinary batches and `PreparedBatch.model_input`. Matching
+float64 inputs and a float64 model remain valid. CUDA autocast permits its
+float16/bfloat16/float32 combinations, but does not repair float64 mismatches.
+Targets may have a different floating dtype; the standard loss follows Torch
+type promotion. The Trainer does not change either dtype implicitly.
+
+Custom model classes and overridden `forward_batch` methods retain their own
+conversion policy. The early check also defers to registered input pre-hooks
+or instance-level forward overrides on ChemoMAE, its encoder, or its input
+projection; these may adapt dtype before the projection. Their errors remain
+the responsibility of the customization. `prepare_batch` may also convert before
+the default forward method validates its result. Extractor separately converts
+inference inputs to the model dtype; that convenience does not apply to training.
+Use the same explicit `device` for the model, Trainer, Extractor, and clustering
+when connecting these components; clustering has its own device default.
 
 ## Prepared inputs, targets, and masks
 
@@ -343,9 +379,15 @@ containing configuration and weights. `result["final_model"]` selects an enabled
 EMA **weight file**, otherwise an enabled raw weight file, otherwise `None`.
 It retains the configured filename: resolve relative values below `trainer.out_dir`;
 absolute paths remain absolute. The value is not a model object or an artifact path.
-Use `load_state_dict` for that weight file, or pass its sibling `.artifact.pt` file
-to `ChemoMAE.load`. The [output-file guide](../models/persistence.md#raw-and-ema-exports)
-maps default filenames to the appropriate loader.
+Use `load_state_dict` for that weight file.
+
+`result["final_artifact"]` supplies the **absolute path** to the corresponding
+selected ChemoMAE artifact, ready for `ChemoMAE.load`. It is `None` when
+`model_artifacts=False`, when the model is a custom class (including a ChemoMAE
+subclass), or when neither raw nor EMA weights are exported. Disabling just the
+EMA export selects the raw artifact when raw export is enabled, even if EMA
+tracking remains active. The [output-file guide](../models/persistence.md#raw-and-ema-exports)
+maps filenames to the appropriate loader.
 
 The in-memory model remains raw; load the chosen export before evaluation/extraction
 when using EMA. Default paths are `training_history.json`, `checkpoints/last.pt`,
@@ -384,5 +426,7 @@ pytest tests/training/test_trainer_smoke.py -q
 
 The tests cover the ordinary path, public customization hooks, generator-state
 resume for a small deterministic adapter, progress persistence, prepared-input
-augmentation bypass, and simulated AMP skips. Tests and CUDA checks must be run
+augmentation bypass, selected-artifact round trips, dtype diagnostics, and
+simulated AMP skips. CUDA-only cases check autocast-compatible input dtypes and
+float64 mismatch rejection. Tests and CUDA checks must be run
 explicitly; documentation and source review alone do not establish validation.

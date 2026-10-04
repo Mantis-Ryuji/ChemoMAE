@@ -2,7 +2,7 @@
 
 > Module: `chemomae.clustering.vmf_mixture`
 > Purpose: Probabilistic clustering of L2-normalized features on $S^{d-1}$ via an EM algorithm.
-> API reference for ChemoMAE v0.2.3.
+> API reference for ChemoMAE v0.2.4 (release preparation).
 
 **VMFMixture** fits a **von Mises–Fisher mixture model** to feature directions on
 the unit hypersphere. Unlike hard nearest-direction assignments, it estimates
@@ -166,6 +166,11 @@ floats; `num_params` returns a Python integer. `load` is a class method returnin
 a new instance. The internal `_logC` cache and `_fitted` flag are implementation
 details, not additional public configuration.
 
+A label-only prediction path that avoids the full responsibility matrix is under
+consideration as a low-priority improvement. The current need is limited, and it
+is not a v0.2.4 release requirement. For the existing caller-side slicing option,
+see [memory planning](../tutorials/first_experiment.md#estimate-memory-by-operation).
+
 ---
 
 ## Functions
@@ -206,18 +211,17 @@ float64 concentrations. The mixture always requests a float64 log normalizer.
 
 ### `elbow_vmf`
 
-**Known limitation:** the current helper negates BIC/NLL scores before passing
-them to `find_elbow_curvature`, which then enforces a non-increasing curve.
-For monotonically decreasing scores this makes the curve flat and returns the
-first interior point (`K=2`) with zero curvature, regardless of the original
-bend. Do not use the returned `optimal_k` as a reliable elbow estimate. The
-returned raw `scores` remain available for inspection; this limitation does not
-change fixed-K `fit`, `loglik`, or `bic`.
+The sweep passes lower-is-better BIC/NLL scores directly to
+[`find_elbow_curvature`](ops.md) and returns an interior curvature
+candidate. The returned raw `scores` are unchanged. In v0.2.3, a score-direction
+mismatch could flatten a decreasing curve and return `K=2` with zero curvature;
+v0.2.4 removes that sign reversal. Fixed-K `fit`, `loglik`, and `bic` are unchanged.
 
 This example continues the quick start. The sweep fits models for `K=1..k_max`
 with `tol=1e-4` and `max_iter=200`. Defaults are `device="cuda"`, `k_max=50`,
 `chunk=None`, `verbose=True`, `random_state=42`, and `criterion="bic"`. At least
-three K values are needed by the curvature helper.
+three K values are needed by the curvature helper; a noninteger `k_max` or one
+below 3 raises `ValueError` before transferring data or fitting any models.
 
 ```python
 from chemomae.clustering.vmf_mixture import elbow_vmf
@@ -231,7 +235,13 @@ k_list, scores, optimal_k, elbow_idx, kappa = elbow_vmf(
 
 * `criterion="bic"` → use **BIC** (lower = better).
 * `criterion="nll"` → use **mean NLL** (= − mean log-lik; lower = better).
-* Both criteria currently pass the negated score curve to `find_elbow_curvature`; see the limitation above.
+* Both criteria pass the original score curve to `find_elbow_curvature`, which
+  replaces increases with the cumulative minimum before computing curvature.
+  This can conceal nonmonotonic behavior, including a BIC increase after its
+  minimum. Inspect the raw curve alongside the selected candidate.
+* A flat curve, including one made flat by the cumulative minimum, selects the
+  first interior point (`K=2`) with zero curvature. This is a tie-breaking
+  convention and does not supply evidence for a preferred K.
 * Minimum-score K is reported separately when `verbose=True`; it can differ from the returned elbow K.
 
 **Returns:**
@@ -254,8 +264,8 @@ from chemomae.clustering import plot_elbow_vmf
 plot_elbow_vmf(k_list, scores, optimal_k, elbow_idx, criterion="bic")
 ```
 
-Plots the score curve with the supplied candidate annotated. It does not validate
-that candidate or resolve the `elbow_vmf` limitation.
+Plots the raw score curve with the supplied candidate annotated. It does not
+validate that candidate or establish that a meaningful elbow exists.
 y-axis label automatically switches between **BIC** and **Mean NLL**.
 (Use `plt.show()` or `plt.savefig(...)` externally.)
 
@@ -301,11 +311,11 @@ assert torch.allclose(vmf.mus.cpu(), vmf2.mus, atol=1e-6)
 
 ## Minimal Checks
 
-The regression suite uses synthetic CPU data and optional small CUDA checks. It
-does not run research training or evaluate real datasets. Run from the repository
-root with the test environment activated and existing development dependencies
-installed. Use an editable installation of the `v0.2.3` Git tag so that package
-metadata and source match:
+The regression suite uses synthetic CPU data and optional small CUDA checks.
+Run from the repository root with the test environment activated and existing
+development dependencies installed. For v0.2.4 release preparation, use an
+editable installation of the current checkout so that package metadata and
+source match:
 
 ```powershell
 python -m pip install --no-deps -e .
@@ -330,6 +340,7 @@ The CUDA cases skip when CUDA is unavailable. Test definitions cover:
 | Concentration approximation | Reference Bessel-ratio residual <= `5e-3` for d=16, 256 and resultant lengths 0.01, 0.1, 0.5, 0.9, 0.99, 0.999. This checks the retained approximation, not an exact M-step solution. |
 | EM behavior | Final likelihood after one or more updates, separate stopping reasons, antipodal inputs, empty components, and tiny positive component mass. |
 | Chunk and persistence | Fixed-parameter sufficient statistics, probabilities and likelihood; parameter/RNG round trips; CPU restoration of CUDA device metadata; legacy cache invalidation; optional actual CUDA round trip. |
+| Elbow score direction | CPU score stubs for BIC and mean NLL, positive and negative score ranges, known quadratic curves with independently specified K and curvature, short-curve gradients, raw-score preservation, cumulative-minimum/flat behavior, and invalid sweep rejection before fitting. |
 
 These tolerances define regression acceptance at the listed points, not a global
 error guarantee. Float32 parameters/statistics and approximate concentration updates

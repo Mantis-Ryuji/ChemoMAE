@@ -9,9 +9,9 @@ objective-curve inspection. They can be used independently of a ChemoMAE model.
 
 ## Overview
 
-`CosineKMeans` and `elbow_ckmeans` use these operations internally. On nonzero
-unit-norm vectors, cosine similarity is the dot product. Applying it to two
-different feature spaces does not imply that their similarity values agree.
+`CosineKMeans`, `elbow_ckmeans`, and `elbow_vmf` use these operations internally.
+On nonzero unit-norm vectors, cosine similarity is the dot product. Applying it
+to two different feature spaces does not imply that their similarity values agree.
 
 ## Quick start
 
@@ -197,7 +197,7 @@ Visualize the inertia curve and elbow location.
 * Does not call `plt.show()` — suitable for both notebooks and scripts.
 * Creates a Matplotlib figure and returns `None`; display, saving, and closing
   the figure are caller-owned. `plot_elbow_vmf` is also defined in this module;
-  see its [reference and current sweep limitation](vmf_mixture.md#plot_elbow_vmf).
+  see its [reference and sweep interpretation](vmf_mixture.md#plot_elbow_vmf).
 
 ---
 

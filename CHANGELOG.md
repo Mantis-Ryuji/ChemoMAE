@@ -1,6 +1,28 @@
 # Changelog
 
-## Unreleased
+## 0.2.4 (Unreleased)
+
+This version is in preparation and has not been published to PyPI.
+
+### Fixed
+
+- Pass lower-is-better BIC/mean NLL scores directly to the nonincreasing-curve
+  elbow helper. The previous sign reversal could erase the bend and return K=2
+  with zero curvature for decreasing scores. Fixed-K fitting and raw score values
+  are unchanged; the elbow remains a heuristic, distinct from minimum-score K.
+- Reject fewer than three candidate K values before starting a vMF sweep.
+- Explain input/model dtype mismatches before the standard ChemoMAE training
+  forward pass, including the actual dtypes and an explicit conversion hint.
+  Trainer still preserves input dtype; custom forward hooks retain their policy.
+
+### Added
+
+- `Trainer.fit()` returns `final_artifact`, an absolute path to the selected
+  raw/EMA inference artifact that can be passed directly to `ChemoMAE.load`.
+  It is `None` when artifact output is disabled, no weight export is selected,
+  or the model does not support Trainer's ChemoMAE artifact export.
+- Regression coverage for BIC/NLL score direction, selected artifact loading,
+  and training dtype validation.
 
 ### Documentation
 
@@ -10,8 +32,46 @@
   augmentation, resume, clustering, spatial evaluation, and reporting.
 - Correct loss/mask contracts, example imports and assertions, normalization
   qualifications, and clustering memory descriptions; add small CPU API examples.
-- Document the existing `elbow_vmf` score-direction limitation pending a separate
-  implementation fix. No runtime APIs, defaults, or saved formats change here.
+- Use the selected artifact path in the public workflow and show explicit
+  NumPy-to-model dtype conversion before training.
+- Add a first-experiment guide covering caller-defined evaluation protocols,
+  focused configuration comparisons, and operation-specific memory estimates.
+- Link the associated WoodDegradationMap research repository from the README.
+
+### Compatibility and preparation status
+
+- `final_model` keeps its existing configured weight filename and raw/EMA
+  selection rule. Model artifacts and training checkpoints keep their existing
+  format versions. Default devices, automatic resume, and input conversion
+  policies are unchanged.
+- Corrected elbow K values may differ from v0.2.3. The shared curve helper still
+  applies a cumulative minimum to nonmonotonic curves; flat curves still select
+  the first interior point with zero curvature. Neither establishes a true K.
+- Local validation is complete; same-commit CI gates and publication preparation
+  remain pending. Publication is deferred; see `ToDo.md`.
+
+### Local validation reported by the user
+
+- In the `chemomae-test` environment, the targeted tests passed: 226 passed,
+  69 warnings. The complete suite then passed: 603 passed, 137 warnings.
+- After correcting the Trainer example selector to include its NumPy
+  subsection under the parent level-two heading, the documentation runner
+  passed 21 recipes containing 37 actual Python blocks. Unselected examples
+  were not executed.
+- The documentation run reported Python 3.11.17, NumPy 2.4.6, Torch
+  2.14.1+cu126, and ChemoMAE 0.2.4 imported from the editable source checkout;
+  the selected examples ran on CPU.
+- The 0.2.4 wheel and source distribution were built; both passed `twine check`.
+- In the separate `chemomae-min` environment, the documentation runner passed
+  all 21 selected recipes and 37 Python blocks from outside the checkout with
+  `python -I`. It reported Python 3.10.22, NumPy 1.26.4, Torch 2.1.0+cpu, and
+  ChemoMAE 0.2.4 imported from that environment's `site-packages`.
+- The dedicated `tests/installed_package_smoke.py` check also passed in
+  `chemomae-min`, run with `python -I` from outside the checkout:
+  `Installed ChemoMAE CPU workflow passed.`
+- `python -m pip check` in `chemomae-min` reported
+  `No broken requirements found.` These local results do not replace the
+  supported CI matrix.
 
 ## 0.2.3
 

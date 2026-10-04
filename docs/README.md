@@ -1,10 +1,12 @@
 # ChemoMAE documentation
 
-These guides describe the v0.2.3 API, including documentation corrections made
-after release. Relative links follow the repository revision you are viewing.
-For the original release documentation, use the
+These guides describe the v0.2.4 API being prepared in this checkout; v0.2.4 has
+not been published to PyPI. Use the source installation in the
+[workflow tutorial](tutorials/workflow.md#1-set-up-and-prepare-spectra) for these
+examples. Relative links follow the repository revision you are viewing.
+For the published v0.2.3 documentation, use the
 [v0.2.3 snapshot](https://github.com/Mantis-Ryuji/ChemoMAE/tree/v0.2.3/docs).
-[Release notes](../CHANGELOG.md) summarize compatibility changes from v0.2.2.
+[Release notes](../CHANGELOG.md) summarize changes and compatibility notes.
 
 ## Start with your task
 
@@ -12,6 +14,7 @@ For the original release documentation, use the
 | --- | --- |
 | Install the package and run a complete CPU example | [README quick start](../README.md#quick-start) |
 | Learn representations, then choose optional downstream steps | [Staged workflow tutorial](tutorials/workflow.md) |
+| Plan a first experiment and estimate its memory requirements | [First-experiment recipe](tutorials/first_experiment.md) |
 | Normalize spectra or select a smaller set of rows | [SNV](preprocessing/snv.md), [cosine FPS](preprocessing/dowmsampling.md) |
 | Build a model or use a custom PyTorch loop | [Model and representations](models/chemo_mae.md), [losses](models/losses.md), [Trainer hooks and plain loop](training/trainer.md) |
 | Configure reconstruction training or resume a run | [Starting fresh or resuming](training/trainer.md#starting-fresh-or-resuming), [Trainer configuration](training/trainer.md#configuration-and-the-simple-path), [optimizer/scheduler](training/optim.md), [augmentation](training/augmenter.md) |

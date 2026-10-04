@@ -21,7 +21,7 @@ from chemomae.training import Extractor, ExtractorConfig, Tester, TesterConfig, 
 
 
 def main() -> None:
-    assert importlib.metadata.version("chemomae") == chemomae.__version__ == "0.2.3"
+    assert importlib.metadata.version("chemomae") == chemomae.__version__ == "0.2.4"
     package_dir = Path(chemomae.__file__).resolve().parent
     assert (package_dir / "py.typed").is_file()
     distribution = importlib.metadata.distribution("chemomae")
@@ -47,8 +47,12 @@ def main() -> None:
         )
         result = trainer.fit(epochs=1)
         assert result["completed"] and result["optimizer_updates"] == 3
-        restored = ChemoMAE.load(out_dir / "last_model.artifact.pt")
+        artifact = result["final_artifact"]
+        assert isinstance(artifact, str) and Path(artifact).is_absolute()
+        restored = ChemoMAE.load(artifact)
         assert restored.get_config() == model.get_config()
+        for name, value in model.state_dict().items():
+            torch.testing.assert_close(value, restored.state_dict()[name], rtol=0, atol=0)
         extractor = Extractor(restored, ExtractorConfig(output_device="cpu"))
         features = extractor(loader)
         streamed = torch.cat(list(extractor.iter_transform(loader)))

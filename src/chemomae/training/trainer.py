@@ -327,7 +327,31 @@ class Trainer:
         return PreparedBatch(self.augmenter(x) if self.augmenter is not None else x, x)
 
     def forward_batch(self, batch: PreparedBatch) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return reconstruction and the actual visible mask, without computing loss."""
+        """Return reconstruction and visible mask; validate standard ChemoMAE input dtype."""
+        # Input pre-hooks and instance forward overrides may intentionally adapt
+        # dtype before projection. Leave that contract with the customization.
+        standard_input = type(self.model) is ChemoMAE and all(
+            not module._forward_pre_hooks and "forward" not in vars(module)
+            for module in (self.model, self.model.encoder, self.model.encoder.patch_proj)
+        )
+        if standard_input:
+            expected = self.model.encoder.patch_proj.weight.dtype
+            actual = batch.model_input.dtype
+            autocast_dtypes = {torch.float16, torch.bfloat16, torch.float32}
+            # CUDA autocast can align these projection operands, but never casts
+            # float64; matching double input/model pairs remain valid.
+            autocast_compatible = (
+                batch.model_input.device.type == "cuda"
+                and torch.is_autocast_enabled()
+                and actual in autocast_dtypes and expected in autocast_dtypes
+            )
+            if actual != expected and not autocast_compatible:
+                raise TypeError(
+                    f"ChemoMAE model_input has dtype {actual}, but the model expects {expected}. "
+                    "Trainer preserves input dtype. Convert spectra explicitly with "
+                    "spectra.to(dtype=model.encoder.patch_proj.weight.dtype) before creating "
+                    "the training batches (or convert PreparedBatch.model_input)."
+                )
         if batch.visible_mask is None:
             reconstructed, _, visible = self.model(batch.model_input)
         else:
@@ -665,6 +689,9 @@ class Trainer:
 
         Resume uses the checkpoint as the history/progress source. Recreate the
         Trainer to resume rather than fitting one instance multiple times.
+        ``final_model`` retains the selected configured weight filename;
+        ``final_artifact`` is its absolute ChemoMAE artifact path, or None when
+        no corresponding model artifact is exported.
         """
         if type(epochs) is not int or epochs < 1:
             raise ValueError(f"epochs must be a positive integer, got {epochs!r}")
@@ -724,9 +751,16 @@ class Trainer:
         if self.ema_weights_path is not None:
             self._save_ema_weights_only()
         final_file = self.cfg.ema_weights_file if self.ema_weights_path is not None else self.cfg.raw_weights_file
+        final_weights = self.ema_weights_path if self.ema_weights_path is not None else self.raw_weights_path
+        final_artifact = (
+            self._artifact_path(final_weights).resolve()
+            if final_weights is not None and self.cfg.model_artifacts and type(self.model) is ChemoMAE
+            else None
+        )
         return {
             "epochs": last_epoch, "completed": last_epoch >= epochs,
             "final_model": str(final_file) if final_file is not None else None,
+            "final_artifact": str(final_artifact) if final_artifact is not None else None,
             "attempted_steps": self.attempted_steps, "optimizer_updates": self.optimizer_updates,
             "amp_skips": self.amp_skips,
         }

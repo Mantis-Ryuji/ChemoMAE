@@ -60,7 +60,7 @@ cosine_fps_downsample(
 For nonempty input, the count is
 
 $$
-k = \min\bigl(N,\max(1,\operatorname{round}(\rho N))\bigr),
+k = \min\bigl(N,\max(1,\mathrm{round}(\rho N))\bigr),
 \qquad \rho = \text{ratio}.
 $$
 
@@ -150,7 +150,7 @@ Let $\mathcal{S}_t$ contain the first $t$ selected indices. After a random or
 explicitly fixed initial index, each step chooses
 
 $$
-s_{t+1} = \operatorname*{arg\,max}_{i\notin\mathcal{S}_t}
+s_{t+1} = \mathop{\mathrm{arg}\ \mathrm{max}}\limits_{i\notin\mathcal{S}_t}
           \min_{j\in\mathcal{S}_t}d(\tilde{x}_i,\tilde{x}_j).
 $$
 
@@ -175,7 +175,7 @@ Already selected indices are excluded from future choices. Dot-product scores
 are bounded in the implementation to limit roundoff effects on distances.
 
 Each step performs a matrix-vector product over the supplied rows. Selection
-costs $O(Nk)$ length-$L$ inner products, or $O(NkL)$ arithmetic. Working rows
+costs $O(Nk)$ inner products of length $L$, or $O(NkL)$ arithmetic. Working rows
 occupy $O(NL)$ memory, distances $O(N)$, and selected indices $O(k)$. The full
 working matrix remains resident; this helper is not a streaming sampler.
 Selecting the next index also synchronizes a scalar on CUDA.

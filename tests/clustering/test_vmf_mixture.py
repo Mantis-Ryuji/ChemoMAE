@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 from chemomae.clustering.vmf_mixture import (
     VMFMixture, elbow_vmf, vmf_logC, vmf_bessel_ratio
 )
-from chemomae.clustering.ops import plot_elbow_vmf
+from chemomae.clustering.ops import find_elbow_curvature, plot_elbow_vmf
 
 
 @torch.no_grad()
@@ -157,6 +157,81 @@ def test_elbow_vmf_smoke_cpu():
     assert len(k_list) == len(scores) == 6
     assert 1 <= K <= 6 and 0 <= idx < 6
     assert isinstance(kappa, float) or np.isscalar(kappa) or hasattr(kappa, "__float__")
+
+
+def _score_curve_module(scores: list[float]) -> type[VMFMixture]:
+    """Isolate sweep score handling from mixture estimation and initialization."""
+    class ScoreCurveMixture(VMFMixture):
+        def __init__(self, n_components: int, **kwargs: object) -> None:
+            torch.nn.Module.__init__(self)
+            self._score = scores[n_components - 1]
+
+        def fit(self, X: torch.Tensor, *, chunk: int | None = None) -> VMFMixture:
+            assert X.device.type == "cpu"
+            return self
+
+        def bic(self, X: torch.Tensor, *, chunk: int | None = None) -> float:
+            return self._score
+
+        def loglik(
+            self, X: torch.Tensor, *, chunk: int | None = None, average: bool = False,
+        ) -> float:
+            assert average is True
+            return -self._score
+
+    return ScoreCurveMixture
+
+
+@pytest.mark.parametrize("criterion", ["bic", "nll"])
+@pytest.mark.parametrize("offset", [0.0, -100.0])
+@pytest.mark.parametrize("scores, expected_k, expected_curvature", [
+    # Normalized quadratics (1-x)^2 and 1-x^2: the S-G derivatives are exact.
+    ([25.0, 16.0, 9.0, 4.0, 1.0, 0.0], 5, 2 / (1 + 0.4**2)**1.5),
+    ([25.0, 24.0, 21.0, 16.0, 9.0, 0.0], 2, 2 / (1 + 0.4**2)**1.5),
+    # Four points use gradients: at K=3, y'=-2/3 and y''=3/2.
+    ([9.0, 4.0, 1.0, 0.0], 3, 1.5 / (1 + (2 / 3)**2)**1.5),
+])
+def test_elbow_vmf_preserves_decreasing_score_direction(
+    criterion: str, offset: float, scores: list[float], expected_k: int,
+    expected_curvature: float,
+) -> None:
+    original = [score + offset for score in scores]
+    k_list, actual, chosen, index, curvature = elbow_vmf(
+        _score_curve_module(original), torch.ones(2, 2), device="cpu",
+        k_max=len(original), criterion=criterion, verbose=False,
+    )
+    assert k_list == list(range(1, len(original) + 1))
+    assert actual == original
+    assert chosen == expected_k and index == expected_k - 1
+    assert curvature == pytest.approx(expected_curvature, rel=1e-10)
+
+
+@pytest.mark.parametrize("criterion", ["bic", "nll"])
+@pytest.mark.parametrize("scores, monotone", [
+    ([25.0, 16.0, 20.0, 4.0, 1.0, 0.0], [25.0, 16.0, 16.0, 4.0, 1.0, 0.0]),
+    ([7.0] * 6, [7.0] * 6),
+    ([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [1.0] * 6),
+])
+def test_elbow_vmf_retains_cumulative_minimum_and_flat_semantics(
+    criterion: str, scores: list[float], monotone: list[float],
+) -> None:
+    k_list, actual, chosen, index, curvature = elbow_vmf(
+        _score_curve_module(scores), torch.ones(2, 2), device="cpu",
+        k_max=len(scores), criterion=criterion, verbose=False,
+    )
+    assert actual == scores
+    assert (chosen, index, curvature) == find_elbow_curvature(k_list, monotone)
+    if len(set(monotone)) == 1:
+        assert (chosen, index, curvature) == (2, 1, 0.0)
+
+
+@pytest.mark.parametrize("k_max", [-1, 0, 1, 2, 3.5, True])
+def test_elbow_vmf_rejects_invalid_sweep_before_transfer_or_fit(k_max: int | float) -> None:
+    def unexpected_model(**kwargs: object) -> VMFMixture:
+        raise AssertionError("Invalid sweeps must not construct or fit models")
+
+    with pytest.raises(ValueError, match="k_max must be an integer >= 3"):
+        elbow_vmf(unexpected_model, torch.ones(2, 2), device="invalid", k_max=k_max)
 
 
 def test_plot_elbow_vmf_smoke(tmp_path):

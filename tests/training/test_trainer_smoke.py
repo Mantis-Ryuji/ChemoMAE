@@ -82,6 +82,7 @@ def test_trainer_fit_with_ema_and_augmenter_creates_last_artifacts(tmp_path) -> 
         "epochs": epochs,
         "completed": True,
         "final_model": "ema_last_model.pt",
+        "final_artifact": str((tmp_path / "ema_last_model.artifact.pt").resolve()),
         "attempted_steps": len(train_dl) * epochs,
         "optimizer_updates": len(train_dl) * epochs,
         "amp_skips": 0,
@@ -183,6 +184,7 @@ def test_trainer_fit_without_ema_or_augmenter_creates_raw_last_only(tmp_path) ->
         "epochs": epochs,
         "completed": True,
         "final_model": "last_model.pt",
+        "final_artifact": str((tmp_path / "last_model.artifact.pt").resolve()),
         "attempted_steps": len(train_dl) * epochs,
         "optimizer_updates": len(train_dl) * epochs,
         "amp_skips": 0,
@@ -568,7 +570,13 @@ def test_global_rng_resume_matches_uninterrupted_mask_dropout_and_shuffle(tmp_pa
         checkpoint = partial.ckpt_dir / "last.pt"
         torch.randn(17)
         resumed = _stochastic_trainer(tmp_path / "resumed", resume_from=checkpoint)
-        assert resumed.fit(epochs=2) == expected_result
+        resumed_result = resumed.fit(epochs=2)
+        assert resumed_result["final_artifact"] == str((tmp_path / "resumed/ema_last_model.artifact.pt").resolve())
+        assert {
+            key: value for key, value in resumed_result.items() if key != "final_artifact"
+        } == {
+            key: value for key, value in expected_result.items() if key != "final_artifact"
+        }
         assert torch.equal(torch.get_rng_state(), expected_rng)
         for name, value in reference.model.state_dict().items():
             torch.testing.assert_close(value, resumed.model.state_dict()[name], rtol=0, atol=0)
@@ -622,6 +630,7 @@ def test_outputs_and_logging_can_be_disabled(tmp_path: Path, capsys: pytest.Capt
     )
     result = trainer.fit(epochs=1)
     assert result["final_model"] is None
+    assert result["final_artifact"] is None
     assert len(trainer.history) == 1
     assert not directory.exists()
     captured = capsys.readouterr()
@@ -653,30 +662,94 @@ def test_enabled_exports_define_selection_in_result_and_checkpoint(
     result = trainer.fit(epochs=1)
     checkpoint = torch.load(tmp_path / "checkpoints/last.pt", weights_only=False)
     assert result["final_model"] == selected
+    assert result["final_artifact"] is None  # Custom model owns its artifact format.
     expected_rule = "ema_last" if selected == "ema.pt" else "raw_last" if selected else None
     assert checkpoint["selection_rule"] == expected_rule
     assert (tmp_path / "raw.pt").exists() == raw_export
     assert (tmp_path / "ema.pt").exists() == (use_ema and ema_export)
 
 
-def test_custom_output_paths_and_model_bundle_reload(tmp_path: Path) -> None:
+@pytest.mark.parametrize("absolute", [False, True])
+@pytest.mark.parametrize("use_ema", [False, True])
+def test_custom_output_paths_and_model_bundle_reload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, absolute: bool, use_ema: bool,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    model = _tiny_model()
+    weights_path = tmp_path / "external/selected.pt" if absolute else Path("exports/selected.pt")
+    trainer = Trainer(
+        model, torch.optim.SGD(model.parameters(), lr=0.01), [torch.ones(2, 16)],
+        cfg=TrainerConfig(
+            out_dir="run", resume_from=None, use_ema=use_ema,
+            history_file="logs/history.json", checkpoint_dir="state",
+            raw_weights_file=None if use_ema else weights_path,
+            ema_weights_file=weights_path if use_ema else None,
+            progress=False, verbose=False,
+        ),
+    )
+    result = trainer.fit(epochs=1)
+    assert result["final_model"] == str(weights_path)
+    expected_artifact = tmp_path / (
+        "external/selected.artifact.pt" if absolute else "run/exports/selected.artifact.pt"
+    )
+    assert result["final_artifact"] == str(expected_artifact.resolve())
+    assert (tmp_path / "run/logs/history.json").exists()
+    assert (tmp_path / "run/state/last.pt").exists()
+    restored = ChemoMAE.load(result["final_artifact"])
+    assert restored.get_config() == model.get_config()
+    selected_state = model.state_dict()
+    if use_ema:
+        assert trainer.ema is not None
+        selected_state = {**selected_state, **trainer.ema.shadow}
+    for name, value in selected_state.items():
+        torch.testing.assert_close(value, restored.state_dict()[name], rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("use_ema,raw_export,ema_export,selected", [
+    (False, True, True, "raw.pt"),
+    (True, True, False, "raw.pt"),
+    (True, False, True, "ema.pt"),
+    (True, True, True, "ema.pt"),
+    (True, False, False, None),
+    (False, False, True, None),
+])
+@pytest.mark.parametrize("model_artifacts", [False, True])
+def test_final_artifact_loads_exact_selected_snapshot(
+    tmp_path: Path, use_ema: bool, raw_export: bool, ema_export: bool,
+    selected: str | None, model_artifacts: bool,
+) -> None:
     model = _tiny_model()
     trainer = Trainer(
         model, torch.optim.SGD(model.parameters(), lr=0.01), [torch.ones(2, 16)],
         cfg=TrainerConfig(
-            out_dir=tmp_path, resume_from=None, use_ema=False,
-            history_file="logs/history.json", checkpoint_dir="state",
-            raw_weights_file="exports/raw.pt", progress=False, verbose=False,
+            out_dir=tmp_path, resume_from=None, use_ema=use_ema, ema_decay=0.9,
+            raw_weights_file="raw.pt" if raw_export else None,
+            ema_weights_file="ema.pt" if ema_export else None,
+            model_artifacts=model_artifacts, progress=False, verbose=False,
         ),
     )
     result = trainer.fit(epochs=1)
-    assert result["final_model"] == "exports/raw.pt"
-    assert (tmp_path / "logs/history.json").exists()
-    assert (tmp_path / "state/last.pt").exists()
-    restored = ChemoMAE.load(tmp_path / "exports/raw.artifact.pt")
-    assert restored.get_config() == model.get_config()
-    for name, value in model.state_dict().items():
-        torch.testing.assert_close(value, restored.state_dict()[name], rtol=0, atol=0)
+    assert result["final_model"] == selected
+    for name, enabled in (("raw", raw_export), ("ema", use_ema and ema_export)):
+        assert (tmp_path / f"{name}.artifact.pt").exists() == (enabled and model_artifacts)
+    if selected is None or not model_artifacts:
+        assert result["final_artifact"] is None
+        return
+    artifact_path = result["final_artifact"]
+    assert artifact_path == str((tmp_path / selected.replace(".pt", ".artifact.pt")).resolve())
+    restored = ChemoMAE.load(artifact_path)
+    weights = torch.load(tmp_path / selected, map_location="cpu", weights_only=True)
+    selected_state = model.state_dict()
+    if selected == "ema.pt":
+        assert trainer.ema is not None
+        selected_state = {**selected_state, **trainer.ema.shadow}
+        assert any(
+            not torch.equal(value, model.state_dict()[name])
+            for name, value in trainer.ema.shadow.items()
+        )
+    for name, value in selected_state.items():
+        torch.testing.assert_close(restored.state_dict()[name], value, rtol=0, atol=0)
+        torch.testing.assert_close(restored.state_dict()[name], weights[name], rtol=0, atol=0)
 
 
 class _SkipFirstScaler:
@@ -949,3 +1022,152 @@ def test_amp_disabled_overrides_ambient_cpu_autocast_in_preparation_and_forward(
         trainer.train_one_epoch()
         assert (torch.ones(2, 4) @ torch.ones(4, 2)).dtype == torch.bfloat16
     assert augmenter.output_dtypes == model.output_dtypes == [torch.float32]
+
+
+@pytest.mark.parametrize("prepared", [False, True])
+def test_standard_chemomae_dtype_mismatch_fails_before_model_forward(
+    tmp_path: Path, prepared: bool,
+) -> None:
+    model = _tiny_model()
+    spectra = torch.ones(2, 16, dtype=torch.float64)
+    batch = PreparedBatch(spectra, spectra) if prepared else (spectra,)
+    trainer = Trainer(
+        model, torch.optim.SGD(model.parameters(), lr=0.01), [batch],
+        cfg=TrainerConfig(out_dir=tmp_path, use_ema=False, resume_from=None, progress=False),
+    )
+
+    before_forward_rng = torch.get_rng_state().clone()
+    with pytest.raises(TypeError, match="model_input has dtype torch.float64.*expects torch.float32.*spectra.to"):
+        trainer.train_one_epoch()
+    assert spectra.dtype == torch.float64
+    assert trainer.attempted_steps == 0
+    assert torch.equal(torch.get_rng_state(), before_forward_rng)  # No model mask was generated.
+
+
+@pytest.mark.parametrize("prepared", [False, True])
+def test_matching_float64_chemomae_input_keeps_training_in_float64(
+    tmp_path: Path, prepared: bool,
+) -> None:
+    model = _tiny_model().double()
+    spectra = torch.ones(2, 16, dtype=torch.float64)
+    batch = PreparedBatch(spectra, spectra) if prepared else spectra
+    trainer = Trainer(
+        model, torch.optim.SGD(model.parameters(), lr=0.01), [batch],
+        cfg=TrainerConfig(out_dir=tmp_path, use_ema=False, resume_from=None, progress=False),
+    )
+    trainer.train_one_epoch()
+    assert trainer.optimizer_updates == 1
+    assert model.encoder.patch_proj.weight.grad.dtype == torch.float64
+    assert spectra.dtype == torch.float64
+
+
+def test_prepared_target_can_have_a_different_dtype(tmp_path: Path) -> None:
+    model = _tiny_model()
+    batch = PreparedBatch(torch.ones(2, 16), torch.zeros(2, 16, dtype=torch.float64))
+    trainer = Trainer(
+        model, torch.optim.SGD(model.parameters(), lr=0.01), [batch],
+        cfg=TrainerConfig(out_dir=tmp_path, use_ema=False, resume_from=None, progress=False),
+    )
+    trainer.train_one_epoch()
+    assert trainer.optimizer_updates == 1
+    assert batch.target.dtype == torch.float64
+
+
+def test_custom_model_keeps_its_dtype_conversion_policy(tmp_path: Path) -> None:
+    class CastingModel(_PreparedEchoModel):
+        def forward(
+            self, spectra: torch.Tensor, visible_mask: torch.Tensor | None = None,
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            return super().forward(spectra.to(self.scale.dtype), visible_mask)
+
+    model = CastingModel()
+    trainer = Trainer(
+        model, torch.optim.SGD(model.parameters(), lr=0.01), [torch.ones(2, 4, dtype=torch.float64)],
+        cfg=TrainerConfig(out_dir=tmp_path, use_ema=False, resume_from=None, progress=False),
+    )
+    trainer.train_one_epoch()
+    assert trainer.optimizer_updates == 1
+
+
+def test_custom_forward_batch_can_convert_chemomae_inputs(tmp_path: Path) -> None:
+    class CastingTrainer(Trainer):
+        def forward_batch(self, batch: PreparedBatch) -> tuple[torch.Tensor, torch.Tensor]:
+            spectra = batch.model_input.to(next(self.model.parameters()).dtype)
+            reconstructed, _, visible = self.model(spectra)
+            return reconstructed, visible
+
+    model = _tiny_model()
+    trainer = CastingTrainer(
+        model, torch.optim.SGD(model.parameters(), lr=0.01), [torch.ones(2, 16, dtype=torch.float64)],
+        cfg=TrainerConfig(out_dir=tmp_path, use_ema=False, resume_from=None, progress=False),
+    )
+    trainer.train_one_epoch()
+    assert trainer.optimizer_updates == 1
+
+
+@pytest.mark.parametrize("hook_target", ["model", "encoder", "projection"])
+def test_chemomae_input_pre_hooks_can_convert_dtype(tmp_path: Path, hook_target: str) -> None:
+    model = _tiny_model()
+    modules = {"model": model, "encoder": model.encoder, "projection": model.encoder.patch_proj}
+    hook_calls: list[torch.dtype] = []
+
+    def cast_input(module: nn.Module, args: tuple[torch.Tensor, ...]) -> tuple[torch.Tensor, ...]:
+        hook_calls.append(args[0].dtype)
+        return (args[0].to(torch.float32), *args[1:])
+
+    handle = modules[hook_target].register_forward_pre_hook(cast_input)
+    trainer = Trainer(
+        model, torch.optim.SGD(model.parameters(), lr=0.01), [torch.ones(2, 16, dtype=torch.float64)],
+        cfg=TrainerConfig(out_dir=tmp_path, use_ema=False, resume_from=None, progress=False),
+    )
+    try:
+        trainer.train_one_epoch()
+    finally:
+        handle.remove()
+    assert trainer.optimizer_updates == 1
+    assert hook_calls == [torch.float64]
+
+
+def test_chemomae_instance_forward_override_can_convert_dtype(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _tiny_model()
+    original_forward = model.forward
+
+    def cast_forward(spectra: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return original_forward(spectra.to(torch.float32))
+
+    monkeypatch.setattr(model, "forward", cast_forward)
+    trainer = Trainer(
+        model, torch.optim.SGD(model.parameters(), lr=0.01), [torch.ones(2, 16, dtype=torch.float64)],
+        cfg=TrainerConfig(out_dir=tmp_path, use_ema=False, resume_from=None, progress=False),
+    )
+    trainer.train_one_epoch()
+    assert trainer.optimizer_updates == 1
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
+@pytest.mark.parametrize("amp_dtype", ["fp16", "bf16"])
+@pytest.mark.parametrize("input_dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64])
+def test_chemomae_dtype_validation_respects_cuda_autocast(
+    tmp_path: Path, amp_dtype: str, input_dtype: torch.dtype,
+) -> None:
+    if amp_dtype == "bf16" and not torch.cuda.is_bf16_supported():
+        pytest.skip("CUDA bf16 is unsupported")
+    model = _tiny_model().cuda()
+    spectra = torch.ones(2, 16, dtype=input_dtype, device="cuda")
+    trainer = Trainer(
+        model, torch.optim.SGD(model.parameters(), lr=0.01), [spectra],
+        cfg=TrainerConfig(
+            out_dir=tmp_path, amp=True, amp_dtype=amp_dtype, use_ema=False,
+            resume_from=None, progress=False,
+        ),
+    )
+    if input_dtype == torch.float64:
+        with pytest.raises(TypeError, match="torch.float64.*torch.float32"):
+            trainer.train_one_epoch()
+        assert trainer.attempted_steps == 0
+    else:
+        trainer.train_one_epoch()
+        assert trainer.attempted_steps == 1
+    assert spectra.dtype == input_dtype
