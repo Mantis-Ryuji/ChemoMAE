@@ -1,5 +1,7 @@
 # CosineKMeans — Hyperspherical K-Means Clustering
 
+> API reference for ChemoMAE v0.2.4.
+
 > Module: `chemomae.clustering.cosine_kmeans`
 
 **CosineKMeans** implements spherical k-means: it partitions feature directions
@@ -216,9 +218,7 @@ k_list, inertias, optimal_k, elbow_idx, kappa = elbow_ckmeans(
 
 ---
 
-## Version
-
-### v0.2.3
+## Fitted results and persistence
 
 `inertia_` is recomputed against the exact final prediction buffer after the last
 centroid update. Stopping still uses the existing objective-tolerance test; the
@@ -238,4 +238,4 @@ label and maximum-similarity outputs. `return_dist=True` additionally allocates
 the full `(N, K)` matrix. It does not make the complete input/output resident
 memory independent of dataset size.
 
-See [the changelog](../../CHANGELOG.md) for release history.
+See the [v0.2.4 release notes](../../CHANGELOG.md#024).

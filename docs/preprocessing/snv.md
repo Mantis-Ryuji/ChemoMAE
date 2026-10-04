@@ -1,5 +1,7 @@
 # Standard Normal Variate
 
+> API reference for ChemoMAE v0.2.4.
+
 Module: `chemomae.preprocessing.snv`.
 
 `snv` and `SNVScaler` standardize each spectrum independently using its own mean

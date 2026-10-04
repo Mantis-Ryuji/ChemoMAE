@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.2.4 (Unreleased)
+## 0.2.4
 
-This version is in preparation and has not been published to PyPI.
+This version fixes vMF elbow selection and makes training outputs easier to reuse for inference.
 
 ### Fixed
 
@@ -38,7 +38,7 @@ This version is in preparation and has not been published to PyPI.
   focused configuration comparisons, and operation-specific memory estimates.
 - Link the associated WoodDegradationMap research repository from the README.
 
-### Compatibility and preparation status
+### Compatibility
 
 - `final_model` keeps its existing configured weight filename and raw/EMA
   selection rule. Model artifacts and training checkpoints keep their existing
@@ -47,31 +47,6 @@ This version is in preparation and has not been published to PyPI.
 - Corrected elbow K values may differ from v0.2.3. The shared curve helper still
   applies a cumulative minimum to nonmonotonic curves; flat curves still select
   the first interior point with zero curvature. Neither establishes a true K.
-- Local validation is complete; same-commit CI gates and publication preparation
-  remain pending. Publication is deferred; see `ToDo.md`.
-
-### Local validation reported by the user
-
-- In the `chemomae-test` environment, the targeted tests passed: 226 passed,
-  69 warnings. The complete suite then passed: 603 passed, 137 warnings.
-- After correcting the Trainer example selector to include its NumPy
-  subsection under the parent level-two heading, the documentation runner
-  passed 21 recipes containing 37 actual Python blocks. Unselected examples
-  were not executed.
-- The documentation run reported Python 3.11.17, NumPy 2.4.6, Torch
-  2.14.1+cu126, and ChemoMAE 0.2.4 imported from the editable source checkout;
-  the selected examples ran on CPU.
-- The 0.2.4 wheel and source distribution were built; both passed `twine check`.
-- In the separate `chemomae-min` environment, the documentation runner passed
-  all 21 selected recipes and 37 Python blocks from outside the checkout with
-  `python -I`. It reported Python 3.10.22, NumPy 1.26.4, Torch 2.1.0+cpu, and
-  ChemoMAE 0.2.4 imported from that environment's `site-packages`.
-- The dedicated `tests/installed_package_smoke.py` check also passed in
-  `chemomae-min`, run with `python -I` from outside the checkout:
-  `Installed ChemoMAE CPU workflow passed.`
-- `python -m pip check` in `chemomae-min` reported
-  `No broken requirements found.` These local results do not replace the
-  supported CI matrix.
 
 ## 0.2.3
 

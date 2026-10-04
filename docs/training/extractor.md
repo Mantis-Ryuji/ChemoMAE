@@ -1,5 +1,7 @@
 # Extractor
 
+> API reference for ChemoMAE v0.2.4.
+
 Module: `chemomae.training.extractor`.
 
 `Extractor` calls the public all-visible `ChemoMAE.encode` API for each input
@@ -195,4 +197,4 @@ stays on the configured device. The saved file contains features only; store
 row IDs, preprocessing, weights, representation, precision, and protocol metadata
 separately when they are needed to interpret it.
 
-For changes from earlier releases, see the [changelog](../../CHANGELOG.md).
+See the [v0.2.4 release notes](../../CHANGELOG.md#024).

@@ -1,5 +1,7 @@
 # Spectral augmentation
 
+> API reference for ChemoMAE v0.2.4.
+
 Module: `chemomae.training.augmenter`.
 
 `SpectraAugmenter` applies fractional channel shifts and tangent Gaussian noise

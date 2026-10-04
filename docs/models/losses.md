@@ -1,5 +1,7 @@
 # Selected reconstruction losses
 
+> API reference for ChemoMAE v0.2.4.
+
 Module: `chemomae.models.losses`.
 
 `masked_sse` and `masked_mse` aggregate squared errors wherever a boolean

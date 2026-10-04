@@ -1,5 +1,7 @@
 # Optimizer and scheduler builders
 
+> API reference for ChemoMAE v0.2.4.
+
 `chemomae.training.optim` provides grouped AdamW and a per-update
 linear-warmup/cosine scheduler. These defaults are an explicit recipe, not a
 scientific recommendation for every spectrum, model, or dataset.

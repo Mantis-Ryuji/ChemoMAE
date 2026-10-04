@@ -1,5 +1,7 @@
 # Cosine farthest-point sampling
 
+> API reference for ChemoMAE v0.2.4.
+
 Module: `chemomae.preprocessing.downsampling`.
 
 `cosine_fps_downsample` selects a subset of rows with a greedy farthest-point

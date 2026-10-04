@@ -1,5 +1,7 @@
 # Local Label Agreement — Spatial Cluster Evaluation
 
+> API reference for ChemoMAE v0.2.4.
+
 > Module: `chemomae.clustering.spatial`
 
 `local_label_agreement` evaluates the local spatial coherence of a label map

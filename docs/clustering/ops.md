@@ -1,5 +1,7 @@
 # Clustering Ops — Utility Functions
 
+> API reference for ChemoMAE v0.2.4.
+
 > Module: `chemomae.clustering.ops`
 
 Utilities for row normalization, pairwise directional comparisons, and
@@ -226,4 +228,4 @@ plt.show()
 
 ---
 
-See [the changelog](../../CHANGELOG.md) for release history.
+See the [v0.2.4 release notes](../../CHANGELOG.md#024).

@@ -1,7 +1,6 @@
 # Spectral learning and optional downstream workflows
 
-This tutorial uses the v0.2.4 APIs being prepared in this checkout on small
-synthetic CPU inputs. v0.2.4 has not been published to PyPI. Complete
+This tutorial uses ChemoMAE v0.2.4 with small synthetic CPU inputs. Complete
 sections 1–4 to train a model and extract features. The later sections show
 optional preprocessing, augmentation, resume, evaluation, clustering, spatial
 analysis, and reporting. You can also run all Python blocks in order in one
@@ -13,12 +12,10 @@ and metrics can each be used without the complete workflow.
 
 ## 1. Set up and prepare spectra
 
-See the [installation guide](../../README.md#quick-start) for Python/PyTorch
-requirements and build selection. After installing the appropriate PyTorch
-build, install this source revision from the repository root:
+Install ChemoMAE v0.2.4:
 
 ```bash
-python -m pip install -e .
+pip install chemomae==0.2.4
 ```
 
 Every row is a spectrum, with shape `(N, L)`. The example generates independent

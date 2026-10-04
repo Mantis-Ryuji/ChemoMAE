@@ -1,5 +1,7 @@
 # Seed and RNG utilities
 
+> API reference for ChemoMAE v0.2.4.
+
 Module: `chemomae.utils.seed`.
 
 These helpers seed Python, NumPy, and PyTorch global random streams, capture
@@ -88,4 +90,4 @@ automatically and restore them by default at completed epoch boundaries.
 Use [Trainer extension hooks](../training/trainer.md#custom-ordering-masks-and-caller-state)
 for caller-owned state, including a [SpectraAugmenter generator](../training/augmenter.md#random-streams-and-continuation).
 
-For changes from earlier releases, see the [changelog](../../CHANGELOG.md).
+See the [v0.2.4 release notes](../../CHANGELOG.md#024).

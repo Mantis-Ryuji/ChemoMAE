@@ -1,5 +1,7 @@
 # Tester — Reconstruction Evaluation
 
+> API reference for ChemoMAE v0.2.4.
+
 Module: `chemomae.training.tester`.
 
 Tester evaluates reconstruction against the input from before any added

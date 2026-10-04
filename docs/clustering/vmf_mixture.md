@@ -1,8 +1,9 @@
 # VMFMixture — von Mises–Fisher Mixture on the Unit Hypersphere
 
+> API reference for ChemoMAE v0.2.4.
+
 > Module: `chemomae.clustering.vmf_mixture`
 > Purpose: Probabilistic clustering of L2-normalized features on $S^{d-1}$ via an EM algorithm.
-> API reference for ChemoMAE v0.2.4 (release preparation).
 
 **VMFMixture** fits a **von Mises–Fisher mixture model** to feature directions on
 the unit hypersphere. Unlike hard nearest-direction assignments, it estimates
@@ -167,9 +168,8 @@ a new instance. The internal `_logC` cache and `_fitted` flag are implementation
 details, not additional public configuration.
 
 A label-only prediction path that avoids the full responsibility matrix is under
-consideration as a low-priority improvement. The current need is limited, and it
-is not a v0.2.4 release requirement. For the existing caller-side slicing option,
-see [memory planning](../tutorials/first_experiment.md#estimate-memory-by-operation).
+consideration as a low-priority improvement. For the existing caller-side slicing
+option, see [memory planning](../tutorials/first_experiment.md#estimate-memory-by-operation).
 
 ---
 
@@ -213,9 +213,7 @@ float64 concentrations. The mixture always requests a float64 log normalizer.
 
 The sweep passes lower-is-better BIC/NLL scores directly to
 [`find_elbow_curvature`](ops.md) and returns an interior curvature
-candidate. The returned raw `scores` are unchanged. In v0.2.3, a score-direction
-mismatch could flatten a decreasing curve and return `K=2` with zero curvature;
-v0.2.4 removes that sign reversal. Fixed-K `fit`, `loglik`, and `bic` are unchanged.
+candidate. The returned raw `scores` are unchanged.
 
 This example continues the quick start. The sweep fits models for `K=1..k_max`
 with `tol=1e-4` and `max_iter=200`. Defaults are `device="cuda"`, `k_max=50`,
@@ -313,13 +311,9 @@ assert torch.allclose(vmf.mus.cpu(), vmf2.mus, atol=1e-6)
 
 The regression suite uses synthetic CPU data and optional small CUDA checks.
 Run from the repository root with the test environment activated and existing
-development dependencies installed. For v0.2.4 release preparation, use an
-editable installation of the current checkout so that package metadata and
-source match:
+development dependencies installed:
 
 ```powershell
-python -m pip install --no-deps -e .
-python -m pip show chemomae
 python -m pytest -q -ra tests/clustering/test_vmf_mixture.py tests/test_import.py -k "not cuda"
 ```
 
@@ -348,4 +342,4 @@ remain sources of numerical error.
 
 ---
 
-See [the changelog](../../CHANGELOG.md) for release history.
+See the [v0.2.4 release notes](../../CHANGELOG.md#024).

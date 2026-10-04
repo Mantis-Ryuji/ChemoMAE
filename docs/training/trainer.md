@@ -1,5 +1,7 @@
 # Reconstruction Trainer and public customization hooks
 
+> API reference for ChemoMAE v0.2.4.
+
 Module: `chemomae.training.trainer`.
 
 `Trainer` supplies a fixed-epoch reconstruction loop, CUDA AMP, optional EMA,

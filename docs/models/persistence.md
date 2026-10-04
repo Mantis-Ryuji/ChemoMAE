@@ -1,5 +1,7 @@
 # Model artifacts and training checkpoints
 
+> API reference for ChemoMAE v0.2.4.
+
 ChemoMAE separates inference configuration/weights from resumable training state.
 Use a **model artifact** to reconstruct a ChemoMAE for inference. Use a
 **Trainer checkpoint** to continue training at a completed epoch boundary.

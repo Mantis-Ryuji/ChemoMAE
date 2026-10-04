@@ -18,11 +18,9 @@ independently or combined in a pipeline.
 > (b) In the illustrated training setup, augmented visible patches are used to reconstruct the masked regions of the original spectra.
 > (c) The trained encoder receives complete spectra; their representations are clustered, and the cluster labels are mapped back to the original pixel locations.
 
-These guides cover **v0.2.4, in preparation and not yet published to PyPI**.
-README links lead to the maintained
-repository documentation; the [v0.2.3 snapshot](https://github.com/Mantis-Ryuji/ChemoMAE/tree/v0.2.3/docs)
-retains the documentation distributed with that release. See the
-[release notes](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/CHANGELOG.md)
+These guides document **ChemoMAE v0.2.4**. README links lead to the maintained
+repository documentation. See the
+[v0.2.4 release notes](https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/CHANGELOG.md#024)
 for changes and compatibility notes.
 
 ## Choose the components you need
@@ -44,20 +42,14 @@ learning and feature extraction require no pixel coordinates.
 
 ## Quick Start
 
-Install a CPU or CUDA build of PyTorch appropriate for your environment using
-the [official installation selector](https://pytorch.org/get-started/locally/),
-then install this v0.2.4 source checkout from the repository root:
+ChemoMAE requires Python 3.10 or newer. Install v0.2.4 with pip:
 
 ```bash
-python -m pip install -e .
+pip install chemomae==0.2.4
 ```
 
-Python >=3.10 and PyTorch >=2.1 are required. CI covers Python 3.10–3.13 with
-selected CPU PyTorch builds, including Python 3.10/PyTorch 2.1; it does not test
-every combination. With PyTorch 2.1, use NumPy `>=1.24,<2` for NumPy interoperability.
-
-For the published v0.2.3 package, use `python -m pip install "chemomae==0.2.3"`
-and its versioned documentation. The examples below use the new v0.2.4 API.
+The example below runs on CPU and covers training, saving and reloading a model,
+feature extraction, and clustering.
 
 ## ChemoMAE Example
 

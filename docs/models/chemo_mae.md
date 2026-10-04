@@ -1,5 +1,7 @@
 # ChemoMAE: masked reconstruction and spectral features
 
+> API reference for ChemoMAE v0.2.4.
+
 Module: `chemomae.models.chemo_mae`.
 
 `ChemoMAE` is a PyTorch model for reconstructing one-dimensional spectra and

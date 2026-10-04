@@ -62,7 +62,7 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/Mantis-Ryuji/ChemoMAE"
-Documentation = "https://github.com/Mantis-Ryuji/ChemoMAE/blob/main/docs/README.md"
+Documentation = "https://github.com/Mantis-Ryuji/ChemoMAE/blob/v0.2.4/docs/README.md"
 Issues = "https://github.com/Mantis-Ryuji/ChemoMAE/issues"
 
 [tool.setuptools]

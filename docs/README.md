@@ -1,12 +1,9 @@
 # ChemoMAE documentation
 
-These guides describe the v0.2.4 API being prepared in this checkout; v0.2.4 has
-not been published to PyPI. Use the source installation in the
-[workflow tutorial](tutorials/workflow.md#1-set-up-and-prepare-spectra) for these
-examples. Relative links follow the repository revision you are viewing.
-For the published v0.2.3 documentation, use the
-[v0.2.3 snapshot](https://github.com/Mantis-Ryuji/ChemoMAE/tree/v0.2.3/docs).
-[Release notes](../CHANGELOG.md) summarize changes and compatibility notes.
+These guides describe **ChemoMAE v0.2.4**. Start with the
+[installation and CPU example](../README.md#quick-start), or choose a component
+below. Relative links follow the repository revision you are viewing.
+[v0.2.4 release notes](../CHANGELOG.md#024) summarize changes and compatibility notes.
 
 ## Start with your task
 

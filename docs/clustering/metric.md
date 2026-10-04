@@ -1,5 +1,7 @@
 # Cosine Silhouette — CPU and CUDA
 
+> API reference for ChemoMAE v0.2.4.
+
 > Module: `chemomae.clustering.metric`
 
 The **cosine-based silhouette score** describes within-cluster compactness
@@ -231,4 +233,4 @@ np.testing.assert_allclose(ours, ref, rtol=1e-6, atol=1e-6)
 
 ---
 
-See [the changelog](../../CHANGELOG.md) for release history.
+See the [v0.2.4 release notes](../../CHANGELOG.md#024).
