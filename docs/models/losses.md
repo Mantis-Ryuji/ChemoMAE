@@ -1,134 +1,130 @@
-# Masked Loss Functions — Reconstruction Losses for ChemoMAE
+# Selected reconstruction losses
 
-> Module: `chemomae.models.losses`
+Module: `chemomae.models.losses`.
 
-This document describes the boolean-mask-based reconstruction losses implemented in `losses.py`.
-These functions compute squared errors wherever the supplied `mask` is `True`. The Trainer supplies either the hidden positions or an all-`True` mask according to `TrainerConfig.loss_region`.
+`masked_sse` and `masked_mse` aggregate squared errors wherever a boolean
+selection mask is `True`. They can be used with ChemoMAE, another reconstruction
+model, or a custom PyTorch training loop. They do not generate masks or choose
+the target, preprocessing, or augmentation policy.
 
----
+The functions have identical behavior for the same `reduction`; only their
+default reduction differs.
 
-## Overview
+## Quick start
 
-The decoder returns every channel, while the selection mask determines which
-channels contribute to the loss. For masked reconstruction, selecting hidden
-channels asks the bottleneck to predict omitted bands from visible context.
-For masked denoising, compare those predictions with the input from before the
-added spectral perturbation; the target is not an independently measured
-noise-free spectrum.
-
-For an unmasked autoencoder or denoising autoencoder, select every channel.
-Changing from that objective to masked reconstruction changes both the available
-input and the loss region. These helpers implement the selected squared error;
-they do not choose the scientific comparison or preprocessing.
-
-Two loss functions are provided:
-
-| Function     | Description                                        |
-| ------------ | -------------------------------------------------- |
-| `masked_sse` | Sum of squared errors (SSE) over masked positions. |
-| `masked_mse` | Mean squared error (MSE) over masked positions.    |
-
-Both functions support multiple reduction modes to control how losses are aggregated across the batch.
-
----
-
-## API
-
-### `masked_sse(x_recon, x, mask, *, reduction="batch_mean")`
-
-**Masked Sum of Squared Errors**
-
-| Parameter   | Type                                 | Description                                                                                                                                                                                                                    |
-| ----------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `x_recon`   | `torch.Tensor`, shape `(B, L)`       | Reconstructed sequence.                                                                                                                                                                                                        |
-| `x`         | `torch.Tensor`, shape `(B, L)`       | Target spectrum before added augmentation.                                                                                                                                                                                                   |
-| `mask`      | `torch.Tensor`, shape `(B, L)`, bool | `True` = masked positions (loss applied); `False` = visible positions (ignored).                                                                                                                                               |
-| `reduction` | `{"sum", "mean", "batch_mean"}`      | Aggregation mode:<br>• `"sum"` — total sum of masked errors.<br>• `"mean"` — average over all masked elements.<br>• `"batch_mean"` — sum over masked elements divided by batch size `B` (independent of mask count). |
-
-**Returns:**
-Scalar tensor (loss value).
-
-**Edge Cases:**
-If `mask.sum() == 0`, returns `0.0` to avoid NaN.
-
----
-
-### `masked_mse(x_recon, x, mask, *, reduction="mean")`
-
-**Masked Mean Squared Error**
-
-| Parameter   | Type                                 | Description                                                                                                                                                                       |
-| ----------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `x_recon`   | `torch.Tensor`, shape `(B, L)`       | Reconstructed sequence.                                                                                                                                                           |
-| `x`         | `torch.Tensor`, shape `(B, L)`       | Target spectrum before added augmentation.                                                                                                                                                      |
-| `mask`      | `torch.Tensor`, shape `(B, L)`, bool | `True` = masked positions (loss applied).                                                                                                                                         |
-| `reduction` | `{"mean", "sum", "batch_mean"}`      | Aggregation mode:<br>• `"mean"` — average over all masked elements.<br>• `"sum"` — total SSE over masked elements.<br>• `"batch_mean"` — sum divided by batch size `B`. |
-
-**Returns:**
-Scalar tensor (loss value).
-
-**Edge Cases:**
-If `mask.sum() == 0`, returns `0.0` for all reductions.
-
----
-
-## Usage Examples
-
-### Basic usage with ChemoMAE visible mask
+This CPU example selects four errors, checks each reduction, and backpropagates
+through the selected mean.
 
 ```python
 import torch
-from chemomae.models.losses import masked_sse, masked_mse
+from chemomae.models.losses import masked_mse, masked_sse
 
-x = torch.randn(2, 4)
-x_recon = torch.randn(2, 4)
+target = torch.zeros(2, 4)
+prediction = torch.tensor(
+    [[1.0, 2.0, 3.0, 4.0], [2.0, 1.0, 0.0, -1.0]],
+    requires_grad=True,
+)
+selection = torch.tensor(
+    [[True, False, True, False], [False, True, False, True]],
+)
 
-# visible=True → seen tokens
-visible = torch.tensor([[1,1,0,0],
-                        [1,0,1,0]], dtype=torch.bool)
-mask = ~visible   # masked = unseen tokens
+total = masked_sse(prediction, target, selection, reduction="sum")
+per_batch = masked_sse(prediction, target, selection)
+per_element = masked_mse(prediction, target, selection)
+torch.testing.assert_close(total, torch.tensor(12.0))
+torch.testing.assert_close(per_batch, torch.tensor(6.0))
+torch.testing.assert_close(per_element, torch.tensor(3.0))
 
-loss_sse = masked_sse(x_recon, x, mask, reduction="batch_mean")
-loss_mse = masked_mse(x_recon, x, mask, reduction="mean")
+per_element.backward()
+assert prediction.grad is not None
+assert torch.count_nonzero(prediction.grad[~selection]) == 0
+assert prediction.grad[selection].abs().sum() > 0
 ```
 
----
+## API contract
 
-## Design Notes
-
-* **Explicit selection mask:**
-  `loss_region="masked"` supplies `~visible_mask`; `loss_region="all"` supplies an all-`True` mask for full-spectrum reconstruction.
-
-* **Safe gradients:**
-  Gradients propagate correctly through `x_recon`; typically `x` is treated as constant (`requires_grad=False`).
-
-* **Numerical safety:**
-  The standalone loss functions return finite results even when `mask.sum() == 0`. The Trainer rejects an empty mask when `loss_region="masked"` so training cannot silently continue with zero loss.
-
-* **Consistency:**
-  Compatible with ChemoMAE’s `visible` mask convention (`True=visible`, `False=masked` → invert before use).
-
----
-
-## Minimal Tests
-
-```python
-import torch
-from chemomae.models.losses import masked_sse, masked_mse
-
-x = torch.randn(2, 4)
-x_recon = x + 0.1
-visible = torch.tensor([[1,1,0,0],
-                        [1,0,1,0]], dtype=torch.bool)
-mask = ~visible
-
-assert masked_sse(x_recon, x, mask, reduction="sum").item() >= 0
-assert masked_mse(x_recon, x, mask, reduction="mean").item() >= 0
+```text
+masked_sse(x_recon, x, mask, *, reduction="batch_mean")
+masked_mse(x_recon, x, mask, *, reduction="mean")
 ```
 
----
+| Argument | Contract |
+| --- | --- |
+| `x_recon` | Floating Torch reconstruction tensor, shape `(B, L)`. |
+| `x` | Floating Torch target tensor with the same shape and device. |
+| `mask` | Boolean Torch tensor with the same shape and device. `True` includes a position in the loss; `False` excludes it. |
+| `reduction` | `"sum"`, `"mean"`, or `"batch_mean"`. An unknown value raises `ValueError`. |
 
-## Version
+Each call returns one scalar Torch tensor on the computation device. Arithmetic
+follows the input dtypes and ordinary Torch operations; these helpers do not
+add a higher-precision accumulator or move data between devices. Supply finite
+values over the **entire** reconstruction and target, including excluded
+positions: subtraction and squaring happen before boolean selection. Finite
+inputs can still overflow when squared in a limited-precision dtype.
 
-This page describes the v0.2.3 loss API, including explicit masked and
-full-spectrum selection through Trainer.
+### Reductions
+
+Let $m_{bj}=1$ for selected positions and $m_{bj}=0$ otherwise. The selected sum
+of squared errors $E$ and selected element count $M$ are
+
+$$
+E = \sum_{b=1}^{B}\sum_{j=1}^{L}
+    m_{bj}(\hat{x}_{bj}-x_{bj})^2,
+\qquad
+M = \sum_{b=1}^{B}\sum_{j=1}^{L}m_{bj}.
+$$
+
+For a nonempty batch and selection:
+
+| Reduction | Value | Interpretation |
+| --- | --- | --- |
+| `"sum"` | $E$ | Total selected SSE. |
+| `"mean"` | $E/M$ | Mean over all selected elements, rather than a mean of per-spectrum means. |
+| `"batch_mean"` | $E/B$ | Selected SSE per batch member. Its value still depends on the number of selected channels. |
+
+If spectra have different selected counts, `"mean"` weights each selected element
+equally. Changing a mask ratio or sequence length changes the scale of
+`"batch_mean"` even when the per-element error is unchanged. Choose a reduction
+that matches the quantity you intend to optimize or compare.
+
+### Empty selections and gradients
+
+For an empty selection, every reduction returns a numeric zero. Their autograd
+behavior differs:
+
+| Reduction | Empty-selection behavior |
+| --- | --- |
+| `"sum"` | Empty tensor sum; retains a gradient connection when the inputs require gradients. |
+| `"batch_mean"` | Empty sum divided by `max(B, 1)`; retains that connection. |
+| `"mean"` | New constant zero tensor without a gradient connection. Calling `.backward()` on this result alone fails. |
+
+For nonempty selections, gradients can reach both `x_recon` and `x`. Treat the
+target as constant explicitly when that is the intended objective. A custom
+loop must decide how to handle empty selections before backward. The
+[Trainer](../training/trainer.md) rejects an empty selected region when
+`loss_region="masked"`.
+
+## Using model masks and targets
+
+ChemoMAE's `visible_mask` uses the opposite convention: `True` means an input
+channel belongs to a visible patch. In the ordinary masked case, select hidden
+channels with `mask = ~visible_mask`. See the model's
+[mask contract](chemo_mae.md#mask-contract) for patch alignment and the legacy
+all-hidden-batch exception.
+
+Trainer supplies `~visible_mask` for `loss_region="masked"`, or an all-`True`
+selection for `loss_region="all"`. The decoder returns all channels in either
+case. For a full-spectrum autoencoder, combine `n_mask=0` with
+`loss_region="all"`.
+
+In denoising training, an application can perturb the encoder input while using
+the input from before that added perturbation as the target. That target is an
+observed spectrum; it is not necessarily noise-free. These loss functions also
+accept other targets that satisfy the tensor contract above.
+
+## Related references
+
+- [ChemoMAE model and masking](chemo_mae.md)
+- [Trainer and custom loops](../training/trainer.md)
+- [Spectral augmentation](../training/augmenter.md)
+- Implementation checks: `tests/models/test_losses.py`

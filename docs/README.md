@@ -1,61 +1,88 @@
-# ChemoMAE Documentation
+# ChemoMAE documentation
 
-These documents describe ChemoMAE v0.2.3. See the
-[release notes](../CHANGELOG.md) for API, default, and artifact changes from
-v0.2.2. Use the `v0.2.3` Git tag when browsing the documentation for this release.
+These guides describe the v0.2.3 API, including documentation corrections made
+after release. Relative links follow the repository revision you are viewing.
+For the original release documentation, use the
+[v0.2.3 snapshot](https://github.com/Mantis-Ryuji/ChemoMAE/tree/v0.2.3/docs).
+[Release notes](../CHANGELOG.md) summarize compatibility changes from v0.2.2.
 
-## Research motivation and workflow
+## Start with your task
 
-ChemoMAE supports exploration of the spatial distribution of spectral
-differences when chemical states and their categories are not known in advance.
-Self-supervised reconstruction learns a spectral representation, clustering
-partitions that representation at a chosen observation granularity, and the
-labels can be returned to their original image coordinates for spatial analysis.
-Spectral summaries and local chemical measurements support interpretation of
-the resulting regions.
-
-The accompanying study uses SNV to compare relative spectral shapes and adds
-mean- and norm-preserving perturbations for masked denoising. Visible patches
-provide the model input; hidden channels of the spectrum before augmentation
-provide the reconstruction target. After training, all-visible features without
-augmentation are clustered with CosineKMeans. LLA evaluates local spatial
-coherence using neighbor relations kept apart from model and cluster fitting,
-while cosine silhouette describes separation within the representation.
-
-The library exposes these steps as configurable components. Tutorial settings
-illustrate their use on synthetic data; they are not the manuscript's experiment
-configuration. See the [README](../README.md) for the manuscript status and link
-placeholders.
-
-## Tutorial and protocol
-
-- [Step-by-step synthetic workflow tutorial](tutorials/workflow.md)
-- [Model artifacts and training checkpoints](models/persistence.md)
-- [README workflow](../README.md)
-
-## API references
-
-| Area | Documentation |
+| You want to… | Start here |
 | --- | --- |
-| Preprocessing | [SNV](preprocessing/snv.md), [cosine FPS](preprocessing/dowmsampling.md) |
-| Model and representations | [ChemoMAE, encoder, decoder, encode](models/chemo_mae.md), [losses](models/losses.md) |
-| Training | [Trainer customization and checkpoints](training/trainer.md), [optimizer/scheduler](training/optim.md), [spectral augmentation and RNG](training/augmenter.md) |
-| Evaluation and extraction | [Tester reductions](training/tester.md), [batch-wise Extractor](training/extractor.md) |
-| Clustering | [CosineKMeans](clustering/cosine_kmeans.md), [vMF mixture](clustering/vmf_mixture.md), [cosine operations](clustering/ops.md) |
-| Cluster evaluation | [cosine silhouette](clustering/metric.md), [occupancy-corrected spatial LLA](clustering/spatial.md) |
-| Persistence and reproducibility | [model/training artifacts](models/persistence.md), [global seed and RNG state](utils/seed.md), explicit generator contracts in model/augmentation docs |
+| Install the package and run a complete CPU example | [README quick start](../README.md#quick-start) |
+| Learn representations, then choose optional downstream steps | [Staged workflow tutorial](tutorials/workflow.md) |
+| Normalize spectra or select a smaller set of rows | [SNV](preprocessing/snv.md), [cosine FPS](preprocessing/dowmsampling.md) |
+| Build a model or use a custom PyTorch loop | [Model and representations](models/chemo_mae.md), [losses](models/losses.md), [Trainer hooks and plain loop](training/trainer.md) |
+| Configure reconstruction training or resume a run | [Starting fresh or resuming](training/trainer.md#starting-fresh-or-resuming), [Trainer configuration](training/trainer.md#configuration-and-the-simple-path), [optimizer/scheduler](training/optim.md), [augmentation](training/augmenter.md) |
+| Compute reconstruction errors or export features | [Tester](training/tester.md), [Extractor](training/extractor.md) |
+| Cluster directional features from any compatible source | [CosineKMeans](clustering/cosine_kmeans.md), [vMF mixture](clustering/vmf_mixture.md) |
+| Evaluate an existing partition or label map | [Cosine silhouette](clustering/metric.md), [spatial LLA](clustering/spatial.md) |
+| Use cosine operations or inspect an inertia curve | [Clustering operations](clustering/ops.md) |
+| Choose a saved file for inference or resume, or manage random streams | [Output-file guide](models/persistence.md#raw-and-ema-exports), [persistence](models/persistence.md), [seed and RNG state](utils/seed.md) |
 
-## Numerical and experimental notes
+## How the components fit together
 
-SNV acts independently on each spectrum; choose it when removal of per-spectrum
-mean and scale suits the measurement. The tutorial uses already aligned
-synthetic spectra of length 64. Input and normalized latent representations can
-both be compared by direction, but the encoder need not preserve input cosine
-similarities, and latent vectors have no zero-mean constraint.
+The model consumes a matrix of spectra. Preprocessing, augmentation, and
+downstream analysis are explicit choices made by the calling application:
 
-All-visible features are distinct from randomly masked training features. Fit
-model weights and cluster centers only on training specimens when describing
-held-out generalization. Fitting that includes the evaluated specimens serves
-descriptive mapping of that dataset. LLA measures local spatial coherence
-conditioned on occupancy; interpreting chemical states requires evidence beyond
-the label map and its score.
+- SNV removes each spectrum's mean and scale when relative shape is the desired
+  input. It has no fitted population statistics. FPS optionally selects rows;
+  it does not preserve their density or make data splits.
+- ChemoMAE reconstructs spectra through a shared latent bottleneck. Trainer
+  supplies a reconstruction loop; model, loss, and augmentation components can
+  also be used independently in PyTorch.
+- Extractor returns features in loader order. These can support clustering,
+  visualization, or a downstream predictor. For gradients through the encoder,
+  use `model.encode` directly.
+- CosineKMeans and VMFMixture accept directional feature matrices independently
+  of the encoder. Their guides explain hard assignments, responsibilities,
+  numerical conventions, and resource costs.
+- LLA accepts a two-dimensional label map and explicit valid mask. Coordinates
+  matter for this spatial analysis, but are not required for spectral learning,
+  feature extraction, or feature-space clustering.
+
+## Contracts and interpretation
+
+Each API guide gives a small CPU example, input/output contracts, and relevant
+limits. Later snippets may extend that example; their prerequisites are stated.
+CUDA examples require a compatible device and PyTorch build. `chunk` bounds
+specific work arrays, not necessarily all memory; consult the relevant guide.
+Trainer, Tester, and Extractor follow the model's device by default, while
+CosineKMeans and VMFMixture default to CUDA. Pass `device="cpu"` explicitly to
+clustering on CPU; see the [first-run choices](../README.md#choices-to-keep-explicit).
+
+Choose preprocessing and perturbations for the information you intend to retain.
+SNV and latent normalization have different constraints, and the encoder does
+not preserve input cosine similarities by construction. Zero and very small
+vectors follow each function's documented epsilon behavior.
+
+Reconstruction error, feature-space separation, and spatial coherence answer
+different questions. Cluster IDs do not acquire semantic labels automatically.
+When claiming held-out generalization, separate the relevant independent groups
+before fitting learned components and choosing settings. Fitting the dataset
+being mapped is also a valid descriptive use, with a different interpretation.
+Spatial maps require the original row-to-pixel association; arbitrary spectral
+rows cannot be reshaped into a meaningful image.
+
+## Checking examples and display
+
+From a checkout with ChemoMAE and its runtime dependencies available, list the
+selected examples or run them:
+
+```bash
+python tests/documentation_examples.py --list
+python tests/documentation_examples.py
+```
+
+The runner reads actual Markdown code, uses CPU and small synthetic inputs, and
+places outputs in temporary directories. It reports selected and skipped blocks;
+API signatures and snippets requiring caller inputs are not standalone programs.
+The CI workflow also runs these recipes against an installed package outside the
+checkout. Neither this runner nor a local preview verifies GitHub math rendering.
+
+Markdown math uses `$...$` inline and separate `$$...$$` display blocks, following
+[GitHub's math documentation](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/writing-mathematical-expressions)
+and the [MathJax supported commands](https://docs.mathjax.org/en/latest/input/tex/macros/index.html).
+Inspect changed formulas and links in GitHub's rendered Markdown or unsaved
+Preview before considering display verification complete.

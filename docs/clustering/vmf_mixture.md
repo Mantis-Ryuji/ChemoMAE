@@ -7,14 +7,44 @@
 **VMFMixture** fits a **von Mises–Fisher mixture model** to feature directions on
 the unit hypersphere. Unlike hard nearest-direction assignments, it estimates
 component weights and concentrations and returns soft responsibilities under
-the fitted mixture. Responsibilities express membership under that model;
-they are not probabilities of known chemical states.
+the fitted mixture. Responsibilities express membership under the assumed model;
+they do not establish the semantic meaning of a component.
 
-The accompanying ChemoMAE study uses [CosineKMeans](cosine_kmeans.md) for its main
-analysis. `VMFMixture` is an additional library option for directional analyses
-that call for a probabilistic mixture. It provides EM-based parameter estimation,
-objective-curve exploration through `elbow_vmf`, and visualization through
-`plot_elbow_vmf`.
+Use it with finite, nonzero feature directions when soft membership and
+component-specific concentration are useful. No encoder or spatial information
+is required. [CosineKMeans](cosine_kmeans.md) provides hard nearest-direction
+assignments without mixture weights or concentrations.
+
+## Quick start
+
+This small CPU example fits a two-component mixture and checks probabilities
+and the final fitting likelihood.
+
+Pass `device` explicitly when composing a workflow: the constructor defaults to
+`"cuda"` and does not infer the computation device from the input features.
+Use `device="cpu"` on a CPU-only machine; the CUDA default does not fall back to
+CPU. Trainer/Extractor have a different default: they follow their model's device.
+
+```python
+import math
+import torch
+from chemomae.clustering import VMFMixture
+
+X = torch.tensor([
+    [1.0, 0.0], [1.0, 0.2], [1.0, -0.2], [1.0, 0.1],
+    [-1.0, 0.0], [-1.0, 0.2], [-1.0, -0.2], [-1.0, -0.1],
+])
+vmf = VMFMixture(n_components=2, device="cpu", random_state=42, max_iter=5)
+vmf.fit(X)
+responsibilities = vmf.predict_proba(X)
+labels = vmf.predict(X)
+
+assert responsibilities.shape == (8, 2) and labels.shape == (8,)
+assert responsibilities.device.type == "cpu"
+assert torch.allclose(responsibilities.sum(dim=1), torch.ones(8), atol=1e-6)
+assert torch.equal(labels, responsibilities.argmax(dim=1))
+assert math.isfinite(vmf.lower_bound_) and vmf.lower_bound_ == vmf.loglik(X)
+```
 
 ---
 
@@ -55,8 +85,8 @@ $$
 $$
 
 * **Initialization:** cosine (hyperspherical) k-means++ seeding; all draws use a CPU Generator, including CUDA fits.
-* **Special functions:** CPU float64 scaled Bessel evaluation with a convergent-series fallback; no interpolation at concentrations 2 or 12.
-* **Scalability:** chunked E-step (`chunk`) streams data CPU→GPU.
+* **Special functions:** CPU float64 scaled Bessel evaluation with a convergent-series fallback.
+* **Chunking:** `chunk` bounds E-step blocks on CPU or CUDA. Keep input on CPU to stream blocks to CUDA.
 * **Normalization:** finite, nonzero inputs are L2-normalized row-wise internally. Empty data, zero rows, and dimensions below 2 are rejected.
 
 ---
@@ -68,10 +98,10 @@ $$
 ```python
 from chemomae.clustering.vmf_mixture import VMFMixture
 
-vmf = VMFMixture(
+configured_vmf = VMFMixture(
     n_components=8,     # K
     d=None,             # inferred on first fit(X) if None
-    device="cuda",
+    device="cpu",       # the constructor default is "cuda"
     random_state=42,
     tol=1e-4,
     max_iter=200,
@@ -101,12 +131,13 @@ vmf = VMFMixture(
 | `mus`          | `torch.Tensor (K, D)` | Unit mean directions.                    |
 | `kappas`       | `torch.Tensor (K,)`   | Concentration parameters ($\kappa_k>0$). |
 | `logpi`        | `torch.Tensor (K,)`   | Logits of mixture weights.               |
-| `n_iter_`      | `int`                 | Number of iterations performed.          |
-| `_logC`        | `torch.Tensor (K,)`   | Float64 log-normalizer cache on the computation device. |
+| `n_iter_`      | `int`                 | Number of completed M-step updates; zero before fit. |
 | `lower_bound_` | `float`               | Total log-likelihood of the final parameters on the fitting data; matches `loglik(X, chunk=...)` with the same chunk. |
 | `converged_`   | `bool`                | Whether a nonnegative improvement met the tolerance. |
 | `stop_reason_` | `str or None`         | `"tol"`, `"likelihood_decreased"`, `"max_iter"`; `None` before fit or after legacy load. |
-| `_fitted`      | `bool`                | Whether the model has been trained.      |
+
+Parameter tensors are empty before fitting. `lower_bound_` starts at negative
+infinity and `converged_` starts as `False`.
 
 ---
 
@@ -114,13 +145,26 @@ vmf = VMFMixture(
 
 | Method                                         | Description                                                                    |
 | ---------------------------------------------- | ------------------------------------------------------------------------------ |
-| `fit(X, *, chunk=None)`                        | Train mixture parameters via EM. If `chunk>0`, enables streaming (CPU→GPU).    |
+| `fit(X, *, chunk=None)`                        | Fit mixture parameters via EM and return `self`; a positive chunk bounds E-step blocks. |
 | `predict_proba(X, *, chunk=None)`              | Compute soft assignments $\gamma_{ik}$ (rows sum to 1).                      |
 | `predict(X, *, chunk=None)`                    | Hard cluster assignment via `argmax`.                                          |
 | `loglik(X, *, chunk=None, average=False)`      | Evaluate total or per-sample log-likelihood.                                   |
 | `num_params()`                                 | Return total parameter count for BIC ($p = Kd + (K-1)$).                       |
 | `bic(X, *, chunk=None)`                        | Compute $\mathrm{BIC} = -2\log L + p\log N$.                                 |
 | `save(path)` / `load(path, map_location=None)` | Save/load model state including CPU RNG; explicit `map_location` sets the restored computation device. |
+
+`X` is a Torch tensor of shape `(N, D)` with `N > 0` and `D >= 2`. NumPy inputs
+must be converted by the caller. Each row must remain finite and nonzero after
+conversion to the model dtype. `d`, once inferred or provided, remains fixed.
+Prediction and likelihood methods require a fitted model. A chunk must be a
+positive integer or `None`; it does not change the output shape.
+
+`predict_proba` returns `(N, K)` on the model device in its configured dtype.
+`predict` returns `(N,)` integer labels on that device. Both allocate the full
+responsibility matrix, even with chunking. `loglik` and `bic` return Python
+floats; `num_params` returns a Python integer. `load` is a class method returning
+a new instance. The internal `_logC` cache and `_fitted` flag are implementation
+details, not additional public configuration.
 
 ---
 
@@ -129,6 +173,7 @@ vmf = VMFMixture(
 ### `vmf_logC` and `vmf_bessel_ratio`
 
 ```python
+import torch
 from chemomae.clustering.vmf_mixture import vmf_logC, vmf_bessel_ratio
 
 kappa = torch.tensor([0.0, 2.0, 12.0, 1000.0], dtype=torch.float64)
@@ -161,11 +206,24 @@ float64 concentrations. The mixture always requests a float64 log normalizer.
 
 ### `elbow_vmf`
 
+**Known limitation:** the current helper negates BIC/NLL scores before passing
+them to `find_elbow_curvature`, which then enforces a non-increasing curve.
+For monotonically decreasing scores this makes the curve flat and returns the
+first interior point (`K=2`) with zero curvature, regardless of the original
+bend. Do not use the returned `optimal_k` as a reliable elbow estimate. The
+returned raw `scores` remain available for inspection; this limitation does not
+change fixed-K `fit`, `loglik`, or `bic`.
+
+This example continues the quick start. The sweep fits models for `K=1..k_max`
+with `tol=1e-4` and `max_iter=200`. Defaults are `device="cuda"`, `k_max=50`,
+`chunk=None`, `verbose=True`, `random_state=42`, and `criterion="bic"`. At least
+three K values are needed by the curvature helper.
+
 ```python
 from chemomae.clustering.vmf_mixture import elbow_vmf
 
 k_list, scores, optimal_k, elbow_idx, kappa = elbow_vmf(
-    VMFMixture, X, device="cuda", k_max=30, chunk=8192,
+    VMFMixture, X, device="cpu", k_max=4,
     criterion="bic",   # or "nll"
     random_state=42, verbose=True
 )
@@ -173,7 +231,7 @@ k_list, scores, optimal_k, elbow_idx, kappa = elbow_vmf(
 
 * `criterion="bic"` → use **BIC** (lower = better).
 * `criterion="nll"` → use **mean NLL** (= − mean log-lik; lower = better).
-* Both criteria pass the negated score curve to `find_elbow_curvature` and return its elbow K.
+* Both criteria currently pass the negated score curve to `find_elbow_curvature`; see the limitation above.
 * Minimum-score K is reported separately when `verbose=True`; it can differ from the returned elbow K.
 
 **Returns:**
@@ -182,54 +240,45 @@ k_list, scores, optimal_k, elbow_idx, kappa = elbow_vmf(
 Calling `fit` does not select K. Fixed-K comparisons should construct a model with
 the prescribed `n_components` directly.
 
-The return name `optimal_k` refers to the curvature-based elbow, not the minimum
-BIC or NLL and not an identified number of chemical states. These criteria
-describe fit under the mixture model; they do not evaluate spatial coherence or
-chemical interpretation. Use the score curve as an exploratory diagnostic when
-deciding how finely to partition a representation.
+The return name `optimal_k` does not mean minimum BIC or NLL. The score criteria
+describe fit under the mixture model; they do not establish the semantic meaning
+of components or a universally correct K. Inspect raw scores and convergence
+diagnostics under the comparison protocol chosen for the application.
 
 ---
 
 ### `plot_elbow_vmf`
 
 ```python
-from chemomae.clustering.vmf_mixture import plot_elbow_vmf
+from chemomae.clustering import plot_elbow_vmf
 plot_elbow_vmf(k_list, scores, optimal_k, elbow_idx, criterion="bic")
 ```
 
-Plots the score curve with an annotated elbow.
+Plots the score curve with the supplied candidate annotated. It does not validate
+that candidate or resolve the `elbow_vmf` limitation.
 y-axis label automatically switches between **BIC** and **Mean NLL**.
 (Use `plt.show()` or `plt.savefig(...)` externally.)
 
 ---
 
-## Usage Examples
+## Additional examples
 
-### Fit and infer
+These snippets continue the quick start. Save/load writes to the chosen path.
 
-```python
-X = torch.randn(10000, 64, device="cuda")
-vmf = VMFMixture(n_components=32, device="cuda", random_state=0)
-vmf.fit(X, chunk=1000000)
-labels = vmf.predict(X, chunk=1000000)
-resp = vmf.predict_proba(X, chunk=1000000)
-print(vmf.stop_reason_, vmf.converged_, vmf.lower_bound_)
-```
-
-### Exploring component count (elbow of the BIC curve)
+### CUDA E-step chunks
 
 ```python
-ks, scores, K, idx, curv = elbow_vmf(
-    VMFMixture, X, device="cuda", k_max=30, chunk=1000000, criterion="bic"
-)
-print("Elbow candidate K:", K)
+if torch.cuda.is_available():
+    vmf_gpu = VMFMixture(n_components=2, device="cuda", max_iter=5)
+    vmf_gpu.fit(X, chunk=4)  # X stays on CPU
+    gpu_labels = vmf_gpu.predict(X, chunk=4)  # still allocates all N-by-K responsibilities
 ```
 
 ### Save & load
 
 ```python
-vmf.save("vmf_k32.pt")
-vmf2 = VMFMixture.load("vmf_k32.pt", map_location="cpu")
+vmf.save("vmf.pt")
+vmf2 = VMFMixture.load("vmf.pt", map_location="cpu")
 assert vmf2.device == torch.device("cpu")
 assert torch.allclose(vmf.mus.cpu(), vmf2.mus, atol=1e-6)
 ```
@@ -240,13 +289,13 @@ assert torch.allclose(vmf.mus.cpu(), vmf2.mus, atol=1e-6)
 
 * **Normalization and invalid data:** Inputs are converted to `dtype`, scaled by the largest absolute coordinate, then normalized. This avoids norm overflow or clipping a small nonzero norm. Nonfinite values and rows that are zero after conversion raise `ValueError` in fit and inference; rows are never silently dropped. Validation follows the chosen chunks.
 * **Normalizers:** [SciPy `ive`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.special.ive.html) removes the exponential growth of the Bessel function. For concentration <= 1 or scaled-Bessel underflow, a log-space sum of the [defining positive series](https://dlmf.nist.gov/10.25.E2) avoids underflow. A decreasing-term tail bound controls truncation at float64 epsilon; failure to converge within 10,000 terms raises `FloatingPointError`.
-* **Precision and cost:** Each normalizer refresh transfers K concentrations to CPU and K float64 results back to the computation device. Log densities, softmax and log-likelihood reductions use float64; dot products and sufficient statistics use the configured dtype. The M-step evaluates ratios from those statistics in float64. Float32 dot products can still lose angular detail at extreme concentration; use `dtype=torch.float64` when that matters. This introduces CPU synchronization and additional float64 device work.
-* **Concentration update:** The existing closed-form approximation remains. Positive-mass resultant lengths are clamped to $[0,1-10^{-6}]$, the denominator includes $10^{-8}$, and concentrations are floored at `kappa_min`. There is no new concentration cap or Newton solve. The ratio helper is a diagnostic and is not called by fit.
+* **Precision and cost:** Each normalizer refresh transfers K concentrations to CPU and K float64 results back to the computation device. Outside autocast, log densities, softmax and log-likelihood reductions use float64; dot products and sufficient statistics use the configured dtype. Calls do not disable ambient autocast, so run outside it to retain this matrix-arithmetic precision. The M-step evaluates ratios from those statistics in float64. Float32 dot products can still lose angular detail at extreme concentration; use `dtype=torch.float64` when that matters. This introduces CPU synchronization and additional float64 device work.
+* **Concentration update:** Positive-mass resultant lengths are clamped to $[0,1-10^{-6}]$, the denominator includes $10^{-8}$, and concentrations are floored at `kappa_min`. Concentrations use the stated closed-form approximation without a Newton solve. The ratio helper is a diagnostic and is not called by fit.
 * **Degenerate components:** With positive mass and an exactly zero resultant, retain the previous unit direction and set concentration to `kappa_min`. With exactly zero mass, retain both direction and concentration. Mixture weights retain the existing `1e-20` floor before log normalization. Tiny positive masses are used directly; there is no deletion threshold or automatic reinitialization. Since `kappa_min > 0`, a zero resultant is represented by a near-uniform component, not an exactly uniform component.
 * **Stopping:** An initial E-step is followed by M-step/E-step pairs. `lower_bound_` always describes the final parameters. A negative likelihood change stops with `stop_reason_="likelihood_decreased"`, `converged_=False`; the updated parameters are retained. A nonnegative change stops with `"tol"` when relative improvement is below `tol` or absolute improvement is below `1e-6`. Otherwise the model stops at `"max_iter"` with `converged_=False`. Approximate concentration updates do not guarantee monotonic likelihood. Nonfinite sufficient statistics or updated likelihood raise `FloatingPointError`.
-* **Chunking and initialization:** Chunking bounds intermediate E-step allocations, but `predict_proba` still allocates the full N-by-K result on the computation device. Float64 log-density blocks add to memory use. If N exceeds `chunk`, initialization randomly samples up to `min(N, max(10000, 50*K))` rows, using a CPU permutation of N indices. Chunked and unchunked fits can therefore start differently; compare E-step paths with fixed parameters.
+* **Chunking and initialization:** Chunking bounds intermediate E-step allocations, but both `predict_proba` and `predict` allocate the full N-by-K responsibility matrix on the computation device. Float64 log-density blocks add to memory use. If N exceeds `chunk`, initialization randomly samples up to `min(N, max(10000, 50*K))` rows, using a CPU permutation of N indices. This initialization subset can exceed the chunk size. Chunked and unchunked fits can therefore start differently; compare E-step paths with fixed parameters.
 * **Reproducibility:** CPU RNG state is saved and restored, and k-means++ probability vectors are transferred to CPU for draws. Same-device repeated initialization with the same seed is tested. Device arithmetic can change probabilities, so the CPU generator policy does not promise identical fits across CPU and CUDA.
-* **Persistence:** An explicit string or `torch.device` `map_location` overrides the saved device. With `None`, the saved device is retained. RNG state is always restored on CPU. `_logC` is recomputed with current numerics. v0.2.2 stores the additive `numerics_version=2`, `converged_` and `stop_reason_` fields. Older checkpoints with valid parameters remain loadable, but old likelihoods are invalidated to `NaN` and convergence metadata is unknown; call `loglik` with the original fitting data to reevaluate. Invalid saved directions, concentrations or log weights raise `ValueError`; zero directions from a legacy fit require refitting. Corrected numerics can change predictions and BIC for old parameters, and existing fits are not retroactively corrected.
+* **Persistence:** An explicit string or `torch.device` `map_location` overrides the saved device. With `None`, the saved device is retained. RNG state is always restored on CPU. `_logC` is recomputed with current numerics. Saved files include `numerics_version=2`, `converged_` and `stop_reason_`. Older files with valid parameters remain loadable, but old likelihoods are invalidated to `NaN` and convergence metadata is unknown; call `loglik` with the original fitting data to reevaluate. Invalid saved directions, concentrations or log weights raise `ValueError`; zero directions from a legacy fit require refitting. Updated numerics can change predictions and BIC for old parameters. Loading restores fitted parameters and the initialization RNG stream; a subsequent `fit` starts a new fit, not an interrupted EM run.
 
 ---
 
@@ -286,25 +335,6 @@ These tolerances define regression acceptance at the listed points, not a global
 error guarantee. Float32 parameters/statistics and approximate concentration updates
 remain sources of numerical error.
 
-```python
-X = torch.randn(200, 16)
-vmf = VMFMixture(n_components=5, device="cpu").fit(X)
-assert vmf.mus.shape == (5, 16) and vmf.kappas.min() > 0
-
-labels = vmf.predict(X)
-resp = vmf.predict_proba(X)
-assert labels.shape == (200,) and resp.shape == (200, 5)
-
-bic = vmf.bic(X)
-ll = vmf.loglik(X, average=True)
-
-vmf.save("tmp_vmf.pt")
-vmf2 = VMFMixture.load("tmp_vmf.pt")
-assert torch.allclose(vmf.mus, vmf2.mus, atol=1e-6)
-```
-
 ---
 
-## Version
-
-* **v0.2.2:** fixes CUDA k-means++ generator placement, replaces the piecewise Bessel approximation and incorrect small-ratio coefficient, records the final likelihood and stopping reason, respects CPU load targets, handles degenerate components without invalid directions, and adds numerical/behavioral regression tests. No new dependencies or model-selection policy are introduced.
+See [the changelog](../../CHANGELOG.md) for release history.

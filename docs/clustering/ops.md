@@ -2,17 +2,45 @@
 
 > Module: `chemomae.clustering.ops`
 
-This document describes utility functions supporting **hyperspherical k-means** clustering, including **row normalization**, **cosine similarity/dissimilarity**, **elbow curvature detection**, and **plotting utilities**.
+Utilities for row normalization, pairwise directional comparisons, and
+objective-curve inspection. They can be used independently of a ChemoMAE model.
 
 ---
 
 ## Overview
 
-These operations provide row normalization, directional comparisons, and an
-inertia-curve diagnostic for `CosineKMeans` and `elbow_ckmeans`. On nonzero
-unit-norm vectors, cosine similarity is the dot product. The same comparison
-measure can be used in the input and latent spaces without requiring an encoder
-to preserve the similarity values between those spaces.
+`CosineKMeans` and `elbow_ckmeans` use these operations internally. On nonzero
+unit-norm vectors, cosine similarity is the dot product. Applying it to two
+different feature spaces does not imply that their similarity values agree.
+
+## Quick start
+
+This CPU example checks normalization and pairwise similarities, then inspects
+a supplied objective curve. No clustering fit is required.
+
+```python
+import torch
+from chemomae.clustering.ops import (
+    l2_normalize_rows,
+    cosine_similarity,
+    cosine_dissimilarity,
+    find_elbow_curvature,
+)
+
+X = torch.tensor([[3.0, 0.0], [0.0, 4.0], [0.0, 0.0]])
+normalized = l2_normalize_rows(X)
+similarities = cosine_similarity(normalized, normalized)
+distances = cosine_dissimilarity(normalized, normalized)
+assert torch.equal(normalized, torch.tensor([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]]))
+assert torch.equal(similarities, torch.diag(torch.tensor([1.0, 1.0, 0.0])))
+assert torch.equal(distances, 1 - similarities)
+
+k_list = [1, 2, 3, 4, 5]
+inertias = [0.7, 0.5, 0.42, 0.39, 0.38]
+optimal_k, elbow_idx, curvature = find_elbow_curvature(k_list, inertias)
+assert optimal_k == k_list[elbow_idx] and 0 < elbow_idx < len(k_list) - 1
+assert curvature >= 0
+```
 
 ---
 
@@ -25,6 +53,9 @@ Row-wise L2 normalization.
 * Each row vector is divided by its L2 norm clamped below by `eps`.
 * Nonzero rows with norm at least `eps` become unit length. Zero rows stay zero;
   smaller rows remain below unit length.
+* Supply a floating-point tensor of shape `(N, D)` and a positive epsilon. The
+  function delegates to Torch normalization without separate validation;
+  output has the input shape and device and retains autograd.
 
 **Formula**
 
@@ -40,8 +71,10 @@ $$
 
 Compute pairwise cosine similarity between row-normalized tensors.
 
-* Assumes both `A` and `B` are already L2-normalized.
-* Returns an `(N, M)` matrix of $\cos(x_i, y_j)$ values.
+* Assumes `A (N, D)` and `B (M, D)` are already L2-normalized on compatible
+  devices and with compatible dtypes. It computes `A @ B.T` without validation
+  or clipping; a zero row gives zero similarity, including to itself.
+* Returns an `(N, M)` matrix of dot products, equal to $\cos(x_i, y_j)$ for unit rows.
 
 ---
 
@@ -51,6 +84,8 @@ Compute cosine dissimilarity ($1 - \cos$).
 
 * Used as the inertia metric in `CosineKMeans`.
 * Returns `(N, M)` matrix of $1 - \cos(x_i, y_j)$.
+* Uses the same normalized-input assumptions as `cosine_similarity`; neither
+  function normalizes inputs. Dtype and autocast behavior follow Torch arithmetic.
 
 ---
 
@@ -61,9 +96,8 @@ Compute cosine dissimilarity ($1 - \cos$).
 Find an interior elbow in a supplied objective curve via **curvature-based elbow
 detection**, using **Savitzky–Golay derivatives** when the curve supports them.
 The returned `optimal_k` is a heuristic candidate at the chosen curvature
-maximum. In spectral mapping, $K$ determines the granularity at which a
-representation is partitioned; the elbow is not a count of chemically distinct
-states or evidence that those states form separate populations.
+maximum. This heuristic describes a supplied curve; it does not establish a
+uniquely correct cluster count or the semantic meaning of its clusters.
 
 #### Steps
 
@@ -161,29 +195,21 @@ Visualize the inertia curve and elbow location.
 * Highlights the selected elbow point (`optimal_k`) with a marker and vertical line.
 * Labels y-axis as **“Mean Cosine Inertia”**.
 * Does not call `plt.show()` — suitable for both notebooks and scripts.
+* Creates a Matplotlib figure and returns `None`; display, saving, and closing
+  the figure are caller-owned. `plot_elbow_vmf` is also defined in this module;
+  see its [reference and current sweep limitation](vmf_mixture.md#plot_elbow_vmf).
 
 ---
 
-## Example Usage
+## Plotting example
+
+This snippet continues the quick start.
 
 ```python
-from chemomae.clustering.ops import (
-    l2_normalize_rows,
-    find_elbow_curvature,
-    plot_elbow_ckm,
-)
+from chemomae.clustering import plot_elbow_ckm
 import matplotlib.pyplot as plt
-import torch
 
-# Normalize feature matrix
-X = l2_normalize_rows(torch.randn(100, 64))
-
-# Example elbow detection
-k_list = [2, 3, 4, 5, 6]
-inertias = [0.7, 0.5, 0.42, 0.39, 0.38]
-K, idx, kappa = find_elbow_curvature(k_list, inertias)
-
-plot_elbow_ckm(k_list, inertias, K, idx)
+plot_elbow_ckm(k_list, inertias, optimal_k, elbow_idx)
 plt.show()
 ```
 
@@ -191,25 +217,13 @@ plt.show()
 
 ## Design Notes
 
-* Functions assume **cosine-based** clustering context (inputs typically pre-normalized).
-* `find_elbow_curvature` ensures monotonic inertia for numerical robustness.
+* Directional comparison functions assume normalized inputs; the curve helper
+  operates on supplied numeric curves and does not inspect feature vectors.
+* `find_elbow_curvature` replaces increases with the cumulative minimum before
+  computing curvature. This can hide nonmonotonic behavior; inspect the original
+  curve as well as the selected point.
 * `plot_elbow_ckm` uses Matplotlib with minimal dependencies, designed for flexible integration.
 
 ---
 
-## Minimal Tests
-
-```python
-X = torch.randn(10, 5)
-Xn = l2_normalize_rows(X)
-assert torch.allclose(Xn.norm(dim=1), torch.ones(10), atol=1e-6)
-
-opt_k, idx, kappa = find_elbow_curvature([2, 3, 4], [0.7, 0.6, 0.55])
-assert isinstance(opt_k, int)
-```
-
----
-
-## Version
-
-* Introduced in `chemomae.clustering.ops` — initial public draft.
+See [the changelog](../../CHANGELOG.md) for release history.

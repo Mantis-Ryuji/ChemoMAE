@@ -1,23 +1,22 @@
 # Tester — Reconstruction Evaluation
 
-> Module: chemomae.training.tester
+Module: `chemomae.training.tester`.
 
 Tester evaluates reconstruction against the input from before any added
 augmentation, optionally using perturbed inputs. It supports both masked and
 full-spectrum loss and performs no training or checkpoint selection.
 
-Reconstruction error describes the chosen prediction task. For spatial
-exploration, assess the subsequent clustering separately: [LLA](../clustering/spatial.md)
-describes local spatial coherence, while spectral inspection and appropriate
-local measurements inform chemical interpretation. A lower reconstruction error
-does not by itself establish a chemically meaningful partition.
+The returned scalar summarizes the selected squared errors across the complete
+iterable. Evaluation temporarily controls model mode and precision, then restores
+the original training flags. Load the intended model weights before evaluation.
 
-## Basic use
+## Quick start
 
 This small example uses all-visible reconstruction, so its evaluation region is
 explicitly the complete spectrum:
 
 ```python
+import math
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from chemomae.models import ChemoMAE
@@ -34,6 +33,8 @@ tester = Tester(model, TesterConfig(
     amp=False, log_history=False, progress=False,
 ))
 mse = tester(loader)
+assert isinstance(mse, float) and math.isfinite(mse) and mse >= 0.0
+assert model.training  # The mode from before evaluation was restored.
 ```
 
 For masked reconstruction, set a nonzero model mask count and
@@ -41,7 +42,7 @@ loss_region="masked". The loss region is never inferred from the model mask coun
 An all-visible mask with masked evaluation raises ValueError; an empty loader
 also raises rather than returning zero. Failed evaluations are not logged.
 
-## Configuration
+## Configuration and defaults
 
 | Setting | Default | Contract |
 | --- | --- | --- |
@@ -57,6 +58,8 @@ also raises rather than returning zero. Failed evaluations are not logged.
 | history_filename | "test_history.json" | Separate from training history. |
 | progress | True | Display evaluation progress. |
 
+## Input, output, and precision
+
 Batches may be floating Torch tensors of shape (B, L), or tuples/lists whose
 first item is that tensor. Empty batches are skipped. Spectra are moved to the
 evaluation device and cast to the model parameter dtype resolved at Tester
@@ -64,12 +67,13 @@ construction. Device moves persist; create a new Tester if the model device/dtyp
 or precision configuration changes. Dataset iteration order is unchanged.
 Changing precision can change reconstruction outputs; error subtraction, squaring,
 and aggregation use float64 without claiming bitwise equality across devices.
-Nonfinite inputs/outputs and mismatched reconstruction/augmentation shapes fail
-explicitly. The selected autocast scope covers optional augmentation as well.
+Nonfinite loader inputs or reconstruction outputs and mismatched reconstruction/
+augmentation shapes fail explicitly. The selected autocast scope covers optional
+augmentation as well.
 
 ## Dataset-wide reductions
 
-Let E be the selected squared-error sum, M the selected element count, and N
+Let $E$ be the selected squared-error sum, $M$ the selected element count, and $N$
 the spectrum count across all evaluated batches:
 
 $$
@@ -91,18 +95,22 @@ dependent models change; hold those fixed for comparisons.
 
 ## Fixed masks and augmentation
 
-True always means visible. A fixed mask must match spectral patch boundaries.
-(L,) and (1, L) masks broadcast to each current batch; a (B, L) mask requires B
+`True` requests visibility. A fixed mask must match spectral patch boundaries.
+`(L,)` and `(1, L)` masks broadcast to each current batch; a `(B, L)` mask requires `B`
 to match that batch, including a final shorter batch. Fixed-mask evaluation calls
 the encoder/decoder directly and consumes no model masking RNG.
+ChemoMAE retains a legacy fallback when every patch in the entire batch is hidden;
+see the [model mask contract](../models/chemo_mae.md#mask-contract) before using all-false masks.
 
 An explicitly supplied SpectraAugmenter is temporarily active in training mode.
 The model itself runs in evaluation mode. Inputs are augmented, and targets remain
 the spectra supplied by the loader before that added perturbation:
 
 ```python
+from chemomae.preprocessing import snv
 from chemomae.training import SpectraAugmenter, SpectraAugmenterConfig
 
+augmented_loader = DataLoader(TensorDataset(snv(spectra)), batch_size=2, shuffle=False)
 augmenter = SpectraAugmenter(SpectraAugmenterConfig(
     shift_prob=0.5, noise_prob=0.5,
 ))
@@ -110,12 +118,15 @@ tester = Tester(
     model, TesterConfig(device="cpu", loss_region="all", log_history=False),
     augmenter=augmenter,
 )
-augmented_input_mse = tester(loader)
+augmented_input_mse = tester(augmented_loader)
 ```
 
-This is a stochastic robustness example, not a fixed experimental protocol.
+This example standardizes the synthetic spectra before augmentation. It defines
+a stochastic prediction task rather than a fixed experimental protocol.
 The caller must specify perturbation strength, random streams, repetitions, and
-data separation for a reproducible comparison.
+data separation for a reproducible comparison. Use the [augmenter's default
+generator](augmenter.md#random-streams-and-continuation) to own its random stream;
+Tester does not seed it. Random model masks use the model's normal RNG stream.
 
 ## State and history
 
@@ -129,3 +140,7 @@ reduction, augmented, samples, and selected_elements. Existing malformed JSON or
 a history that is not a list of records raises an error; it is not silently
 discarded. Writes use temporary-file replacement. No history directory is created
 with log_history=False.
+
+Reconstruction error evaluates the configured prediction task. Evaluate any
+downstream classifier, clustering, or other application separately; improvement
+in reconstruction alone does not establish improvement in those objectives.

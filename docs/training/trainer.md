@@ -7,17 +7,34 @@ gradient clipping, scheduler stepping, history, epoch checkpoints, and final
 raw/EMA weight exports. Customization uses public methods instead of copying the
 backward/optimizer loop or overriding private checkpoint helpers.
 
-For ChemoMAE's masked denoising task, an optional spectral augmenter transforms
-the complete input before masking, and the loss compares hidden-channel
-predictions with the input from before that added perturbation. Reconstruction
-learning is intended to gather relationships among spectral bands into the
-shared bottleneck; spatial coordinates and cluster assignments are not training
-targets. The model, augmenter, and loss functions can also be used directly in a
-caller-owned PyTorch loop.
+The default task compares reconstructions with the input from before any added
+augmentation. `loss_region` selects hidden channels or the complete spectrum.
+Public hooks let callers provide prepared inputs, explicit targets and masks,
+or their own forward and loss computations. The model, augmenter, and losses
+can also be used directly in a caller-owned PyTorch loop.
 
 It has no validation loop, early stopping, or validation-based model selection.
 `fit(epochs=N)` means the **final absolute epoch**, including completed epochs
 when resuming. It is not a budget of successful optimizer updates.
+
+## Starting fresh or resuming
+
+Choose the run directory and resume behavior together. The defaults are
+`out_dir="runs"` and `resume_from="auto"`, so running the same script again can
+continue the checkpoint already in that directory.
+
+| Intent | `TrainerConfig` settings | Behavior |
+| --- | --- | --- |
+| Start fresh | A new `out_dir`, `resume_from=None` | Starts at epoch 1; rejects existing standard training artifacts. |
+| Resume a specific run | `resume_from=checkpoint_path` | Loads a Trainer checkpoint and continues after its last completed epoch. |
+| Resume automatically when available | `resume_from="auto"` | Uses `checkpoints/last.pt` under `out_dir` (or the configured checkpoint directory); starts fresh if there are no existing standard artifacts. |
+
+For example, after a checkpoint at epoch 7, `fit(epochs=10)` runs epochs 8–10.
+It does not add ten epochs. To add three epochs, set the final epoch to the
+saved completed epoch plus three. If the requested final epoch is already
+complete, no additional training epoch runs. Construct a new Trainer to resume;
+each instance accepts only one `fit` call. A runnable example appears in the
+[workflow's resume section](../tutorials/workflow.md#optional-resume-a-completed-epoch).
 
 ## Configuration and the simple path
 
@@ -84,8 +101,6 @@ model.load_state_dict(torch.load(selected, map_location=device, weights_only=Tru
 model.eval()
 ```
 
-Choose a new `out_dir` for a fresh run. `resume_from=None` rejects existing
-standard artifacts; it does not silently append a new run to an old history.
 Auto resume also rejects stranded history or weight exports with no checkpoint.
 The checkpoint is the authoritative source for history and progress, even if a
 JSON history file was written just before an interrupted checkpoint save.
@@ -94,7 +109,7 @@ JSON history file was written just before an interrupted checkpoint save.
 
 `PreparedBatch(model_input, target, visible_mask=None)` holds nonempty dense floating
 spectra of shape `(B, L)`, with matching input/target shapes and finite stored values. Its optional mask
-has the same shape and bool dtype: **true means visible**.
+has the same shape and bool dtype: **true requests visibility**.
 
 The ordinary loader path takes a Tensor or the first Tensor in a tuple/list.
 Its target stays unchanged; the optional augmenter creates only the model
@@ -104,10 +119,12 @@ bypasses augmentation because its input is already prepared. The loop moves all
 returned fields to `trainer.device` together,
 without changing dtype or detaching caller-provided tensors.
 
-The default model returns `(reconstruction, latent, actual_visible_mask)`.
-`forward_batch` returns just `(reconstruction, actual_visible_mask)`; an explicit
+The default model returns `(reconstruction, latent, visible_mask)`.
+`forward_batch` returns just `(reconstruction, visible_mask)`; an explicit
 prepared mask is passed through `model(..., visible_mask=...)`.
-`compute_loss` uses the actual returned mask and the clean target.
+`compute_loss` uses the returned mask and the clean target. ChemoMAE returns the
+requested/generated mask unchanged, including during its legacy all-hidden-batch
+fallback; see the [model mask contract](../models/chemo_mae.md#mask-contract).
 
 For `loss_region="masked"`, at least one nonvisible element is required.
 For full-spectrum AE reconstruction, use `n_mask=0` and `loss_region="all"`
@@ -323,9 +340,16 @@ After each completed epoch, fit retains in-memory history and writes the enabled
 history/checkpoint outputs. At completion it writes enabled raw/EMA exports.
 For ChemoMAE, model_artifacts=True also creates sibling `.artifact.pt` files
 containing configuration and weights. `result["final_model"]` selects an enabled
-EMA export, otherwise an enabled raw export, otherwise None. The in-memory model
-remains raw; load the chosen export before evaluation/extraction. Default paths
-are training_history.json, checkpoints/last.pt, last_model.pt, and ema_last_model.pt.
+EMA **weight file**, otherwise an enabled raw weight file, otherwise `None`.
+It retains the configured filename: resolve relative values below `trainer.out_dir`;
+absolute paths remain absolute. The value is not a model object or an artifact path.
+Use `load_state_dict` for that weight file, or pass its sibling `.artifact.pt` file
+to `ChemoMAE.load`. The [output-file guide](../models/persistence.md#raw-and-ema-exports)
+maps default filenames to the appropriate loader.
+
+The in-memory model remains raw; load the chosen export before evaluation/extraction
+when using EMA. Default paths are `training_history.json`, `checkpoints/last.pt`,
+`last_model.pt`, and `ema_last_model.pt`.
 
 Relative paths use out_dir, while absolute paths are retained. Each output path
 may be None to disable that output; checkpoints disabled requires resume_from=None.

@@ -3,25 +3,48 @@
 > Module: `chemomae.clustering.cosine_kmeans`
 
 **CosineKMeans** implements spherical k-means: it partitions feature directions
-using cosine similarity and normalizes each nonzero centroid after updating it.
+using cosine similarity and applies row normalization after centroid updates.
 Ordinary Euclidean k-means uses arithmetic-mean centroids whose lengths can differ
 even when the input rows have unit norm. Normalizing the centroids keeps the
 assignment rule based on direction.
 
-In the ChemoMAE workflow, the encoder first learns a low-dimensional spectral
-representation. With the learned model fixed, extract features without spectral
-augmentation and with all patches visible, then fit the clustering model. The
-unit-norm latent representation concentrates information in direction, matching
-the use of cosine similarity for SNV-transformed spectra. It has no zero-mean
-constraint, and the encoder need not preserve input cosine similarities.
+Use it with finite feature tensors when direction, rather than magnitude, is the
+intended comparison. Features may come from an encoder, a preprocessing pipeline,
+or another source; no ChemoMAE model or spatial coordinates are required. Cluster
+IDs are unordered assignment identifiers. For probabilistic assignments with
+component-specific concentrations, see [VMFMixture](vmf_mixture.md).
 
-Clustering quantizes this representation at an observation granularity $K$ so
-that the spatial distributions of spectral differences can be examined. Cluster
-IDs are assignment identifiers; they do not encode known chemical states or an
-ordered degree of degradation. Spatial coordinates can be used to place labels
-back into an image after prediction; `CosineKMeans` does not use coordinates or
-neighbor relations in fitting. The optional **`elbow_ckmeans`** helper explores
-the objective curve over several values of $K$.
+The optional **`elbow_ckmeans`** helper explores the objective curve over several
+values of $K$. A [workflow example](../tutorials/workflow.md) shows how to combine
+feature extraction, clustering, and spatial evaluation.
+
+## Quick start
+
+This synthetic CPU example fits two directional groups and checks the returned
+distances against the reported objective.
+
+Pass `device` explicitly when composing a workflow: the constructor defaults to
+`"cuda"` and does not infer the computation device from the input features.
+Use `device="cpu"` on a CPU-only machine; omitting it raises a CUDA availability
+error. Trainer/Extractor have a different default: they follow their model's device.
+
+```python
+import torch
+from chemomae.clustering import CosineKMeans
+
+X = torch.tensor([
+    [1.0, 0.0], [1.0, 0.1], [1.0, -0.1],
+    [-1.0, 0.0], [-1.0, 0.1], [-1.0, -0.1],
+])
+ckm = CosineKMeans(n_components=2, device="cpu", random_state=42, max_iter=10)
+ckm.fit(X)
+labels, distances = ckm.predict(X, return_dist=True)
+
+assert labels.shape == (6,) and labels.dtype == torch.int64
+assert labels.device.type == "cpu" and distances.shape == (6, 2)
+assert torch.equal(labels, distances.argmin(dim=1))
+assert torch.isclose(torch.tensor(ckm.inertia_), distances.min(dim=1).values.mean())
+```
 
 ---
 
@@ -37,13 +60,13 @@ the objective curve over several values of $K$.
 
 * **M-step:** Update centroids as the L2-normalized mean of assigned samples.
 
-* **k-means++ Initialization:** Uses cosine dissimilarity for sampling (not squared), ensuring reproducible seeding with `random_state`.
+* **k-means++ Initialization:** Samples using cosine dissimilarity, without squaring it, through an instance-owned CPU generator.
 
 * **Streaming support:** Large datasets can be processed in CPU→GPU chunks.
 
-* **Precision:** Internally computed in `float32` (even for half/bf16 inputs).
+* **Precision:** Inputs, centers, and accumulators use `float32`, including for half/bf16 inputs. Calls do not disable ambient autocast; run outside autocast when FP32 matrix arithmetic is required.
 
-* **Post-condition:** Nonzero centroids are L2-normalized; zero means remain zero.
+* **Normalization convention:** Norms are clamped below by `1e-6` before division. Zero vectors stay zero; sufficiently small nonzero vectors can remain below unit length.
 
 ---
 
@@ -52,11 +75,13 @@ the objective curve over several values of $K$.
 ### Class: `CosineKMeans`
 
 ```python
-ckm = CosineKMeans(
+from chemomae.clustering import CosineKMeans
+
+configured_ckm = CosineKMeans(
     n_components=8,
     tol=1e-4,
     max_iter=500,
-    device="cuda",
+    device="cpu",  # the constructor default is "cuda"
     random_state=42
 )
 ```
@@ -65,11 +90,11 @@ ckm = CosineKMeans(
 
 | Name               | Type    | Default       | Description                                                  |
 | ------------------ | ------- | ------------- | ------------------------------------------------------------ |
-| `n_components`     | `int`   | —             | Number of clusters  $K$.                                   |
-| `tol`              | `float` | `1e-4`        | Convergence tolerance on inertia.                            |
+| `n_components`     | `int`   | `8`           | Positive number of clusters $K$, at most the number of fitting rows. |
+| `tol`              | `float` | `1e-4`        | Finite nonnegative tolerance: stop when successive pre-update objectives differ relatively by less than `tol` or absolutely by less than `tol * 1e-3`. Zero disables this stopping condition. |
 | `max_iter`         | `int`   | `500`         | Maximum number of centroid updates.                          |
 | `device`           | `str` or `torch.device` | `"cuda"` | Device for computation.                           |
-| `random_state`     | `int` or `None`         | `42`   | Initialization stream seed.                     |
+| `random_state`     | `int` or `None`         | `42`   | CPU initialization stream seed. The stream advances across fits; `None` retains the generator's default seed. |
 
 
 
@@ -77,9 +102,9 @@ ckm = CosineKMeans(
 
 | Name         | Type                  | Description                                        |
 | ------------ | --------------------- | -------------------------------------------------- |
-| `centroids`  | `torch.Tensor (K, D)` | Learned cluster centroids (L2-normalized).         |
-| `latent_dim` | `int`                 | Feature dimension $D$.                           |
-| `inertia_`   | `float`               | Final objective value $\mathrm{mean}(1 - \cos)$. |
+| `centroids`  | `torch.Tensor (K, D)` | FP32 centers on the computation device, using the normalization convention above; empty before fit. |
+| `latent_dim` | `int` or `None`       | Feature dimension $D$; `None` before fit. |
+| `inertia_`   | `float`               | Final mean nearest-center dissimilarity; infinity before fit. |
 | `n_iter_` | `int` | Number of completed centroid updates; zero before fit. |
 | `converged_` | `bool` | Whether the existing objective-tolerance criterion stopped fitting. |
 | `stop_reason_` | `str` or `None` | `"tolerance"`, `"max_iter"`, or `None` before fit. |
@@ -90,40 +115,46 @@ ckm = CosineKMeans(
 
 | Method                                      | Description                                                                      |
 | ------------------------------------------- | -------------------------------------------------------------------------------- |
-| `fit(X, chunk=None)`                        | Train centroids on data `X (N, D)`. If `chunk > 0`, enables streaming (CPU→GPU). |
+| `fit(X, chunk=None)`                        | Fit centers and return `self`. A positive chunk enables CPU→GPU streaming on CUDA; CPU fitting uses the full matrix. |
 | `fit_predict(X, chunk=None)`                | Fit and return cluster assignments.                                              |
 | `predict(X, return_dist=False, chunk=None)` | Predict labels for `X`. Returns `(labels, dist)` if `return_dist=True`.          |
 | `save_centroids(path)`                      | Save versioned fitted prediction state with exact centers, config, and diagnostics. |
-| `load_centroids(path, strict_k=True)`       | Validate and restore fitted state; check K if strict, otherwise adopt saved K. |
+| `load_centroids(path, *, strict_k=True)`    | Validate and restore fitted state; check K if strict, otherwise adopt saved K. Return `self`. |
+
+`X` must be a nonempty dense real Torch tensor of shape `(N, D)` with finite
+values representable in FP32. NumPy inputs must be converted by the caller.
+Prediction requires fitted centers and the same feature dimension. Invalid
+features, `K > N`, and nonpositive/noninteger chunks raise errors. Zero rows are
+accepted and have similarity zero to every center; ties select the first center.
+
+Labels have shape `(N,)`, dtype `torch.int64`, and the centers' device.
+`return_dist=True` also returns the full `(N, K)` dissimilarity matrix on that
+device. Outside autocast, distances are FP32. Chunking does not reduce this
+output allocation. Constructor device defaults to CUDA; choose `device="cpu"`
+when CUDA is unavailable.
 
 ---
 
-## Usage Examples
+## Additional examples
 
-### Training and prediction
-
-```python
-from chemomae.clustering.cosine_kmeans import CosineKMeans
-
-X = torch.randn(1000, 64)
-ckm = CosineKMeans(n_components=10)
-ckm.fit(X)
-labels = ckm.predict(X)
-```
+These snippets continue the quick start. The save/load example writes to the
+chosen output path.
 
 ### Saving and reloading
 
 ```python
 ckm.save_centroids("centroids.pt")
-ckm2 = CosineKMeans(n_components=10).load_centroids("centroids.pt")
+ckm2 = CosineKMeans(n_components=2, device="cpu").load_centroids("centroids.pt")
 labels2 = ckm2.predict(X)
+assert torch.equal(labels, labels2)
 ```
 
 ### Streaming large datasets
 
 ```python
-ckm = CosineKMeans(n_components=50, device="cuda")
-ckm.fit(X, chunk=1_000_000)  # process in CPU→GPU batches
+if torch.cuda.is_available():
+    ckm_gpu = CosineKMeans(n_components=2, device="cuda")
+    ckm_gpu.fit(X, chunk=3)  # keep X on CPU and transfer batches
 ```
 
 ### Returning distances
@@ -138,16 +169,17 @@ labels, dist = ckm.predict(X, return_dist=True)
 
 The helper fits a separate model for each tested $K$ and returns a curvature-based
 elbow of the mean cosine-inertia curve. The API name `optimal_k` denotes that
-heuristic candidate. It does not estimate the true number of chemical states.
-For comparisons at a prescribed observation granularity, fit `CosineKMeans`
-directly with the same `n_components` across conditions. A sweep can then describe
-how the partition depends on that granularity.
+heuristic candidate; it does not establish a uniquely correct cluster count.
+If the application specifies $K$, fit `CosineKMeans` directly. A sweep can
+describe how the partition depends on $K$.
 
 ```python
 from chemomae.clustering.cosine_kmeans import elbow_ckmeans
 
 # Find a heuristic elbow candidate from the inertia curve
-k_list, inertias, optimal_k, elbow_idx, kappa = elbow_ckmeans(CosineKMeans, X, k_max=30, chunk=1_000_000)
+k_list, inertias, optimal_k, elbow_idx, kappa = elbow_ckmeans(
+    CosineKMeans, X, device="cpu", k_max=4, verbose=False,
+)
 ```
 
 #### Parameters
@@ -156,11 +188,11 @@ k_list, inertias, optimal_k, elbow_idx, kappa = elbow_ckmeans(CosineKMeans, X, k
 | ---------------- | ---------------------  | --------------------------------------------- |
 | `cluster_module` | callable               | Constructor (compatible with `CosineKMeans`). |
 | `X`              | `torch.Tensor (N, D)`  | Input dataset.                                |
-| `device`         | `str` or `torch.device`| Target device.                                |
-| `k_max`          | `int`                  | Maximum number of clusters to test.           |
-| `chunk`          | `int` or `None`        | Optional streaming batch size.                |
-| `verbose`        | `bool`                 | Print per-K inertia if `True`.                |
-| `random_state`   | `int` or `None`        | RNG seed for reproducibility.                 |
+| `device`         | `str` or `torch.device`| Target device; default `"cuda"`. |
+| `k_max`          | `int`                  | Sweep `1..k_max`; default `50`. Use `3 <= k_max <= N` so the curve has an interior point and each fit is valid. |
+| `chunk`          | `int` or `None`        | CUDA streaming batch size; default `None`. |
+| `verbose`        | `bool`                 | Print per-K inertia; default `True`. |
+| `random_state`   | `int` or `None`        | Initialization seed supplied to each model; default `42`. |
 
 #### Returns
 
@@ -176,28 +208,11 @@ k_list, inertias, optimal_k, elbow_idx, kappa = elbow_ckmeans(CosineKMeans, X, k
 
 ## Design Notes
 
-* **Normalization:** Each input vector is internally L2-normalized before similarity computation.
+* **Normalization:** Uses [row normalization](ops.md) with a norm floor of `1e-6`; dot products equal cosine similarity for unit rows. Zero and sub-threshold rows follow the stated numerical convention.
 * **Empty clusters:** If a cluster receives no assignments, it is reinitialized with the farthest sample.
 * **Inertia metric:** Uses $\mathrm{mean} (1 - \cos)$, not Euclidean SSE.
-* **Memory safety:** Frees GPU cache per iteration during streaming/elbow search.
-* **Numerical stability:** Small epsilon added in normalization to avoid division by zero.
-
----
-
-## Minimal Tests
-
-```python
-X = torch.randn(200, 16)
-ckm = CosineKMeans(n_components=5)
-ckm.fit(X)
-labels = ckm.predict(X)
-assert labels.shape == (200,)
-
-# Save / reload
-ckm.save_centroids("tmp.pt")
-ckm2 = CosineKMeans(n_components=5).load_centroids("tmp.pt")
-assert torch.allclose(ckm.centroids, ckm2.centroids)
-```
+* **Memory:** Streaming bounds assignment/transfer temporaries on CUDA, while the full CPU feature matrix and device labels/maximum similarities remain resident. Cache cleanup occurs after streaming fit and after each K in an elbow sweep, not after every update. It does not free live tensors or guarantee a memory bound.
+* **Reproducibility:** A fresh instance with the same seed uses the same initial RNG stream. Arithmetic and sampling probabilities may differ across devices; the seed does not promise identical CPU/CUDA fits.
 
 ---
 
@@ -223,4 +238,4 @@ label and maximum-similarity outputs. `return_dist=True` additionally allocates
 the full `(N, K)` matrix. It does not make the complete input/output resident
 memory independent of dataset size.
 
-* Introduced in `chemomae.clustering.cosine_kmeans` — initial public draft.
+See [the changelog](../../CHANGELOG.md) for release history.

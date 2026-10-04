@@ -1,15 +1,20 @@
 # Extractor
 
+Module: `chemomae.training.extractor`.
+
 `Extractor` calls the public all-visible `ChemoMAE.encode` API for each input
 batch. Use `iter_transform` to consume features without collecting the dataset,
 or `transform` to return one array. `extract` and calling the extractor directly
 are aliases for `transform`.
 
-For exploratory mapping, the analysis representation is obtained from fixed
-learned weights, unperturbed input spectra, and every patch visible. Cluster
-these features after extraction, then return their labels to the original pixel
-coordinates. The coordinates provide spatial context for evaluation and
-interpretation; they are not inputs to this spectral encoder.
+The detached features can feed clustering, a trainable downstream head, or a
+caller-owned storage pipeline. The helper uses the model's current weights;
+it does not select or load a checkpoint.
+
+## Quick start
+
+This CPU example compares batch streaming with aggregate output. The model has
+illustrative random weights; load trained weights for an application.
 
 ```python
 import torch
@@ -17,11 +22,18 @@ from torch.utils.data import DataLoader, TensorDataset
 from chemomae.models import ChemoMAE
 from chemomae.training import Extractor, ExtractorConfig
 
-model = ChemoMAE(seq_len=64, n_patches=8, d_model=32, num_layers=1, latent_dim=8)
-spectra = torch.randn(100, 64)  # Illustrative spectra; load your selected weights.
-loader = DataLoader(TensorDataset(spectra), batch_size=16, shuffle=False)
-extractor = Extractor(model)
-features = extractor.transform(loader)  # CPU tensor because the model is on CPU.
+model = ChemoMAE(
+    seq_len=16, n_patches=4, n_mask=1, d_model=16, num_layers=1, latent_dim=4,
+)
+spectra = torch.randn(6, 16)
+loader = DataLoader(TensorDataset(spectra), batch_size=2, shuffle=False)
+extractor = Extractor(model, ExtractorConfig(representation="raw_latent"))
+features = extractor.transform(loader)
+streamed = torch.cat(list(extractor.iter_transform(loader)), dim=0)
+assert features.shape == (6, 4) and features.device.type == "cpu"
+assert not features.requires_grad and torch.isfinite(features).all()
+torch.testing.assert_close(streamed, features)
+assert model.training  # Each inference call restored the original mode.
 ```
 
 ## Configuration and defaults
@@ -72,11 +84,10 @@ The implementation uses PyTorch's `F.normalize` contract, including its default
 decoder. `ChemoMAE.encode` itself leaves gradients and modes under caller control;
 `Extractor` supplies the inference scopes.
 
-The normalized latent concentrates information in direction for cosine-based
-comparison, following the directional description of SNV-transformed spectra.
-It is not constrained to have zero mean, and its cosine similarities need not
-equal those in input space. Choose a representation explicitly and keep it
-fixed when comparing cluster counts or applying saved centers to new spectra.
+Normalized latent features support direction-based comparisons. They are not
+constrained to have zero mean, and their cosine similarities need not equal
+those in input space. Choose a representation explicitly and keep it fixed
+when comparing downstream results or applying a saved model to new features.
 
 ## Stream features and keep memory bounded
 
@@ -184,11 +195,4 @@ stays on the configured device. The saved file contains features only; store
 row IDs, preprocessing, weights, representation, precision, and protocol metadata
 separately when they are needed to interpret it.
 
-## Migration from v0.2.2
-
-The default now follows the model's device with AMP disabled and tensor output
-on the inference device. GPU inference no longer forces whole-dataset CPU
-aggregation. Use `output_type="numpy"` in place of `return_numpy=True`, and
-`output_device="cpu"` when CPU tensors are required. Model training flags are
-restored instead of leaving the model in evaluation mode. Existing completed
-v0.2.2 experiments and their artifacts are not changed by this API.
+For changes from earlier releases, see the [changelog](../../CHANGELOG.md).

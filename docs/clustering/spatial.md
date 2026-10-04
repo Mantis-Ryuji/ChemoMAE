@@ -5,16 +5,19 @@
 `local_label_agreement` evaluates the local spatial coherence of a label map
 using the occupancy-corrected LLA defined below. It measures agreement
 between neighboring labels beyond the chance agreement implied by class counts.
-This gives a spatial diagnostic of a partition derived from spectra, complementing
-the within-representation separation described by [cosine silhouette](metric.md).
+It accepts any two-dimensional categorical label map with an explicit valid
+region; no encoder, spectra, or fitted clustering model is required. For labels
+derived from features, it complements [cosine silhouette](metric.md), which
+describes separation in the feature space.
 
 The function uses binary class-map convolutions on CPU or CUDA. The labels need
 not be consecutive, and label zero is a valid class. The evaluated region is
 always supplied explicitly as `valid_mask`.
 
-## Example
+## Quick start
 
 ```python
+import math
 import numpy as np
 from chemomae.clustering import local_label_agreement
 
@@ -22,16 +25,18 @@ labels = np.array([[0, 0, 0, 8]], dtype=np.int64)
 valid = np.ones_like(labels, dtype=bool)
 result = local_label_agreement(labels, valid, windows=(3, 5, 9), device="cpu")
 
-print(result.class_labels, result.class_counts)  # (0, 8), (3, 1)
-print(result.chance_agreement)                  # 0.5
-for window in result.windows:
-    print(window.window, window.score, window.raw_agreement,
-          window.valid_pairs, window.undefined_reasons)
+assert result.class_labels == (0, 8) and result.class_counts == (3, 1)
+assert result.valid_pixels == 4 and result.chance_agreement == 0.5
+for window, expected in zip(result.windows, (1 / 3, 1 / 5, 0.0)):
+    assert math.isclose(window.score, expected, abs_tol=1e-12)
+    assert window.valid_pairs > 0 and not window.undefined_reasons
 ```
 
 The hand-counted corrected scores for this example are $1/3$, $1/5$, and $0$.
-Raw agreement is returned separately. Do not report raw agreement as the
-equation-(11) LLA or average window scores implicitly.
+Raw agreement is returned separately from the occupancy-corrected score defined
+below. The function does not average window scores.
+
+## CUDA example
 
 For an existing CUDA label map, omit `device` to compute on that device:
 
@@ -46,8 +51,9 @@ if torch.cuda.is_available():
     )
 ```
 
-This example is synthetic. Real LLA requires actual spatial neighbors from one
-image. Reordering tabular spectra into a grid does not create spatial evidence.
+These examples use a synthetic map. Interpreting LLA as spatial evidence requires
+actual spatial neighbors from one image. Arbitrarily reshaping tabular rows into
+a grid does not establish that relationship.
 
 ## Definition and convolution
 
@@ -132,22 +138,20 @@ describes greater local spatial coherence at the specified neighborhood width.
 Report each width separately with used class counts, occupancy, and undefined
 values.
 
-LLA does not identify the chemical meaning of a cluster. Spatially continuous
-measurement variation can also produce a coherent map, and excessive merging
-of regions can obscure state differences. Interpret the map with spectral
-summaries, specimen information, and available local chemical measurements.
-Neither LLA nor local measurements alone establish the correctness of every
-mapped pixel or an optimal clustering setting.
+LLA does not identify the semantic meaning or correctness of a class. Spatially
+continuous measurement variation can also produce a coherent map, and merging
+regions can conceal distinctions of interest. Interpret the score with the map,
+class occupancy, and relevant external evidence. A higher score alone does not
+establish a better model or an optimal clustering setting.
 
-To evaluate coherence on unseen specimens, fit the representation and cluster
-centers using the training specimens and keep both fixed for held-out prediction.
-Preserve the original pixel coordinates and evaluate each specimen map separately.
-When spatial coherence is intended as evidence independent of fitting, do not
-use those neighborhoods for training, clustering, or label smoothing. Maps from
-fitting that includes the evaluated specimens instead describe their spatial
-organization; they provide a different assessment from held-out prediction.
-Specify this distinction, window widths, and undefined-value aggregation in the
-experiment protocol. The function performs no splitting or protocol selection.
+For held-out model evaluation, keep the fitted label-producing pipeline fixed
+and preserve original coordinates when reconstructing each map. If coherence
+is intended as evidence independent of spatial fitting, using those same
+neighborhoods during training or label smoothing changes that interpretation.
+Describing maps used in fitting and evaluating held-out maps answer different
+questions. The caller chooses the split unit, window widths, and treatment of
+undefined values when aggregating across maps; this function performs no
+splitting or protocol selection.
 
 ## Precision and memory
 
@@ -165,8 +169,7 @@ T=N(N-1),\qquad S=\sum_k n_k(n_k-1),\qquad
 $$
 
 This avoids int64 product overflow and cancellation from subtracting a rounded
-chance probability near one. Output scores are Python floats, rather than the
-FP32 final division used by the original experiment helper. The separately
+chance probability near one. Output scores are Python floats. The separately
 reported float `chance_agreement` can round to one under extreme imbalance;
 the score's definedness is determined from exact class counts.
 

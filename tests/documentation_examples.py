@@ -47,7 +47,7 @@ class Recipe:
     name: str
     relative_path: str
     sections: tuple[tuple[str, int], ...]
-    check: Callable[[Mapping[str, object]], None]
+    check: Callable[[Mapping[str, object]], None] | None = None
 
 
 def require(namespace: Mapping[str, object], name: str, kind: type[Value]) -> Value:
@@ -82,7 +82,10 @@ def check_workflow(namespace: Mapping[str, object]) -> None:
     result = require(namespace, "result", dict)
     assert result["completed"] and result["epochs"] == 2
     assert result["optimizer_updates"] == 8 and result["amp_skips"] == 0
-    assert result["final_model"] == "ema_last_model.pt"
+    assert result["final_model"] == "last_model.pt"
+    resumed_result = require(namespace, "resumed_result", dict)
+    assert resumed_result["completed"] and resumed_result["epochs"] == 2
+    assert resumed_result["optimizer_updates"] == 8
     assert require(namespace, "train_features", torch.Tensor).shape == (64, 8)
     assert require(namespace, "test_features", torch.Tensor).shape == (16, 8)
     fps = require(namespace, "fps_indices", torch.Tensor)
@@ -175,16 +178,17 @@ def check_optimizer_trace(namespace: Mapping[str, object]) -> None:
 RECIPES = (
     Recipe("readme", "README.md", (("ChemoMAE Example", 1),), check_readme),
     Recipe("workflow", "docs/tutorials/workflow.md", (
-        ("1. Install the matching version", 1),
-        ("2. Create and standardize spectra", 2),
-        ("3. Configure a model and its training recipe", 1),
-        ("4. Train and resume at a completed epoch", 1),
-        ("5. Reload the selected inference artifact", 1),
-        ("6. Evaluate reconstruction on clean held-out spectra", 1),
-        ("7. Extract features in a chosen representation", 2),
-        ("8. Fit clustering on training features and keep centers fixed", 1),
-        ("9. Build a spatial map using actual coordinates and a valid mask", 2),
-        ("10. Save enough context to interpret outputs", 2),
+        ("1. Set up and prepare spectra", 1),
+        ("2. Train a reconstruction model", 1),
+        ("3. Save and reload the selected model", 1),
+        ("4. Extract features", 2),
+        ("Optional: select training rows with FPS", 1),
+        ("Optional: add spectral augmentation", 1),
+        ("Optional: resume a completed epoch", 1),
+        ("Optional: evaluate reconstruction", 1),
+        ("Optional: cluster directional features", 1),
+        ("Optional: evaluate a spatial label map", 2),
+        ("Optional: save a workflow report", 1),
     ), check_workflow),
     Recipe("trainer-minimal", "docs/training/trainer.md",
            (("Configuration and the simple path", 1),), check_trainer),
@@ -197,6 +201,21 @@ RECIPES = (
            check_optimizer_builders),
     Recipe("optimizer-trace", "docs/training/optim.md",
            (("Exact multiplier and update indexing", 1),), check_optimizer_trace),
+    # These standalone examples carry their own assertions beside the API calls.
+    Recipe("snv", "docs/preprocessing/snv.md", (("Quick start", 1),)),
+    Recipe("fps", "docs/preprocessing/dowmsampling.md", (("Quick start", 1),)),
+    Recipe("model", "docs/models/chemo_mae.md", (("Quick start", 1),)),
+    Recipe("losses", "docs/models/losses.md", (("Quick start", 1),)),
+    Recipe("persistence", "docs/models/persistence.md", (("Quick start", 1),)),
+    Recipe("augmenter", "docs/training/augmenter.md", (("Quick start", 1),)),
+    Recipe("tester", "docs/training/tester.md", (("Quick start", 1),)),
+    Recipe("extractor", "docs/training/extractor.md", (("Quick start", 1),)),
+    Recipe("seed", "docs/utils/seed.md", (("Quick start", 1),)),
+    Recipe("cosine-kmeans", "docs/clustering/cosine_kmeans.md", (("Quick start", 1),)),
+    Recipe("vmf", "docs/clustering/vmf_mixture.md", (("Quick start", 1),)),
+    Recipe("cosine-ops", "docs/clustering/ops.md", (("Quick start", 1),)),
+    Recipe("silhouette", "docs/clustering/metric.md", (("Quick start", 1),)),
+    Recipe("spatial", "docs/clustering/spatial.md", (("Quick start", 1),)),
 )
 
 
@@ -283,9 +302,10 @@ def run_recipe(recipe: Recipe, blocks: list[PythonBlock]) -> None:
                                str(block.path), "exec")
                 exec(code, namespace)
                 print(f"PASS source: {context}")
-            context = f"postconditions after {context}"
-            recipe.check(namespace)
-            print(f"PASS recipe: {recipe.name} ({len(blocks)} Python blocks and postconditions)")
+            if recipe.check is not None:
+                context = f"postconditions after {context}"
+                recipe.check(namespace)
+            print(f"PASS recipe: {recipe.name} ({len(blocks)} Python blocks; assertions passed)")
         except Exception:
             # Snippet exceptions are arbitrary. Preserve their original
             # traceback while adding the Markdown source location.
@@ -315,13 +335,11 @@ def main() -> int:
             for block in blocks:
                 if (block.path, block.first_line) in selected_locations:
                     continue
-                reason = ("API catalog fragment outside the compact CPU recipe; may require caller inputs/CUDA"
-                          if relative_path == "README.md"
-                          else "outside the requested recipe selection (--recipe)")
+                reason = "outside the selected recipes; may be an API signature or need prior setup/CUDA"
                 print(f"SKIP {block.context}: {reason}")
         print("SKIP installation/shell fences: use the chosen environment's installed ChemoMAE.")
-        print("Scope: selected recipes in README, workflow, Trainer, and optimizer docs; "
-              "other API documents are not executed.")
+        print("Scope: README, staged workflow, Trainer/optimizer recipes, and standalone "
+              "CPU Quick start examples across the API guides. Other blocks are not executed.")
         if args.list:
             return 0
         os.environ["MPLBACKEND"] = "Agg"
@@ -331,7 +349,7 @@ def main() -> int:
 
         print(f"Python {platform.python_version()}; NumPy {np.__version__}")
         print(f"ChemoMAE {chemomae.__version__} imported from {chemomae.__file__}")
-        print(f"Torch {torch.__version__}; CPU examples, float32, Agg; outputs are temporary.")
+        print(f"Torch {torch.__version__}; CPU examples; default dtype float32; Agg; outputs are temporary.")
         torch.set_num_threads(1)
         for recipe, blocks in selections:
             run_recipe(recipe, blocks)

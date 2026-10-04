@@ -1,73 +1,54 @@
-# ChemoMAE v0.2.3 workflow tutorial
+# Spectral learning and optional downstream workflows
 
-This tutorial explains preprocessing, reconstruction training, epoch-boundary
-resume, evaluation, feature extraction, clustering, spatial LLA, and persistence.
-The examples use small synthetic spectra and only ChemoMAE's runtime dependencies.
-Read the code blocks in order in one Python session.
+This tutorial uses the v0.2.3 APIs on small synthetic CPU inputs. Complete
+sections 1–4 to train a model and extract features. The later sections show
+optional preprocessing, augmentation, resume, evaluation, clustering, spatial
+analysis, and reporting. You can also run all Python blocks in order in one
+session; they define their inputs and use only runtime dependencies.
 
-The chosen seeds, model size, augmentation strengths, two epochs, and K=3 are
-illustrative API settings. They do not define a validated experimental recipe.
+Seeds, model size, two epochs, and K=3 keep the example small. They are examples
+of API usage, not recommended settings for a dataset. The model, clustering,
+and metrics can each be used without the complete workflow.
 
-The workflow follows the research method's purpose: learn a spectral
-representation through reconstruction, cluster the fixed representation at a
-chosen observation granularity, and inspect its spatial distribution. Cluster
-IDs support exploration when chemical-state categories are not known in advance;
-they do not supply chemical labels. The synthetic example demonstrates API use
-without reproducing the paper's data, architecture, or experimental protocol.
+## 1. Set up and prepare spectra
 
-## 1. Install the matching version
-
-Install the version used by this tutorial:
+See the [installation guide](../../README.md#quick-start) for Python/PyTorch
+requirements and build selection. To install the matching release:
 
 ```bash
 python -m pip install "chemomae==0.2.3"
 ```
 
-For an editable installation, check out the `v0.2.3` Git tag and run
-`python -m pip install -e .` from the repository root. See the
-[installation guide](../../README.md#quick-start) for PyTorch build selection and
-the NumPy constraint when using PyTorch 2.1. This tutorial explicitly uses CPU
-and disables AMP/TF32.
+Every row is a spectrum, with shape `(N, L)`. The example generates independent
+rows from three templates. It uses SNV to compare relative spectral shapes;
+omit or replace this preprocessing when mean and scale carry useful information.
+All samples passed to a given model need the same channel count and ordering.
+For held-out evaluation on measured data, define the appropriate independent
+group splits before fitting learned components or sampling training pixels.
 
 ```python
-import json
 import math
 import tempfile
-from dataclasses import asdict
 from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 import chemomae
-from chemomae.preprocessing import snv, cosine_fps_downsample
+from chemomae.preprocessing import snv
 from chemomae.models import ChemoMAE
 from chemomae.training import (
-    Trainer, TrainerConfig, Tester, TesterConfig, Extractor, ExtractorConfig,
-    SpectraAugmenter, SpectraAugmenterConfig, build_optimizer, build_scheduler,
-)
-from chemomae.clustering import (
-    CosineKMeans, local_label_agreement, silhouette_score_cosine_gpu,
+    Trainer, TrainerConfig, Extractor, ExtractorConfig,
+    SpectraAugmenter, build_optimizer, build_scheduler,
 )
 from chemomae.utils import set_global_seed
 
 assert chemomae.__version__ == "0.2.3"
 device = torch.device("cpu")
 set_global_seed(42)
-run_dir = Path(tempfile.mkdtemp(prefix="chemomae-v023-"))
-print("Outputs:", run_dir)
-```
-
-## 2. Create and standardize spectra
-
-Every row represents one spectrum: shape `(N, L)`. This example uses L=64 to keep
-the model small. Three simple spectral templates generate independent training,
-validation, and test rows. Their template identities are not passed to training
-or clustering. For measured data, the consuming project must define independent
-specimen/group splits before sampling pixels or fitting any learned transform.
-
-```python
+run_dir = Path(tempfile.mkdtemp(prefix="chemomae-workflow-"))
 length = 64
+snv_eps = 1e-12
 data_stream = torch.Generator(device="cpu").manual_seed(24)
 axis = torch.linspace(0.0, 1.0, length)
 templates = torch.stack([
@@ -80,9 +61,9 @@ def sample_spectra(count: int) -> torch.Tensor:
     noise = 0.03 * torch.randn(count, length, generator=data_stream)
     return templates[identities] + noise
 
-train_x = snv(sample_spectra(64))
-validation_x = snv(sample_spectra(16))
-test_x = snv(sample_spectra(16))
+train_x = snv(sample_spectra(64), eps=snv_eps)
+validation_x = snv(sample_spectra(16), eps=snv_eps)
+test_x = snv(sample_spectra(16), eps=snv_eps)
 
 def ordered_loader(spectra: torch.Tensor) -> DataLoader:
     return DataLoader(TensorDataset(spectra), batch_size=16, shuffle=False, num_workers=0)
@@ -90,38 +71,30 @@ def ordered_loader(spectra: torch.Tensor) -> DataLoader:
 train_loader = DataLoader(
     TensorDataset(train_x), batch_size=16, shuffle=True, num_workers=0,
 )
+print("Outputs:", run_dir)
 ```
 
-`snv` centers each row and divides by its sample standard deviation plus `eps`.
-It acts independently on each row, so there are no fitted population statistics
-to transfer between splits. Constant rows become zero. The default uses ddof=1;
-read the [SNV contract](../preprocessing/snv.md) for short spectra and precision.
-Choose preprocessing based on the measurement and purpose of your own data.
+SNV has no fitted population statistics. Constant rows become zero; see its
+[precision, epsilon, and short-spectrum contract](../preprocessing/snv.md).
+The template identities are not supplied to training or clustering.
 
-Optional FPS selects representative training rows and retains their row indices:
+The same explicit `device` is used for the model, training, extraction, and
+clustering. Keep it at `"cpu"` for this walkthrough. When adapting to CUDA, move
+the model before creating its optimizer and pass the chosen device to clustering.
+Trainer/Extractor follow the model when device is omitted; clusterers default to
+CUDA. See [device and run choices](../../README.md#choices-to-keep-explicit).
 
-```python
-fps_x, fps_indices = cosine_fps_downsample(
-    train_x, ratio=0.5, seed=42, device="cpu",
-    return_numpy=False, return_indices=True,
-)
-```
+## 2. Train a reconstruction model
 
-The rest of this example uses all training rows. If using FPS for fitting, record
-the selected indices and build the training loader from `fps_x` explicitly.
+The spectrum length must be divisible by `n_patches`, and `nhead` must divide
+`d_model`. Here eight patches contain eight channels each, and four are hidden.
+Visible patch tokens and a CLS token enter the encoder; the decoder reconstructs
+every channel from the projected CLS bottleneck. `loss_region="masked"` selects
+hidden channels for the loss.
 
-## 3. Configure a model and its training recipe
-
-The spectrum length must be divisible by the patch count: here 64 / 8 = 8 bands
-per patch. Four patches are hidden during ordinary training. Attention heads
-must divide `d_model`. The library validates these settings before construction.
-It does not change the channel count of your data to match a model default.
-
-Visible patch tokens and their original wavelength positions enter the encoder
-with a CLS token. The decoder predicts every channel from the projected CLS
-bottleneck, while `loss_region="masked"` selects only hidden channels for the
-loss. This example uses the configurable two-layer MLP decoder; the paper's
-single affine decoder is selected with `decoder_num_layers=1`.
+This example uses the default two-layer MLP decoder, no augmentation, and raw
+final weights. One decoder layer selects an affine decoder. Move the model to
+its computation device before constructing its optimizer.
 
 ```python
 model_config = {
@@ -130,12 +103,12 @@ model_config = {
     "dim_feedforward": 32, "dropout": 0.0,
     "latent_dim": 8, "latent_normalize": True, "decoder_num_layers": 2,
 }
-augmentation_config = SpectraAugmenterConfig(
-    shift_prob=0.3, shift_delta_range=(-0.5, 0.5),
-    noise_prob=0.5, noise_angle_deg_range=(0.5, 1.0),
-)
 
-def make_trainer(resume_from: Path | None = None) -> Trainer:
+def make_trainer(
+    output_dir: Path,
+    resume_from: Path | None = None,
+    augmenter: SpectraAugmenter | None = None,
+) -> Trainer:
     model = ChemoMAE(**model_config).to(device)
     optimizer = build_optimizer(model, lr=1e-3, weight_decay=0.01)
     scheduler = build_scheduler(
@@ -143,107 +116,62 @@ def make_trainer(resume_from: Path | None = None) -> Trainer:
         warmup_epochs=0, min_lr_scale=0.1,
     )
     return Trainer(
-        model, optimizer, train_loader, scheduler=scheduler,
-        augmenter=SpectraAugmenter(augmentation_config),
+        model, optimizer, train_loader, scheduler=scheduler, augmenter=augmenter,
         cfg=TrainerConfig(
-            out_dir=run_dir, device=device, resume_from=resume_from,
-            amp=False, enable_tf32=False, use_ema=True, ema_decay=0.9,
+            out_dir=output_dir, device=device, resume_from=resume_from,
+            amp=False, enable_tf32=False, use_ema=False,
             loss_type="mse", loss_region="masked", reduction="mean",
-            progress=False, verbose=True,
+            progress=False, verbose=False,
         ),
     )
+
+trainer = make_trainer(run_dir)
+result = trainer.fit(epochs=2)
+assert result["completed"] and result["optimizer_updates"] == 8
+assert result["amp_skips"] == 0
 ```
 
-Move the model before creating its optimizer. Inspect `optimizer.param_groups`
-when changing weight decay or the learning-rate recipe. The scheduler and EMA
-advance only after successful optimizer updates; AMP overflow skips are counted
-separately. See [optimizer/scheduler details](../training/optim.md).
+This factory sets `resume_from=None` for a fresh run in the new `run_dir`.
+Re-running the training section alone requires a new output directory; existing
+artifacts cause an error. The library default is `resume_from="auto"`, which can
+resume the checkpoint in the same directory. The
+[optional resume section](#optional-resume-a-completed-epoch) shows an explicit path.
 
-Trainer gives the augmenter the complete input before masking and keeps the
-pre-augmentation input as the target. This is masked denoising: predict hidden
-channels of that target from the perturbed visible channels. The target retains
-any measurement variation present in the original input. Here the augmenter's
-randomness uses standard Torch streams, which checkpoints capture. If supplying
-an independent `torch.Generator`, persist it through the
-[public checkpoint hooks](../training/trainer.md#custom-ordering-masks-and-caller-state).
+`fit(epochs=2)` sets the final absolute epoch, so resuming after epoch 1 runs only
+epoch 2. Scheduler and EMA updates, when
+configured, follow successful optimizer updates; AMP overflow skips are counted
+separately. See [LR indexing](../training/optim.md) and [Trainer hooks](../training/trainer.md).
+For a full-spectrum autoencoder, explicitly use `n_mask=0` and
+`loss_region="all"`. The loss region is never inferred from the mask count.
 
-## 4. Train and resume at a completed epoch
+## 3. Save and reload the selected model
 
-```python
-first = make_trainer()
-first.fit(epochs=1)
-
-resumed = make_trainer(run_dir / "checkpoints" / "last.pt")
-result = resumed.fit(epochs=2)
-print(result)
-```
-
-`epochs=2` is the final absolute epoch, so the second call performs epoch two.
-An interrupted incomplete epoch is replayed from the last completed checkpoint.
-Recreate the same model, optimizer, scheduler, augmentation, data, and ordering
-recipe. The scheduler above uses the two-epoch budget in both constructions.
-
-Checkpoints validate the schema, full ChemoMAE configuration, training settings,
-component types, and saved tensors. They restore optimizer/scheduler/scaler/EMA
-state and standard global RNG. Independent generators and worker/external state
-need caller-owned hooks. Exact resumed trajectories require matching software,
-device, data, and deterministic conditions. Arbitrary worker/external state
-needs caller-owned restoration; matching seeds alone do not guarantee identical
-trajectories across devices or software versions.
-
-Use `progress=False` for batch progress and `verbose=False` for epoch summaries.
-History/checkpoint/raw/EMA paths are configurable separately. Setting an output
-path to `None` disables it; disabled checkpoints require `resume_from=None`.
-
-## 5. Reload the selected inference artifact
-
-Training leaves raw weights in memory. This recipe selects EMA-last in advance,
-so reload its exported artifact before evaluating or extracting features:
+Trainer's default outputs include weights, a config-and-weights artifact,
+history, and a training checkpoint. This example selects raw final weights.
+Choose raw or EMA weights deliberately before downstream inference.
+Here `use_ema=False`, so `result["final_model"]` is `"last_model.pt"`.
+That is a weight file for `load_state_dict`; `ChemoMAE.load` needs the sibling
+`last_model.artifact.pt` used below. With the default EMA enabled and exported,
+the selected pair would be `ema_last_model.pt` / `ema_last_model.artifact.pt`.
 
 ```python
-assert result["final_model"] is not None
-selected_weights = run_dir / str(result["final_model"])
-selected_artifact = selected_weights.with_name(
-    selected_weights.stem + ".artifact" + selected_weights.suffix
-)
+assert result["final_model"] == "last_model.pt"
+selected_artifact = run_dir / "last_model.artifact.pt"
 inference_model = ChemoMAE.load(selected_artifact, device=device)
+assert not inference_model.training
+assert selected_artifact.is_file()
 ```
 
-`ChemoMAE.load` reconstructs the full configuration, preserves the saved floating
-dtype, and returns an eval-mode model. `*.artifact.pt` bundles configuration and
-weights; ordinary `*.pt` weight files remain useful for caller-created models.
-Training checkpoints serve a separate resume purpose. See [artifact formats](../models/persistence.md).
+`ChemoMAE.load` restores the constructor configuration and saved floating dtype,
+moves the model to the requested device, and returns it in eval mode. Training
+checkpoints additionally retain optimizer and progress state for resume. Output
+paths and enablement are configurable. See [persistence](../models/persistence.md).
 
-## 6. Evaluate reconstruction on clean held-out spectra
+## 4. Extract features
 
-Use an all-visible mask and `loss_region="all"` for deterministic full-spectrum
-MSE. No augmenter is supplied to this evaluation. Validation/test spectra do not
-fit the model or the cluster centers in this example.
-
-This full-spectrum reconstruction check differs from the masked training loss.
-It is a reconstruction diagnostic, not a measure of spatial coherence or
-chemical-state classification accuracy.
-
-```python
-tester = Tester(
-    inference_model,
-    TesterConfig(
-        device=device, amp=False, loss_type="mse", loss_region="all",
-        reduction="mean", fixed_visible=torch.ones(length, dtype=torch.bool),
-        log_history=False, progress=False,
-    ),
-)
-validation_mse = tester(ordered_loader(validation_x))
-test_mse = tester(ordered_loader(test_x))
-print("Validation MSE:", validation_mse, "Test MSE:", test_mse)
-```
-
-For masked evaluation, explicitly define the visible-mask or masking RNG protocol
-and use `loss_region="masked"`. Changing the evaluation region changes what the
-reported error measures. Tester aggregates across the full loader independently
-of batch partitioning; empty selections/loaders fail clearly.
-
-## 7. Extract features in a chosen representation
+Extractor uses all-visible encoder inference. Choose CLS, raw projected,
+normalized projected, or configured `latent` output. Features can feed a
+visualization, clusterer, or downstream predictor; coordinates are unnecessary.
 
 ```python
 extractor = Extractor(
@@ -255,41 +183,146 @@ extractor = Extractor(
 )
 train_features = extractor(ordered_loader(train_x))
 test_features = extractor(ordered_loader(test_x))
+assert train_features.shape == (64, 8)
+assert test_features.shape == (16, 8)
+assert torch.isfinite(test_features).all()
 ```
 
-Representations are `cls`, `raw_latent`, `normalized_latent`, and `latent`
-(which follows the model's normalization setting). Extraction makes all patches
-visible, uses eval mode, and restores original submodule modes. Zero projected
-vectors remain zero; normalization does not invent a direction for them.
+Extraction disables dropout and random masking, then restores the original
+module modes. Zero projections remain zero; very small projections follow the
+normalization epsilon. Latents have no zero-mean constraint, and their cosine
+similarities need not match those of the input spectra.
 
-All-visible, unperturbed extraction is the representation used for downstream
-analysis. Its normalization allows cosine-based comparison without constraining
-the latent to have zero mean or preserving input-space similarities.
-
-For larger inputs, consume one output batch at a time:
+For larger outputs, consume one batch at a time:
 
 ```python
 stream = extractor.iter_transform(ordered_loader(test_x))
 try:
     for features in stream:
         print(features.shape)
-        # Pass this batch to your writer or downstream predictor.
+        # Pass each batch to your writer or downstream predictor.
 finally:
     stream.close()
 ```
 
-Streaming does not save implicitly or concatenate the full output. Calling
-`extractor(loader)` does concatenate it. The caller controls loader order and
-must preserve row-to-specimen/pixel indices when reconstructing maps.
+Streaming avoids concatenating the full feature output and does not save it
+implicitly. Loader order is caller-controlled. For end-to-end fine-tuning, call
+`model.encode` in your own gradient-enabled loop; Extractor returns detached
+features. See the [representation and mode contracts](../training/extractor.md).
 
-## 8. Fit clustering on training features and keep centers fixed
+## Optional: select training rows with FPS
+
+This section uses `train_x` from section 1. FPS selects diverse directions and
+returns their original indices. It does not preserve sampling density or balance
+groups. The remaining tutorial continues to use all training rows.
 
 ```python
+from chemomae.preprocessing import cosine_fps_downsample
+
+fps_x, fps_indices = cosine_fps_downsample(
+    train_x, ratio=0.5, seed=42, device="cpu",
+    return_numpy=False, return_indices=True,
+)
+assert fps_x.shape == (32, length)
+assert torch.equal(fps_x, train_x[fps_indices])
+```
+
+To train on the subset, build a loader from `fps_x` explicitly and use that
+loader's length for the scheduler. Keep indices when rows have associated metadata.
+
+## Optional: add spectral augmentation
+
+This section uses the factory from section 2 to configure a separate run.
+Fractional shifts and tangent noise perturb the model input before masking;
+Trainer retains the input from before augmentation as the reconstruction target.
+That target still contains any variation present in the measured input.
+
+```python
+from chemomae.training import SpectraAugmenterConfig
+
+augmentation_config = SpectraAugmenterConfig(
+    shift_prob=0.3, shift_delta_range=(-0.5, 0.5),
+    noise_prob=0.5, noise_angle_deg_range=(0.5, 1.0),
+)
+augmented_trainer = make_trainer(
+    run_dir / "augmented", augmenter=SpectraAugmenter(augmentation_config),
+)
+# Call augmented_trainer.fit(epochs=2) when you want to run this alternative.
+assert augmented_trainer.augmenter is not None
+```
+
+Choose strengths for your data. Shift displacement is measured in channels;
+noise angle is measured in degrees. A small shift does not imply a small angle
+for every spectrum. Default reprojection preserves SNV-compatible geometry,
+subject to the [augmentation boundary conditions](../training/augmenter.md).
+Caller-owned generators need explicit persistence through checkpoint hooks.
+
+## Optional: resume a completed epoch
+
+This section uses section 2's factory and data for a separate demonstration.
+Both constructions retain the same two-epoch scheduler budget. The first call
+completes epoch one; the resumed call completes epoch two.
+
+```python
+resume_dir = run_dir / "resume-example"
+first = make_trainer(resume_dir)
+first.fit(epochs=1)
+resumed = make_trainer(resume_dir, resume_dir / "checkpoints" / "last.pt")
+resumed_result = resumed.fit(epochs=2)
+assert resumed_result["completed"] and resumed_result["epochs"] == 2
+assert resumed_result["optimizer_updates"] == 8
+```
+
+An interrupted incomplete epoch is replayed from the last completed checkpoint.
+Checkpoints validate the saved model and training contracts and restore standard
+global RNG. Recreate the same optimizer, scheduler recipe, data, and ordering.
+Independent generators and worker/external state require caller restoration.
+Matching seeds alone do not promise identical results across environments.
+See [resume requirements](../models/persistence.md).
+
+## Optional: evaluate reconstruction
+
+This section uses the model from section 3 and held-out rows from section 1.
+An all-visible mask with `loss_region="all"` evaluates full-spectrum MSE without
+random masking or augmentation. It differs from the masked training objective.
+The validation and test names illustrate separation from fitting; the example
+performs no validation-based model selection.
+
+```python
+from chemomae.training import Tester, TesterConfig
+
+tester = Tester(
+    inference_model,
+    TesterConfig(
+        device=device, amp=False, loss_type="mse", loss_region="all",
+        reduction="mean", fixed_visible=torch.ones(length, dtype=torch.bool),
+        log_history=False, progress=False,
+    ),
+)
+validation_mse = tester(ordered_loader(validation_x))
+test_mse = tester(ordered_loader(test_x))
+assert math.isfinite(validation_mse) and math.isfinite(test_mse)
+print("Validation MSE:", validation_mse, "Test MSE:", test_mse)
+```
+
+For masked evaluation, choose `loss_region="masked"` and specify the mask or RNG
+protocol. Dataset reductions aggregate selected errors across the loader;
+empty selections fail. See [Tester](../training/tester.md). Reconstruction error
+measures prediction accuracy for that objective, not downstream task quality.
+
+## Optional: cluster directional features
+
+This section uses section 4's features. It fits centers on training rows and
+keeps them fixed for held-out prediction. For descriptive clustering, fitting
+all rows being described is a different, valid use. CosineKMeans also accepts
+compatible feature matrices from other models or preprocessing methods.
+
+```python
+from chemomae.clustering import CosineKMeans, silhouette_score_cosine_gpu
+
 clusterer = CosineKMeans(n_components=3, max_iter=30, device=device, random_state=42)
 clusterer.fit(train_features, chunk=32)
 test_labels = clusterer.predict(test_features, chunk=32)
-print(clusterer.n_iter_, clusterer.converged_, clusterer.stop_reason_)
-
 cluster_path = run_dir / "clusters.pt"
 clusterer.save_centroids(cluster_path)
 reloaded_clusterer = CosineKMeans(n_components=3, device=device)
@@ -302,34 +335,31 @@ if 2 <= used_classes < len(test_labels):
     silhouette = silhouette_score_cosine_gpu(
         test_features, test_labels, device=device, chunk=8,
     )
-print("Cosine silhouette:", silhouette, "used classes:", used_classes)
+print(clusterer.converged_, clusterer.stop_reason_, "Silhouette:", silhouette)
 ```
 
-Cluster IDs are local numeric assignments, and K controls the granularity at
-which spectral differences are observed. It is not an inferred number of true
-chemical states. Choose K without tuning on final test scores. Cosine silhouette
-describes separation within this representation; clearly separated populations
-are not required for exploratory quantization. A one-class prediction has
-undefined silhouette; preserve that fact.
-The elbow helper is a heuristic and validates finite, ordered curves, including
-nonuniform K spacing. [vMF mixtures](../clustering/vmf_mixture.md) provide an
-optional probabilistic alternative with their own fit/selection costs.
+Choose K for the desired partition; numeric IDs do not provide semantic labels.
+When evaluating held-out performance, choose settings without tuning on final
+test scores. Silhouette describes compactness and separation in the supplied
+representation. One-class predictions have undefined silhouette.
 
-Chunk settings bound particular work arrays, rather than every allocation. CUDA
-CosineKMeans can stream CPU feature chunks to CUDA for fitting/prediction, while
-retaining the full CPU input. Prediction labels stay on the centers' device;
-requesting distances still allocates the full `(N, K)` output. CPU-only
-CosineKMeans does not chunk its similarity matrix. Silhouette
-retains full features, labels, class sums, within-class work arrays, and output;
-its chunk bounds only the similarity tile. See each API's memory contract.
+[VMFMixture](../clustering/vmf_mixture.md) provides a probabilistic alternative;
+read the current `elbow_vmf` limitation before interpreting its returned K.
+CPU CosineKMeans does not chunk its similarity matrix. CUDA fitting can stream
+CPU feature chunks, while retaining the full CPU input. Requested distances
+still occupy `(N, K)` memory. Silhouette chunks only its similarity tile.
 
-## 9. Build a spatial map using actual coordinates and a valid mask
+## Optional: evaluate a spatial label map
 
-The synthetic scene below explicitly defines an `(H, W, L)` cube. Invalid pixels
-form an edge and an internal hole. This spatial example has coordinates by
-construction; unrelated spectrum rows must not be reshaped into an image.
+This section uses the templates from section 1 and the extractor and clusterer
+above. For spatial analysis, retain actual coordinates. The example constructs
+an `(H, W, L)` cube with an invalid edge and hole; unrelated rows cannot be
+reshaped into a meaningful image. LLA can also evaluate an existing label map
+without any model or clusterer from this tutorial.
 
 ```python
+from chemomae.clustering import local_label_agreement
+
 height, width = 12, 16
 row, column = torch.meshgrid(torch.arange(height), torch.arange(width), indexing="ij")
 regions = (column // 6).clamp_max(2)
@@ -339,26 +369,25 @@ cube = templates[regions] + 0.03 * torch.randn(
 valid_mask = torch.ones(height, width, dtype=torch.bool)
 valid_mask[0] = False
 valid_mask[3:5, 6:8] = False
-
-spatial_features = extractor(ordered_loader(snv(cube[valid_mask])))
+spatial_features = extractor(ordered_loader(snv(cube[valid_mask], eps=snv_eps)))
 label_map = torch.zeros(height, width, dtype=torch.int64)
 label_map[valid_mask] = clusterer.predict(spatial_features, chunk=32)
 lla = local_label_agreement(
     label_map, valid_mask, windows=(3, 5, 9), device=device, class_chunk=2,
 )
+assert label_map.shape == (12, 16) and lla.valid_pixels == 172
 for window in lla.windows:
     print(window.window, window.score, window.raw_agreement, window.undefined_reasons)
-print("Occupancy:", lla.occupancy)
 ```
 
-The validity mask, rather than label zero, defines excluded pixels. LLA counts
-valid directed neighbor pairs, excludes the center and image/mask boundaries,
-and applies the [finite-sample chance correction](../clustering/spatial.md).
-Neighborhood values 3/5/9 are widths, not radii. Negative corrected scores are
-retained. Undefined scores are NaN with explicit reasons; do not replace them
-with zero. High spatial agreement does not establish chemical correctness.
+Validity is determined by the mask, so label zero remains an ordinary class.
+LLA counts valid directed neighbor pairs, omits the center and invalid/outside
+neighbors, and applies occupancy-based chance correction. Window values 3/5/9
+are widths. Negative scores are retained; undefined scores have explicit
+reasons. Spatial agreement alone does not establish semantic correctness.
+See the [definition, precision, and memory contract](../clustering/spatial.md).
 
-Optional visualization uses masked background so valid cluster zero stays visible:
+To display the result with background masked:
 
 ```python
 import numpy as np
@@ -371,13 +400,17 @@ plt.colorbar()
 plt.show()
 ```
 
-## 10. Save enough context to interpret outputs
+## Optional: save a workflow report
 
-Record versions, configurations, seeds, selected weights, sample/group splits,
-coordinate mapping, and preprocessing whenever applying the workflow to research.
-This example exports a small report and the synthetic map/mask:
+This final section assumes the evaluation, clustering, and spatial examples
+were run. Adapt the recorded fields to the components you use. Model artifacts
+contain architecture and weights; they do not contain your data identities,
+preprocessing choices, split definitions, or row-to-coordinate mapping.
 
 ```python
+import json
+from dataclasses import asdict
+
 def json_ready(value: object) -> object:
     if isinstance(value, float) and not math.isfinite(value):
         return None
@@ -391,6 +424,7 @@ report = {
     "chemomae_version": chemomae.__version__, "torch_version": str(torch.__version__),
     "device": str(device), "global_seed": 42, "data_seed": 24,
     "model_config": inference_model.get_config(),
+    "preprocessing": {"method": "snv", "eps": snv_eps},
     "selected_artifact": selected_artifact.name, "clustering": {"k": 3, "seed": 42},
     "synthetic_counts": {"train": len(train_x), "validation": len(validation_x), "test": len(test_x)},
     "validation_mse": validation_mse, "test_mse": test_mse,
@@ -400,42 +434,22 @@ report = {
     json.dumps(json_ready(report), indent=2, allow_nan=False), encoding="utf-8",
 )
 torch.save({"labels": label_map, "valid_mask": valid_mask}, run_dir / "spatial_map.pt")
-```
-
-Undefined metric values become JSON `null`, and their reasons remain in the LLA
-result. The report is illustrative; a research project must additionally record
-its data identities, acquisition grouping, preprocessing settings, and selection
-protocol. These small examples make no claims about performance or superiority.
-
-Finish by checking the expected workflow outputs. These assertions check API
-behavior and finite reconstruction losses; metric quality is not a pass condition.
-
-```python
-assert result["completed"] and result["epochs"] == 2
-assert result["optimizer_updates"] == 8
-assert result["amp_skips"] == 0
-assert result["final_model"] == "ema_last_model.pt"
-assert train_features.shape == (64, 8)
-assert test_features.shape == (16, 8)
-assert label_map.shape == (12, 16)
-assert lla.valid_pixels == 172
-assert math.isfinite(validation_mse) and math.isfinite(test_mse)
-assert selected_artifact.is_file()
 assert (run_dir / "report.json").is_file()
 assert (run_dir / "spatial_map.pt").is_file()
-print("Tutorial workflow passed.")
-print("Outputs:", run_dir)
+print("Workflow examples completed. Outputs:", run_dir)
 ```
 
-## Custom loops and troubleshooting
+Undefined metric values become JSON `null`; LLA reasons remain in the report.
+Add the data and selection context required by your application. These checks
+establish API behavior, not a claim about representation or clustering quality.
 
-Use the [Trainer hooks and plain PyTorch example](../training/trainer.md) when
-controlling masks, batch ordering, LR timing, or independent generators. Hooks
-reuse the optimizer/AMP loop. The model, augmenter, and loss primitives also work
-without Trainer. Supervised fine-tuning remains a separate consuming workflow.
+## Troubleshooting
 
-- A patch-divisibility error means your spectrum length and patch count disagree.
+- A patch-divisibility error means the spectrum length and patch count disagree.
 - An existing-output error requires an explicit resume checkpoint or a fresh directory.
-- A checkpoint-config mismatch requires the original architecture/training recipe.
-- Undefined LLA or silhouette needs its recorded reason, rather than a substituted score.
-- Set device, precision, and output storage deliberately when moving this CPU example to CUDA.
+- A checkpoint mismatch requires the saved architecture and compatible training recipe.
+- Undefined LLA or silhouette should retain its reason, rather than become a zero score.
+- Choose device, precision, and storage explicitly when moving these CPU examples to CUDA.
+
+For custom masks, ordering, or random streams, use the
+[Trainer hooks and plain PyTorch loop](../training/trainer.md).

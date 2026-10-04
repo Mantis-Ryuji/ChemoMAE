@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+
+- Organize the README and documentation index around independently usable
+  library components, with research background kept as an optional reference.
+- Separate the tutorial's basic training/extraction path from optional
+  augmentation, resume, clustering, spatial evaluation, and reporting.
+- Correct loss/mask contracts, example imports and assertions, normalization
+  qualifications, and clustering memory descriptions; add small CPU API examples.
+- Document the existing `elbow_vmf` score-direction limitation pending a separate
+  implementation fix. No runtime APIs, defaults, or saved formats change here.
+
 ## 0.2.3
 
 This release improves the public spectral-learning workflow and adds spatial
@@ -7,7 +20,7 @@ Local Label Agreement.
 
 ### Added
 
-- Convolution-based, occupancy-corrected LLA following Thesis equation (11), with
+- Convolution-based, occupancy-corrected LLA with finite-sample chance correction,
   explicit masks, directed integer pair counts, class chunks, and undefined reasons.
 - Full ChemoMAE configuration and versioned config-and-weights save/load artifacts.
 - Public Trainer preparation, forward/loss, ordering, event, and extension-state hooks.
@@ -43,6 +56,10 @@ Local Label Agreement.
 v0.2.3 does not guarantee API, default, or artifact compatibility with v0.2.2.
 Use the documented v0.2.3 signatures and save new model/training artifacts;
 old raw weights do not supply missing constructor configuration automatically.
+For Extractor, replace `return_numpy=True` with
+`ExtractorConfig(output_type="numpy")`; request `output_device="cpu"` explicitly
+when CPU tensor output is needed. The default output is now a tensor on the
+inference device with AMP disabled, and calls restore the original model modes.
 Trainer remains specific to reconstruction, with completed-epoch resume.
 Direct step budgets, validation-based selection, arbitrary worker recovery,
 MPS RNG restoration, and image tiling for LLA are not supplied by this release.
