@@ -12,7 +12,6 @@ available.
 
 ## v0.2.4 publication
 
-- [ ] Confirm CI passes for the release commit.
 - [ ] Publish `v0.2.4` through the tag-triggered PyPI workflow.
 - [ ] Verify the published package metadata, README rendering, versioned
   documentation link, and installed-package CPU smoke test in a clean environment.
