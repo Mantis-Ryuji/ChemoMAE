@@ -16,3 +16,8 @@ available.
   avoids the full N-by-K responsibility matrix. Preserve labels, tie behavior,
   and chunk semantics if this path is changed. Caller-side slicing is documented
   as the current alternative.
+
+## Sampling follow-up
+
+- [ ] Add count-based downsampling to `CosineFPS` alongside the existing
+  `ratio`-based option.
