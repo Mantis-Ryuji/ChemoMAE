@@ -170,11 +170,13 @@ the diagnostics that address your intended use.
 ## Research background
 
 ChemoMAE was extracted into a reusable library from spectral representation
-learning research. The associated research repository is
+learning research. Ryuji Yamaguchi and Miyuki Matsuo describe its application
+to near-infrared hyperspectral images of historical wood in their arXiv preprint
+[ChemoMAE: Self-Supervised Spectral Representation Learning Reveals Chemical Heterogeneity in Historical Wood](https://arxiv.org/abs/2611.34581).
+
+The associated research repository is
 [WoodDegradationMap](https://github.com/Mantis-Ryuji/WoodDegradationMap).
-A manuscript with an NIR-HSI case study is in preparation; its publication link
-will be added when available. Library defaults and examples are documented
-independently of that study's settings.
+Library defaults and examples are documented independently of that study's settings.
 
 ## License
 

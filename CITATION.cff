@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use ChemoMAE in your research, please cite the following paper."
+type: software
+title: ChemoMAE
+authors:
+  - given-names: Ryuji
+    family-names: Yamaguchi
+repository-code: "https://github.com/Mantis-Ryuji/ChemoMAE"
+license: Apache-2.0
+preferred-citation:
+  type: article
+  status: preprint
+  title: "ChemoMAE: Self-Supervised Spectral Representation Learning Reveals Chemical Heterogeneity in Historical Wood"
+  authors:
+    - given-names: Ryuji
+      family-names: Yamaguchi
+    - given-names: Miyuki
+      family-names: Matsuo
+  journal: arXiv
+  year: 2026
+  doi: "10.48550/arXiv.2611.34581"
+  url: "https://arxiv.org/abs/2611.34581"
